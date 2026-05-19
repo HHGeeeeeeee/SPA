@@ -16,7 +16,7 @@ const baseSchema = z.object({
   gender: z.enum(['M', 'F', 'Other']).optional().nullable(),
   home_branch_id: z.string().uuid().optional().nullable(),
   commission_class_id: z.string().uuid().optional().nullable(),
-  position: z.string().max(80).optional().nullable(),
+  position_id: z.string().uuid().optional().nullable(),
   status: z.enum(['active', 'inactive', 'on_leave']).default('active'),
 });
 
@@ -35,7 +35,7 @@ function normalize(input: z.infer<typeof baseSchema>) {
     gender: input.gender || null,
     home_branch_id: input.home_branch_id || null,
     commission_class_id: input.commission_class_id || null,
-    position: input.position || null,
+    position_id: input.position_id || null,
     status: input.status,
   };
 }
@@ -67,7 +67,7 @@ export async function updateEmployee(input: unknown): Promise<ActionResult> {
   if (d.gender !== undefined) patch.gender = d.gender || null;
   if (d.home_branch_id !== undefined) patch.home_branch_id = d.home_branch_id || null;
   if (d.commission_class_id !== undefined) patch.commission_class_id = d.commission_class_id || null;
-  if (d.position !== undefined) patch.position = d.position || null;
+  if (d.position_id !== undefined) patch.position_id = d.position_id || null;
   if (d.status !== undefined) patch.status = d.status;
   const supabase = createServiceClient();
   const { error } = await supabase.from('employees').update(patch).eq('id', d.id);

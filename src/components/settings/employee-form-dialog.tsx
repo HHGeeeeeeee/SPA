@@ -34,7 +34,7 @@ export interface EmployeeItem {
   gender: string | null;
   home_branch_id: string | null;
   commission_class_id: string | null;
-  position: string | null;
+  position_id: string | null;
   status: 'active' | 'inactive' | 'on_leave';
 }
 
@@ -50,11 +50,18 @@ interface ClassOption {
   name: string;
 }
 
+interface PositionOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface Props {
   mode?: 'create' | 'edit';
   employee?: EmployeeItem;
   branches: BranchOption[];
   classes: ClassOption[];
+  positions: PositionOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -67,6 +74,7 @@ export function EmployeeFormDialog({
   employee,
   branches,
   classes,
+  positions,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -83,7 +91,7 @@ export function EmployeeFormDialog({
   const [gender, setGender] = useState(employee?.gender ?? NONE);
   const [homeBranchId, setHomeBranchId] = useState(employee?.home_branch_id ?? NONE);
   const [classId, setClassId] = useState(employee?.commission_class_id ?? NONE);
-  const [position, setPosition] = useState(employee?.position ?? 'Massage Therapist');
+  const [positionId, setPositionId] = useState(employee?.position_id ?? NONE);
   const [status, setStatus] = useState<EmployeeItem['status']>(employee?.status ?? 'active');
 
   const branchOptions = [
@@ -93,6 +101,10 @@ export function EmployeeFormDialog({
   const classOptions = [
     { value: NONE, label: 'None' },
     ...classes.map((c) => ({ value: c.id, label: `${c.class_code} — ${c.name}` })),
+  ];
+  const positionOptions = [
+    { value: NONE, label: 'None' },
+    ...positions.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
   ];
 
   const isEdit = mode === 'edit';
@@ -107,7 +119,7 @@ export function EmployeeFormDialog({
       gender: gender === NONE ? null : gender,
       home_branch_id: homeBranchId === NONE ? null : homeBranchId,
       commission_class_id: classId === NONE ? null : classId,
-      position: position || null,
+      position_id: positionId === NONE ? null : positionId,
       status,
     };
     startTransition(async () => {
@@ -235,14 +247,19 @@ export function EmployeeFormDialog({
             </div>
 
             <div className="flex flex-col gap-2 col-span-2">
-              <Label htmlFor="emp-position" className="font-semibold">Position</Label>
-              <Input
-                id="emp-position"
-                value={position}
-                onChange={(e) => setPosition(e.target.value)}
-                maxLength={80}
-                placeholder="Massage Therapist"
-              />
+              <Label className="font-semibold">Position</Label>
+              <Select
+                items={positionOptions}
+                value={positionId ?? NONE}
+                onValueChange={(v) => setPositionId(v ?? NONE)}
+              >
+                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                <SelectContent>
+                  {positionOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

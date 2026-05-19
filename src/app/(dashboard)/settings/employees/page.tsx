@@ -20,26 +20,30 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [empRes, brRes, ccRes] = await Promise.all([
+  const [empRes, brRes, ccRes, posRes] = await Promise.all([
     supabase
       .from('employees')
       .select(`
         id, employee_code, name, phone, email, gender,
-        home_branch_id, commission_class_id, position, status, updated_at,
+        home_branch_id, commission_class_id, position_id, status, updated_at,
         home_branch:branches!employees_home_branch_id_fkey ( code, name ),
-        commission_class:commission_classes ( class_code, name, commission_rate )
+        commission_class:commission_classes ( class_code, name, commission_rate ),
+        position:positions ( code, name )
       `)
       .order('employee_code'),
     supabase.from('branches').select('id, code, name').eq('active', true).order('code'),
     supabase.from('commission_classes').select('id, class_code, name').eq('active', true).order('commission_rate', { ascending: false }),
+    supabase.from('positions').select('id, code, name').eq('active', true).order('code'),
   ]);
   if (empRes.error) throw new Error(empRes.error.message);
   if (brRes.error) throw new Error(brRes.error.message);
   if (ccRes.error) throw new Error(ccRes.error.message);
+  if (posRes.error) throw new Error(posRes.error.message);
   return {
     employees: empRes.data ?? [],
     branches: brRes.data ?? [],
     classes: ccRes.data ?? [],
+    positions: posRes.data ?? [],
   };
 }
 
@@ -59,7 +63,7 @@ function statusBadge(status: EmployeeItem['status']) {
 }
 
 export default async function EmployeesPage() {
-  const { employees, branches, classes } = await fetchData();
+  const { employees, branches, classes, positions } = await fetchData();
   const activeCount = employees.filter((e) => e.status === 'active').length;
 
   return (
@@ -81,6 +85,7 @@ export default async function EmployeesPage() {
         <EmployeeFormDialog
           branches={branches}
           classes={classes}
+          positions={positions}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -119,6 +124,7 @@ export default async function EmployeesPage() {
                 const commissionClass = Array.isArray(e.commission_class)
                   ? e.commission_class[0]
                   : e.commission_class;
+                const position = Array.isArray(e.position) ? e.position[0] : e.position;
                 const employeeItem: EmployeeItem = {
                   id: e.id,
                   employee_code: e.employee_code,
@@ -128,7 +134,7 @@ export default async function EmployeesPage() {
                   gender: e.gender,
                   home_branch_id: e.home_branch_id,
                   commission_class_id: e.commission_class_id,
-                  position: e.position,
+                  position_id: e.position_id,
                   status: e.status as EmployeeItem['status'],
                 };
                 return (
@@ -157,13 +163,20 @@ export default async function EmployeesPage() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium">{e.position ?? '—'}</TableCell>
+                    <TableCell className="font-medium">
+                      {position ? (
+                        <span className="font-semibold">{position.name}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>{statusBadge(e.status as EmployeeItem['status'])}</TableCell>
                     <TableCell>
                       <EmployeeRowActions
                         employee={employeeItem}
                         branches={branches}
                         classes={classes}
+                        positions={positions}
                       />
                     </TableCell>
                   </TableRow>

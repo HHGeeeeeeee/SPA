@@ -54,6 +54,8 @@ export const mainNavItems: NavItem[] = [
     children: [
       { label: 'Branches', href: '/settings/branches' },
       { label: 'Employees', href: '/settings/employees' },
+      { label: 'Positions', href: '/settings/positions' },
+      { label: 'Commission Classes', href: '/settings/commission-classes' },
       { label: 'Service Categories', href: '/settings/service-categories' },
       { label: 'Service Items', href: '/settings/service-items' },
       { label: 'Resources', href: '/settings/resources' },

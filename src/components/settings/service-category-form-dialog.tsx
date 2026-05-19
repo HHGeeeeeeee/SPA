@@ -16,13 +16,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 import {
   createServiceCategory,
@@ -33,15 +26,22 @@ export interface CategoryItem {
   id: string;
   code: string;
   name: string;
-  business_unit: string;
+  business_unit_ids: string[];
   commission_applicable: boolean;
   tip_applicable: boolean;
   revenue_account: string | null;
 }
 
+interface BusinessUnitOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface Props {
   mode?: 'create' | 'edit';
   item?: CategoryItem;
+  businessUnits: BusinessUnitOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -50,6 +50,7 @@ interface Props {
 export function ServiceCategoryFormDialog({
   mode = 'create',
   item,
+  businessUnits,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -59,7 +60,7 @@ export function ServiceCategoryFormDialog({
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [code, setCode] = useState(item?.code ?? '');
   const [name, setName] = useState(item?.name ?? '');
-  const [businessUnit, setBusinessUnit] = useState(item?.business_unit ?? 'spa');
+  const [unitIds, setUnitIds] = useState<string[]>(item?.business_unit_ids ?? []);
   const [commissionApplicable, setCommissionApplicable] = useState(item?.commission_applicable ?? true);
   const [tipApplicable, setTipApplicable] = useState(item?.tip_applicable ?? true);
   const [revenueAccount, setRevenueAccount] = useState(item?.revenue_account ?? '');
@@ -67,12 +68,22 @@ export function ServiceCategoryFormDialog({
 
   const isEdit = mode === 'edit';
 
+  function toggleUnit(id: string) {
+    setUnitIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (unitIds.length === 0) {
+      toast.error('Pick at least one business unit');
+      return;
+    }
     const payload = {
       code,
       name,
-      business_unit: businessUnit,
+      business_unit_ids: unitIds,
       commission_applicable: commissionApplicable,
       tip_applicable: tipApplicable,
       revenue_account: revenueAccount || null,
@@ -88,6 +99,7 @@ export function ServiceCategoryFormDialog({
           setCode('');
           setName('');
           setRevenueAccount('');
+          setUnitIds([]);
         }
       } else {
         toast.error(r.error);
@@ -139,18 +151,32 @@ export function ServiceCategoryFormDialog({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Business Unit *</Label>
-              <Select value={businessUnit} onValueChange={(v) => v && setBusinessUnit(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="spa">SPA</SelectItem>
-                  <SelectItem value="gym">Gym (future)</SelectItem>
-                  <SelectItem value="shared">Shared</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label className="font-semibold">Applies To Business Units *</Label>
+              <div className="flex flex-col gap-1 rounded-lg border border-input p-2">
+                {businessUnits.length === 0 ? (
+                  <p className="text-xs font-medium text-muted-foreground px-2 py-1">
+                    No business units defined. Create one in Settings → Business Units first.
+                  </p>
+                ) : (
+                  businessUnits.map((b) => (
+                    <label
+                      key={b.id}
+                      className="flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 hover:bg-accent"
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-4 cursor-pointer accent-primary"
+                        checked={unitIds.includes(b.id)}
+                        onChange={() => toggleUnit(b.id)}
+                      />
+                      <span className="text-sm font-semibold">{b.name}</span>
+                      <span className="text-xs font-mono text-muted-foreground">{b.code}</span>
+                    </label>
+                  ))
+                )}
+              </div>
               <p className="text-xs font-medium text-muted-foreground">
-                <strong>Business line</strong>, not a branch. Pick SPA or Gym, or Shared if
-                used by both.
+                Pick every business line this category belongs to.
               </p>
             </div>
 

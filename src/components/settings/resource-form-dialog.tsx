@@ -34,10 +34,16 @@ export interface ResourceItem {
   resource_name: string;
   location_zone: string | null;
   capacity: number;
-  business_unit: string;
+  business_unit_id: string | null;
 }
 
 interface BranchOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface BusinessUnitOption {
   id: string;
   code: string;
   name: string;
@@ -47,6 +53,7 @@ interface Props {
   mode?: 'create' | 'edit';
   resource?: ResourceItem;
   branches: BranchOption[];
+  businessUnits: BusinessUnitOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -64,6 +71,7 @@ export function ResourceFormDialog({
   mode = 'create',
   resource,
   branches,
+  businessUnits,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -78,8 +86,10 @@ export function ResourceFormDialog({
   const [resourceName, setResourceName] = useState(resource?.resource_name ?? '');
   const [locationZone, setLocationZone] = useState(resource?.location_zone ?? '');
   const [capacity, setCapacity] = useState(String(resource?.capacity ?? 1));
+  const [businessUnitId, setBusinessUnitId] = useState(resource?.business_unit_id ?? businessUnits[0]?.id ?? '');
 
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
+  const businessUnitOptions = businessUnits.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
 
   const isEdit = mode === 'edit';
 
@@ -91,7 +101,7 @@ export function ResourceFormDialog({
       resource_name: resourceName,
       location_zone: locationZone || null,
       capacity: Number(capacity),
-      business_unit: 'spa',
+      business_unit_id: businessUnitId || null,
     };
     startTransition(async () => {
       const r = isEdit
@@ -134,6 +144,18 @@ export function ResourceFormDialog({
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {branchOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label className="font-semibold">Business Unit *</Label>
+              <Select items={businessUnitOptions} value={businessUnitId} onValueChange={(v) => v && setBusinessUnitId(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {businessUnitOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                   ))}
                 </SelectContent>

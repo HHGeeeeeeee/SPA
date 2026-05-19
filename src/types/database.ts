@@ -103,6 +103,39 @@ export type Database = {
         }
         Relationships: []
       }
+      business_units: {
+        Row: {
+          active: boolean
+          code: string
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          code: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       cash_reconciliations: {
         Row: {
           actual_received_cents: number | null
@@ -469,7 +502,7 @@ export type Database = {
           name: string
           phone: string
           preferences: Json | null
-          primary_business_unit: string
+          primary_business_unit_id: string | null
           status: string
           updated_at: string
           updated_by: string | null
@@ -490,7 +523,7 @@ export type Database = {
           name: string
           phone: string
           preferences?: Json | null
-          primary_business_unit?: string
+          primary_business_unit_id?: string | null
           status?: string
           updated_at?: string
           updated_by?: string | null
@@ -511,12 +544,20 @@ export type Database = {
           name?: string
           phone?: string
           preferences?: Json | null
-          primary_business_unit?: string
+          primary_business_unit_id?: string | null
           status?: string
           updated_at?: string
           updated_by?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "customers_primary_business_unit_id_fkey"
+            columns: ["primary_business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       discount_classes: {
         Row: {
@@ -824,7 +865,7 @@ export type Database = {
       employees: {
         Row: {
           acumatica_user_id: string | null
-          business_unit: string
+          business_unit_id: string | null
           commission_class_id: string | null
           created_at: string
           created_by: string | null
@@ -843,7 +884,7 @@ export type Database = {
         }
         Insert: {
           acumatica_user_id?: string | null
-          business_unit?: string
+          business_unit_id?: string | null
           commission_class_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -862,7 +903,7 @@ export type Database = {
         }
         Update: {
           acumatica_user_id?: string | null
-          business_unit?: string
+          business_unit_id?: string | null
           commission_class_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -880,6 +921,13 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "employees_business_unit_id_fkey"
+            columns: ["business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "employees_commission_class_id_fkey"
             columns: ["commission_class_id"]
@@ -1723,7 +1771,7 @@ export type Database = {
         Row: {
           billing_to_id: string | null
           branch_id: string
-          business_unit: string
+          business_unit_id: string | null
           created_at: string
           created_by: string | null
           deleted_at: string | null
@@ -1749,7 +1797,7 @@ export type Database = {
         Insert: {
           billing_to_id?: string | null
           branch_id: string
-          business_unit?: string
+          business_unit_id?: string | null
           created_at?: string
           created_by?: string | null
           deleted_at?: string | null
@@ -1775,7 +1823,7 @@ export type Database = {
         Update: {
           billing_to_id?: string | null
           branch_id?: string
-          business_unit?: string
+          business_unit_id?: string | null
           created_at?: string
           created_by?: string | null
           deleted_at?: string | null
@@ -1818,6 +1866,13 @@ export type Database = {
             columns: ["branch_id"]
             isOneToOne: false
             referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_business_unit_id_fkey"
+            columns: ["business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
             referencedColumns: ["id"]
           },
           {
@@ -1983,10 +2038,39 @@ export type Database = {
           },
         ]
       }
+      position_business_units: {
+        Row: {
+          business_unit_id: string
+          position_id: string
+        }
+        Insert: {
+          business_unit_id: string
+          position_id: string
+        }
+        Update: {
+          business_unit_id?: string
+          position_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "position_business_units_business_unit_id_fkey"
+            columns: ["business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "position_business_units_position_id_fkey"
+            columns: ["position_id"]
+            isOneToOne: false
+            referencedRelation: "positions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       positions: {
         Row: {
           active: boolean
-          business_unit: string
           code: string
           created_at: string
           created_by: string | null
@@ -1997,7 +2081,6 @@ export type Database = {
         }
         Insert: {
           active?: boolean
-          business_unit?: string
           code: string
           created_at?: string
           created_by?: string | null
@@ -2008,7 +2091,6 @@ export type Database = {
         }
         Update: {
           active?: boolean
-          business_unit?: string
           code?: string
           created_at?: string
           created_by?: string | null
@@ -2193,7 +2275,7 @@ export type Database = {
       resources: {
         Row: {
           branch_id: string
-          business_unit: string
+          business_unit_id: string | null
           capacity: number
           created_at: string
           created_by: string | null
@@ -2211,7 +2293,7 @@ export type Database = {
         }
         Insert: {
           branch_id: string
-          business_unit?: string
+          business_unit_id?: string | null
           capacity?: number
           created_at?: string
           created_by?: string | null
@@ -2229,7 +2311,7 @@ export type Database = {
         }
         Update: {
           branch_id?: string
-          business_unit?: string
+          business_unit_id?: string | null
           capacity?: number
           created_at?: string
           created_by?: string | null
@@ -2251,6 +2333,13 @@ export type Database = {
             columns: ["branch_id"]
             isOneToOne: false
             referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "resources_business_unit_id_fkey"
+            columns: ["business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
             referencedColumns: ["id"]
           },
         ]
@@ -2449,7 +2538,6 @@ export type Database = {
       service_categories: {
         Row: {
           active: boolean
-          business_unit: string
           code: string
           commission_applicable: boolean
           created_at: string
@@ -2463,7 +2551,6 @@ export type Database = {
         }
         Insert: {
           active?: boolean
-          business_unit: string
           code: string
           commission_applicable?: boolean
           created_at?: string
@@ -2477,7 +2564,6 @@ export type Database = {
         }
         Update: {
           active?: boolean
-          business_unit?: string
           code?: string
           commission_applicable?: boolean
           created_at?: string
@@ -2523,6 +2609,36 @@ export type Database = {
           },
           {
             foreignKeyName: "service_category_branches_service_category_id_fkey"
+            columns: ["service_category_id"]
+            isOneToOne: false
+            referencedRelation: "service_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      service_category_business_units: {
+        Row: {
+          business_unit_id: string
+          service_category_id: string
+        }
+        Insert: {
+          business_unit_id: string
+          service_category_id: string
+        }
+        Update: {
+          business_unit_id?: string
+          service_category_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_category_business_units_business_unit_id_fkey"
+            columns: ["business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "service_category_business_units_service_category_id_fkey"
             columns: ["service_category_id"]
             isOneToOne: false
             referencedRelation: "service_categories"
@@ -2593,7 +2709,7 @@ export type Database = {
       service_items: {
         Row: {
           active: boolean
-          business_unit: string
+          business_unit_id: string | null
           cleanup_after_minutes: number
           code: string
           commission_applicable: boolean
@@ -2612,7 +2728,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
-          business_unit?: string
+          business_unit_id?: string | null
           cleanup_after_minutes?: number
           code: string
           commission_applicable?: boolean
@@ -2631,7 +2747,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
-          business_unit?: string
+          business_unit_id?: string | null
           cleanup_after_minutes?: number
           code?: string
           commission_applicable?: boolean
@@ -2649,6 +2765,13 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "service_items_business_unit_id_fkey"
+            columns: ["business_unit_id"]
+            isOneToOne: false
+            referencedRelation: "business_units"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "service_items_service_category_id_fkey"
             columns: ["service_category_id"]
@@ -3496,5 +3619,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-A new version of Supabase CLI is available: v2.100.0 (currently installed v)
-We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli

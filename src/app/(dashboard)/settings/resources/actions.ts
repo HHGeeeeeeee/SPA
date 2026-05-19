@@ -14,7 +14,7 @@ const schema = z.object({
   resource_name: z.string().min(1).max(80),
   location_zone: z.string().max(40).optional().nullable(),
   capacity: z.coerce.number().int().min(1).max(20).default(1),
-  business_unit: z.string().max(20).default('spa'),
+  business_unit_id: z.string().uuid().optional().nullable(),
 });
 
 const updateSchema = schema.partial().extend({ id: z.string().uuid() });
@@ -45,7 +45,7 @@ export async function updateResource(input: unknown): Promise<ActionResult> {
   if (d.resource_name !== undefined) patch.resource_name = d.resource_name;
   if (d.location_zone !== undefined) patch.location_zone = d.location_zone || null;
   if (d.capacity !== undefined) patch.capacity = d.capacity;
-  if (d.business_unit !== undefined) patch.business_unit = d.business_unit;
+  if (d.business_unit_id !== undefined) patch.business_unit_id = d.business_unit_id ?? null;
   const supabase = createServiceClient();
   const { error } = await supabase.from('resources').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };

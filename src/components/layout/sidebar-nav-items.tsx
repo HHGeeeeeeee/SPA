@@ -52,6 +52,7 @@ export const mainNavItems: NavItem[] = [
     label: 'Settings',
     icon: Settings,
     children: [
+      { label: 'Business Units', href: '/settings/business-units' },
       { label: 'Branches', href: '/settings/branches' },
       { label: 'Employees', href: '/settings/employees' },
       { label: 'Positions', href: '/settings/positions' },

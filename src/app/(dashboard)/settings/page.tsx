@@ -6,6 +6,7 @@ import {
   Wrench,
   Briefcase,
   BadgeCheck,
+  Layers,
   CreditCard,
   Banknote,
   ScrollText,
@@ -21,6 +22,7 @@ const sections = [
   {
     group: 'Core Business',
     items: [
+      { icon: Layers, label: 'Business Units', href: '/settings/business-units', desc: 'Business lines (SPA, Gym, …)' },
       { icon: Building2, label: 'Branches', href: '/settings/branches', desc: 'Manage shop locations' },
       { icon: Users, label: 'Employees', href: '/settings/employees', desc: 'Therapists & staff records' },
       { icon: BadgeCheck, label: 'Positions', href: '/settings/positions', desc: 'Job titles (Massage Therapist, Hair Stylist…)' },

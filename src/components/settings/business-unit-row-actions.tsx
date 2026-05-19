@@ -23,23 +23,21 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-import { setServiceItemActive } from '@/app/(dashboard)/settings/service-items/actions';
-import { ServiceItemFormDialog, type ServiceItemRecord } from './service-item-form-dialog';
+import { setBusinessUnitActive } from '@/app/(dashboard)/settings/business-units/actions';
+import { BusinessUnitFormDialog, type BusinessUnitItem } from './business-unit-form-dialog';
 
 interface Props {
-  item: ServiceItemRecord & { active: boolean };
-  categories: { id: string; code: string; name: string }[];
-  businessUnits: { id: string; code: string; name: string }[];
+  item: BusinessUnitItem & { active: boolean };
 }
 
-export function ServiceItemRowActions({ item, categories, businessUnits }: Props) {
+export function BusinessUnitRowActions({ item }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   function toggleActive() {
     startTransition(async () => {
-      const r = await setServiceItemActive(item.id, !item.active);
+      const r = await setBusinessUnitActive(item.id, !item.active);
       if (r.ok) toast.success(item.active ? 'Deactivated' : 'Reactivated');
       else toast.error(r.error);
     });
@@ -80,11 +78,9 @@ export function ServiceItemRowActions({ item, categories, businessUnits }: Props
         </DropdownMenu>
       </div>
 
-      <ServiceItemFormDialog
+      <BusinessUnitFormDialog
         mode="edit"
         item={item}
-        categories={categories}
-        businessUnits={businessUnits}
         open={editOpen}
         onOpenChange={setEditOpen}
       />
@@ -92,10 +88,10 @@ export function ServiceItemRowActions({ item, categories, businessUnits }: Props
       <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Deactivate service?</AlertDialogTitle>
+            <AlertDialogTitle>Deactivate business unit?</AlertDialogTitle>
             <AlertDialogDescription>
-              <strong>{item.code} — {item.name}</strong> will not be selectable on new
-              orders. Existing orders are unaffected.
+              <strong>{item.code}</strong> will no longer appear in unit pickers. Existing
+              assignments (positions, categories, services, etc.) stay intact.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

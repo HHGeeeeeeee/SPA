@@ -18,14 +18,21 @@ import { ServiceCategoryRowActions } from '@/components/settings/service-categor
 
 export const dynamic = 'force-dynamic';
 
-async function fetchCategories() {
+async function fetchData() {
   const supabase = createServiceClient();
-  const { data, error } = await supabase
-    .from('service_categories')
-    .select('id, code, name, business_unit, commission_applicable, tip_applicable, revenue_account, active, updated_at')
-    .order('code');
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  const [catRes, buRes] = await Promise.all([
+    supabase
+      .from('service_categories')
+      .select(`
+        id, code, name, commission_applicable, tip_applicable, revenue_account, active, updated_at,
+        service_category_business_units ( business_unit_id, business_units ( id, code, name ) )
+      `)
+      .order('code'),
+    supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
+  ]);
+  if (catRes.error) throw new Error(catRes.error.message);
+  if (buRes.error) throw new Error(buRes.error.message);
+  return { categories: catRes.data ?? [], businessUnits: buRes.data ?? [] };
 }
 
 function Yes({ on }: { on: boolean }) {
@@ -41,8 +48,8 @@ function Yes({ on }: { on: boolean }) {
 }
 
 export default async function ServiceCategoriesPage() {
-  const items = await fetchCategories();
-  const activeCount = items.filter((i) => i.active).length;
+  const { categories, businessUnits } = await fetchData();
+  const activeCount = categories.filter((i) => i.active).length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -57,10 +64,11 @@ export default async function ServiceCategoriesPage() {
           </Link>
           <h2 className="text-3xl font-bold tracking-tight mt-1">Service Categories</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
-            {items.length} total · {activeCount} active · Groups Service Items
+            {categories.length} total · {activeCount} active · Groups Service Items
           </p>
         </div>
         <ServiceCategoryFormDialog
+          businessUnits={businessUnits}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -76,7 +84,7 @@ export default async function ServiceCategoriesPage() {
             <TableRow>
               <TableHead className="w-32 font-bold">Code</TableHead>
               <TableHead className="font-bold">Name</TableHead>
-              <TableHead className="w-24 font-bold">Unit</TableHead>
+              <TableHead className="font-bold">Business Units</TableHead>
               <TableHead className="w-28 font-bold">Commission</TableHead>
               <TableHead className="w-28 font-bold">Tip</TableHead>
               <TableHead className="w-32 font-bold">Status</TableHead>
@@ -84,7 +92,7 @@ export default async function ServiceCategoriesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.length === 0 ? (
+            {categories.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
@@ -93,25 +101,52 @@ export default async function ServiceCategoriesPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="font-mono font-bold">{c.code}</TableCell>
-                  <TableCell className="font-semibold">{c.name}</TableCell>
-                  <TableCell className="font-mono font-bold uppercase">{c.business_unit}</TableCell>
-                  <TableCell><Yes on={c.commission_applicable} /></TableCell>
-                  <TableCell><Yes on={c.tip_applicable} /></TableCell>
-                  <TableCell>
-                    {c.active ? (
-                      <Badge className="font-bold">Active</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="font-bold">Inactive</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <ServiceCategoryRowActions item={c} />
-                  </TableCell>
-                </TableRow>
-              ))
+              categories.map((c) => {
+                const units = (c.service_category_business_units ?? [])
+                  .map((row) => (Array.isArray(row.business_units) ? row.business_units[0] : row.business_units))
+                  .filter(Boolean) as { id: string; code: string; name: string }[];
+                const categoryItem = {
+                  id: c.id,
+                  code: c.code,
+                  name: c.name,
+                  business_unit_ids: units.map((u) => u.id),
+                  commission_applicable: c.commission_applicable,
+                  tip_applicable: c.tip_applicable,
+                  revenue_account: c.revenue_account,
+                  active: c.active,
+                };
+                return (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-mono font-bold">{c.code}</TableCell>
+                    <TableCell className="font-semibold">{c.name}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {units.length === 0 ? (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        ) : (
+                          units.map((u) => (
+                            <Badge key={u.id} variant="secondary" className="font-bold font-mono text-xs uppercase">
+                              {u.code}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell><Yes on={c.commission_applicable} /></TableCell>
+                    <TableCell><Yes on={c.tip_applicable} /></TableCell>
+                    <TableCell>
+                      {c.active ? (
+                        <Badge className="font-bold">Active</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="font-bold">Inactive</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <ServiceCategoryRowActions item={categoryItem} businessUnits={businessUnits} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>

@@ -28,9 +28,10 @@ import { PositionFormDialog, type PositionItem } from './position-form-dialog';
 
 interface Props {
   item: PositionItem & { active: boolean };
+  businessUnits: { id: string; code: string; name: string }[];
 }
 
-export function PositionRowActions({ item }: Props) {
+export function PositionRowActions({ item, businessUnits }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -81,6 +82,7 @@ export function PositionRowActions({ item }: Props) {
       <PositionFormDialog
         mode="edit"
         item={item}
+        businessUnits={businessUnits}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

@@ -15,13 +15,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 import { createPosition, updatePosition } from '@/app/(dashboard)/settings/positions/actions';
 
@@ -29,26 +22,28 @@ export interface PositionItem {
   id: string;
   code: string;
   name: string;
-  business_unit: string;
+  business_unit_ids: string[];
+}
+
+interface BusinessUnitOption {
+  id: string;
+  code: string;
+  name: string;
 }
 
 interface Props {
   mode?: 'create' | 'edit';
   item?: PositionItem;
+  businessUnits: BusinessUnitOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
 
-const UNIT_OPTIONS = [
-  { value: 'spa', label: 'SPA' },
-  { value: 'gym', label: 'Gym (future)' },
-  { value: 'shared', label: 'Shared' },
-];
-
 export function PositionFormDialog({
   mode = 'create',
   item,
+  businessUnits,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -60,22 +55,33 @@ export function PositionFormDialog({
 
   const [code, setCode] = useState(item?.code ?? '');
   const [name, setName] = useState(item?.name ?? '');
-  const [businessUnit, setBusinessUnit] = useState(item?.business_unit ?? 'spa');
+  const [unitIds, setUnitIds] = useState<string[]>(item?.business_unit_ids ?? []);
 
   const isEdit = mode === 'edit';
 
+  function toggleUnit(id: string) {
+    setUnitIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (unitIds.length === 0) {
+      toast.error('Pick at least one business unit');
+      return;
+    }
     startTransition(async () => {
       const r = isEdit
-        ? await updatePosition({ id: item!.id, name, business_unit: businessUnit })
-        : await createPosition({ code, name, business_unit: businessUnit });
+        ? await updatePosition({ id: item!.id, name, business_unit_ids: unitIds })
+        : await createPosition({ code, name, business_unit_ids: unitIds });
       if (r.ok) {
         toast.success(isEdit ? 'Position updated' : 'Position created');
         setOpen(false);
         if (!isEdit) {
           setCode('');
           setName('');
+          setUnitIds([]);
         }
       } else {
         toast.error(r.error);
@@ -96,7 +102,7 @@ export function PositionFormDialog({
             </DialogTitle>
             <DialogDescription className="font-medium">
               {isEdit
-                ? 'Code is immutable. Name and unit can be changed.'
+                ? 'Code is immutable. Name and applicable business units can be changed.'
                 : 'HR job title for employees (e.g. Massage Therapist).'}
             </DialogDescription>
           </DialogHeader>
@@ -131,19 +137,33 @@ export function PositionFormDialog({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Business Unit *</Label>
-              <Select items={UNIT_OPTIONS} value={businessUnit} onValueChange={(v) => v && setBusinessUnit(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {UNIT_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label className="font-semibold">Applies To Business Units *</Label>
+              <div className="flex flex-col gap-1 rounded-lg border border-input p-2">
+                {businessUnits.length === 0 ? (
+                  <p className="text-xs font-medium text-muted-foreground px-2 py-1">
+                    No business units defined. Create one in Settings → Business Units first.
+                  </p>
+                ) : (
+                  businessUnits.map((b) => (
+                    <label
+                      key={b.id}
+                      className="flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 hover:bg-accent"
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-4 cursor-pointer accent-primary"
+                        checked={unitIds.includes(b.id)}
+                        onChange={() => toggleUnit(b.id)}
+                      />
+                      <span className="text-sm font-semibold">{b.name}</span>
+                      <span className="text-xs font-mono text-muted-foreground">{b.code}</span>
+                    </label>
+                  ))
+                )}
+              </div>
               <p className="text-xs font-medium text-muted-foreground">
-                <strong>Business line</strong>, not a branch. SPA = SPA only; Gym = future gym
-                line; Shared = used by both SPA and Gym (e.g. Receptionist). Cross-branch
-                staffing is handled by the shift schedule, not this field.
+                Pick every business line this position applies to. Cross-branch staffing is
+                handled by the shift schedule, not this field.
               </p>
             </div>
           </div>

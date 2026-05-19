@@ -20,26 +20,32 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [items, categories] = await Promise.all([
+  const [items, categories, businessUnits] = await Promise.all([
     supabase
       .from('service_items')
       .select(`
         id, code, name, service_category_id, duration_minutes,
         prep_before_minutes, cleanup_after_minutes,
         required_resource_type, pricing_model,
-        commission_applicable, tip_applicable, business_unit, active,
+        commission_applicable, tip_applicable, business_unit_id, active,
         category:service_categories ( code, name )
       `)
       .order('code'),
     supabase.from('service_categories').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
   ]);
   if (items.error) throw new Error(items.error.message);
   if (categories.error) throw new Error(categories.error.message);
-  return { items: items.data ?? [], categories: categories.data ?? [] };
+  if (businessUnits.error) throw new Error(businessUnits.error.message);
+  return {
+    items: items.data ?? [],
+    categories: categories.data ?? [],
+    businessUnits: businessUnits.data ?? [],
+  };
 }
 
 export default async function ServiceItemsPage() {
-  const { items, categories } = await fetchData();
+  const { items, categories, businessUnits } = await fetchData();
   const activeCount = items.filter((i) => i.active).length;
 
   return (
@@ -60,6 +66,7 @@ export default async function ServiceItemsPage() {
         </div>
         <ServiceItemFormDialog
           categories={categories}
+          businessUnits={businessUnits}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -108,7 +115,7 @@ export default async function ServiceItemsPage() {
                   pricing_model: i.pricing_model as ServiceItemRecord['pricing_model'],
                   commission_applicable: i.commission_applicable,
                   tip_applicable: i.tip_applicable,
-                  business_unit: i.business_unit,
+                  business_unit_id: i.business_unit_id,
                 };
                 return (
                   <TableRow key={i.id}>
@@ -133,7 +140,7 @@ export default async function ServiceItemsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <ServiceItemRowActions item={{ ...itemRecord, active: i.active }} categories={categories} />
+                      <ServiceItemRowActions item={{ ...itemRecord, active: i.active }} categories={categories} businessUnits={businessUnits} />
                     </TableCell>
                   </TableRow>
                 );

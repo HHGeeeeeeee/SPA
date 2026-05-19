@@ -38,10 +38,16 @@ export interface ServiceItemRecord {
   pricing_model: 'per_session' | 'membership_unlimited' | 'membership_quota' | 'subscription';
   commission_applicable: boolean;
   tip_applicable: boolean;
-  business_unit: string;
+  business_unit_id: string | null;
 }
 
 interface CategoryOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface BusinessUnitOption {
   id: string;
   code: string;
   name: string;
@@ -51,6 +57,7 @@ interface Props {
   mode?: 'create' | 'edit';
   item?: ServiceItemRecord;
   categories: CategoryOption[];
+  businessUnits: BusinessUnitOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -70,6 +77,7 @@ export function ServiceItemFormDialog({
   mode = 'create',
   item,
   categories,
+  businessUnits,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -91,8 +99,10 @@ export function ServiceItemFormDialog({
   );
   const [commissionApplicable, setCommissionApplicable] = useState(item?.commission_applicable ?? true);
   const [tipApplicable, setTipApplicable] = useState(item?.tip_applicable ?? true);
+  const [businessUnitId, setBusinessUnitId] = useState(item?.business_unit_id ?? businessUnits[0]?.id ?? '');
 
   const categoryOptions = categories.map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }));
+  const businessUnitOptions = businessUnits.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
 
   const isEdit = mode === 'edit';
   const slotMinutes = Number(duration || 0) + Number(prep || 0) + Number(cleanup || 0);
@@ -110,7 +120,7 @@ export function ServiceItemFormDialog({
       pricing_model: pricingModel,
       commission_applicable: commissionApplicable,
       tip_applicable: tipApplicable,
-      business_unit: 'spa',
+      business_unit_id: businessUnitId || null,
     };
     startTransition(async () => {
       const r = isEdit
@@ -181,6 +191,18 @@ export function ServiceItemFormDialog({
                 required
                 maxLength={120}
               />
+            </div>
+
+            <div className="flex flex-col gap-2 col-span-2">
+              <Label className="font-semibold">Business Unit *</Label>
+              <Select items={businessUnitOptions} value={businessUnitId} onValueChange={(v) => v && setBusinessUnitId(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {businessUnitOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex flex-col gap-2">

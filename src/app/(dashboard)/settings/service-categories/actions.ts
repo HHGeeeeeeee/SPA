@@ -11,7 +11,7 @@ type CategoryUpdate = Database['public']['Tables']['service_categories']['Update
 const schema = z.object({
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(80),
-  business_unit: z.string().min(1).max(20).default('spa'),
+  business_unit_ids: z.array(z.string().uuid()).min(1, 'Pick at least one business unit'),
   commission_applicable: z.boolean().default(true),
   tip_applicable: z.boolean().default(true),
   revenue_account: z.string().max(20).optional().nullable(),
@@ -21,19 +21,47 @@ const updateSchema = schema.partial({ code: true }).extend({ id: z.string().uuid
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+async function syncJunction(categoryId: string, businessUnitIds: string[]) {
+  const supabase = createServiceClient();
+  const del = await supabase
+    .from('service_category_business_units')
+    .delete()
+    .eq('service_category_id', categoryId);
+  if (del.error) return del.error;
+  if (businessUnitIds.length === 0) return null;
+  const ins = await supabase.from('service_category_business_units').insert(
+    businessUnitIds.map((business_unit_id) => ({
+      service_category_id: categoryId,
+      business_unit_id,
+    })),
+  );
+  return ins.error;
+}
+
 export async function createServiceCategory(input: unknown): Promise<ActionResult> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const supabase = createServiceClient();
-  const { error } = await supabase.from('service_categories').insert({
-    ...parsed.data,
-    revenue_account: parsed.data.revenue_account || null,
-    active: true,
-  });
-  if (error) {
-    if (error.code === '23505') return { ok: false, error: `Code "${parsed.data.code}" already exists` };
-    return { ok: false, error: error.message };
+  const { data, error } = await supabase
+    .from('service_categories')
+    .insert({
+      code: parsed.data.code,
+      name: parsed.data.name,
+      commission_applicable: parsed.data.commission_applicable,
+      tip_applicable: parsed.data.tip_applicable,
+      revenue_account: parsed.data.revenue_account || null,
+      active: true,
+    })
+    .select('id')
+    .single();
+  if (error || !data) {
+    if (error?.code === '23505') return { ok: false, error: `Code "${parsed.data.code}" already exists` };
+    return { ok: false, error: error?.message ?? 'Insert failed' };
   }
+
+  const linkErr = await syncJunction(data.id, parsed.data.business_unit_ids);
+  if (linkErr) return { ok: false, error: linkErr.message };
+
   revalidatePath('/settings/service-categories');
   return { ok: true };
 }
@@ -44,13 +72,20 @@ export async function updateServiceCategory(input: unknown): Promise<ActionResul
   const d = parsed.data;
   const patch: CategoryUpdate = {};
   if (d.name !== undefined) patch.name = d.name;
-  if (d.business_unit !== undefined) patch.business_unit = d.business_unit;
   if (d.commission_applicable !== undefined) patch.commission_applicable = d.commission_applicable;
   if (d.tip_applicable !== undefined) patch.tip_applicable = d.tip_applicable;
   if (d.revenue_account !== undefined) patch.revenue_account = d.revenue_account || null;
   const supabase = createServiceClient();
-  const { error } = await supabase.from('service_categories').update(patch).eq('id', d.id);
-  if (error) return { ok: false, error: error.message };
+  if (Object.keys(patch).length > 0) {
+    const { error } = await supabase.from('service_categories').update(patch).eq('id', d.id);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (d.business_unit_ids) {
+    const linkErr = await syncJunction(d.id, d.business_unit_ids);
+    if (linkErr) return { ok: false, error: linkErr.message };
+  }
+
   revalidatePath('/settings/service-categories');
   return { ok: true };
 }

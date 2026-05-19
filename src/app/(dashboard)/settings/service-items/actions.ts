@@ -19,7 +19,7 @@ const schema = z.object({
   pricing_model: z.enum(['per_session', 'membership_unlimited', 'membership_quota', 'subscription']).default('per_session'),
   commission_applicable: z.boolean().default(true),
   tip_applicable: z.boolean().default(true),
-  business_unit: z.string().max(20).default('spa'),
+  business_unit_id: z.string().uuid().optional().nullable(),
 });
 
 const updateSchema = schema.partial().extend({ id: z.string().uuid() });
@@ -57,7 +57,7 @@ export async function updateServiceItem(input: unknown): Promise<ActionResult> {
   if (d.pricing_model !== undefined) patch.pricing_model = d.pricing_model;
   if (d.commission_applicable !== undefined) patch.commission_applicable = d.commission_applicable;
   if (d.tip_applicable !== undefined) patch.tip_applicable = d.tip_applicable;
-  if (d.business_unit !== undefined) patch.business_unit = d.business_unit;
+  if (d.business_unit_id !== undefined) patch.business_unit_id = d.business_unit_id ?? null;
   const supabase = createServiceClient();
   const { error } = await supabase.from('service_items').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };

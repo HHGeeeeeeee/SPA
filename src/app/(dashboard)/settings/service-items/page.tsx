@@ -85,7 +85,7 @@ export default async function ServiceItemsPage() {
               <TableHead className="font-bold">Category</TableHead>
               <TableHead className="font-bold">Duration</TableHead>
               <TableHead className="font-bold">Slot</TableHead>
-              <TableHead className="font-bold">Resource</TableHead>
+              <TableHead className="font-bold">Station</TableHead>
               <TableHead className="w-28 font-bold">Status</TableHead>
               <TableHead className="w-12" />
             </TableRow>

@@ -108,7 +108,7 @@ export function ResourceFormDialog({
         ? await updateResource({ id: resource!.id, ...payload })
         : await createResource(payload);
       if (r.ok) {
-        toast.success(isEdit ? 'Resource updated' : 'Resource created');
+        toast.success(isEdit ? 'Service station updated' : 'Service station created');
         setOpen(false);
         if (!isEdit) {
           setResourceName('');
@@ -130,10 +130,10 @@ export function ResourceFormDialog({
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle className="font-bold">
-              {isEdit ? `Edit Resource: ${resource?.resource_name}` : 'New Resource'}
+              {isEdit ? `Edit Service Station: ${resource?.resource_name}` : 'New Service Station'}
             </DialogTitle>
             <DialogDescription className="font-medium">
-              Beds, rooms, chairs — any physical resource a Service Item occupies.
+              Physical spot where a service is performed — bed, chair, table, or room.
             </DialogDescription>
           </DialogHeader>
 

@@ -219,7 +219,7 @@ export function ServiceItemFormDialog({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Resource Type</Label>
+              <Label className="font-semibold">Station Type</Label>
               <Select
                 value={resourceType ?? NONE}
                 onValueChange={(v) => setResourceType(v ?? NONE)}

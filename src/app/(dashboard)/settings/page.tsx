@@ -29,7 +29,7 @@ const sections = [
       { icon: Briefcase, label: 'Commission Classes', href: '/settings/commission-classes', desc: 'M / S / J levels and rates' },
       { icon: Tags, label: 'Service Categories', href: '/settings/service-categories', desc: 'Massage / Hair / Nail / Rest' },
       { icon: ScrollText, label: 'Service Items', href: '/settings/service-items', desc: 'Individual services & pricing' },
-      { icon: Wrench, label: 'Resources', href: '/settings/resources', desc: 'Beds, rooms, chairs' },
+      { icon: Wrench, label: 'Service Stations', href: '/settings/resources', desc: 'Beds, chairs, tables, rooms' },
     ],
   },
   {

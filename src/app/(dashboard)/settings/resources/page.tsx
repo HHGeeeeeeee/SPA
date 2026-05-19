@@ -69,9 +69,9 @@ export default async function ResourcesPage() {
             <ChevronLeft className="size-3" />
             Settings
           </Link>
-          <h2 className="text-3xl font-bold tracking-tight mt-1">Resources</h2>
+          <h2 className="text-3xl font-bold tracking-tight mt-1">Service Stations</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
-            {resources.length} resources across {branches.length} branches
+            {resources.length} stations across {branches.length} branches
           </p>
         </div>
         <ResourceFormDialog
@@ -80,7 +80,7 @@ export default async function ResourcesPage() {
           trigger={
             <Button>
               <Plus className="size-4" />
-              Add Resource
+              Add Station
             </Button>
           }
         />
@@ -104,7 +104,7 @@ export default async function ResourcesPage() {
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
-                    No resources yet. Add the first bed / room.
+                    No service stations yet. Add the first bed / room.
                   </p>
                 </TableCell>
               </TableRow>

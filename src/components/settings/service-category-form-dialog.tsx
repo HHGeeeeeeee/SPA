@@ -149,7 +149,8 @@ export function ServiceCategoryFormDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs font-medium text-muted-foreground">
-                <strong>業別</strong>，不是門市。SPA / Gym 二擇一，或選 Shared（兩種業別共用）。
+                <strong>Business line</strong>, not a branch. Pick SPA or Gym, or Shared if
+                used by both.
               </p>
             </div>
 

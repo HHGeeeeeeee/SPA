@@ -1,6 +1,6 @@
 // Acumatica contract-based REST API client.
 //
-// Pattern adopted from集團現有專案 (ST Center / ENGO):
+// Pattern adopted from sibling group projects (ST Center / ENGO):
 // - User login passes credentials to Acumatica; Set-Cookie collected server-side
 //   into httpOnly acu_session cookie.
 // - Every GL post / query uses the calling user's own ERP session — clear

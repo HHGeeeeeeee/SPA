@@ -127,7 +127,7 @@ export function BillingDestinationFormDialog({
               {isEdit ? `Edit Billing: ${item?.code}` : 'New Billing Destination'}
             </DialogTitle>
             <DialogDescription className="font-medium">
-              Who pays — group company (intercompany journal) or external (real AR收款).
+              Who pays — group company (intercompany journal) or external (real AR receivable).
             </DialogDescription>
           </DialogHeader>
 
@@ -174,7 +174,7 @@ export function BillingDestinationFormDialog({
                   <div>
                     <span className="text-sm font-bold block">Intercompany</span>
                     <span className="text-xs font-medium text-muted-foreground">
-                      集團內 — 月底 settle 走過帳，無金流
+                      Within the group — settled via month-end journal, no cash movement
                     </span>
                   </div>
                 </label>
@@ -192,7 +192,7 @@ export function BillingDestinationFormDialog({
                   <div>
                     <span className="text-sm font-bold block">Third-Party</span>
                     <span className="text-xs font-medium text-muted-foreground">
-                      外部公司 — 真實收款（銀行轉帳）
+                      External company — actual payment received (bank transfer)
                     </span>
                   </div>
                 </label>

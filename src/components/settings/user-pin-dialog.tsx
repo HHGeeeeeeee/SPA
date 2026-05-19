@@ -70,7 +70,7 @@ export function UserPinDialog({
             <DialogTitle className="font-bold">Set Manager PIN</DialogTitle>
             <DialogDescription className="font-medium">
               4–6 digit PIN for <span className="font-mono">{username}</span>. Used for quick
-              approval (Void, DIS-90,撤銷結帳).
+              approval (Void, DIS-90, reopen a closed order).
             </DialogDescription>
           </DialogHeader>
 

@@ -141,8 +141,9 @@ export function PositionFormDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs font-medium text-muted-foreground">
-                <strong>業別</strong>，不是門市。SPA = 只用在 SPA 業別；Gym = 未來健身房業別；
-                Shared = SPA 跟 Gym 都能用（例如 Receptionist）。員工跨門市派遣由排班表處理。
+                <strong>Business line</strong>, not a branch. SPA = SPA only; Gym = future gym
+                line; Shared = used by both SPA and Gym (e.g. Receptionist). Cross-branch
+                staffing is handled by the shift schedule, not this field.
               </p>
             </div>
           </div>

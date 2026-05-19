@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, Sparkles } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { SpaLeaf } from '@/components/icons/spa-leaf';
 import { mainNavItems, bottomNavItems, type NavItem } from './sidebar-nav-items';
 
 function isActive(pathname: string, href?: string, children?: { href: string }[]): boolean {
@@ -36,8 +37,8 @@ function NavLink({
           'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
           'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
           active
-            ? 'bg-sidebar-primary/10 text-sidebar-primary font-medium'
-            : 'text-sidebar-foreground/80',
+            ? 'bg-sidebar-primary/15 text-sidebar-primary font-bold'
+            : 'text-sidebar-foreground/85 font-semibold',
         )}
       >
         <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
@@ -55,8 +56,8 @@ function NavLink({
           'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
           'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
           active
-            ? 'bg-sidebar-primary/10 text-sidebar-primary font-medium'
-            : 'text-sidebar-foreground/80',
+            ? 'bg-sidebar-primary/15 text-sidebar-primary font-bold'
+            : 'text-sidebar-foreground/85 font-semibold',
         )}
       >
         <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
@@ -78,8 +79,8 @@ function NavLink({
                   'rounded-md px-3 py-1.5 text-sm transition-colors',
                   'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                   childActive
-                    ? 'text-sidebar-primary font-medium'
-                    : 'text-sidebar-foreground/70',
+                    ? 'text-sidebar-primary font-bold'
+                    : 'text-sidebar-foreground/75 font-semibold',
                 )}
               >
                 {c.label}
@@ -99,12 +100,12 @@ export function Sidebar() {
     <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       {/* Logo */}
       <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-5">
-        <div className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground">
-          <Sparkles className="size-5" strokeWidth={2} />
+        <div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+          <SpaLeaf className="size-7" />
         </div>
         <div className="flex flex-col leading-tight">
-          <span className="text-base font-semibold">HHG-SPA</span>
-          <span className="text-[10px] text-muted-foreground tracking-wider uppercase">
+          <span className="text-base font-bold tracking-tight">HHG-SPA</span>
+          <span className="text-[10px] font-semibold text-muted-foreground tracking-[0.15em] uppercase">
             POS System
           </span>
         </div>
@@ -129,10 +130,10 @@ export function Sidebar() {
                 key={item.label}
                 href={item.href}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
                   item.destructive
                     ? 'text-destructive hover:bg-destructive/10'
-                    : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                    : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                 )}
               >
                 <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />

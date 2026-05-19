@@ -14,8 +14,8 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Dashboard</h2>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+        <p className="text-sm font-semibold text-muted-foreground mt-1">
           Today · {new Date().toLocaleDateString('en-PH', { dateStyle: 'full' })}
         </p>
       </div>
@@ -24,14 +24,14 @@ export default function DashboardPage() {
         {kpis.map((k) => (
           <Card key={k.label}>
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">
                 {k.label}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-semibold">{k.value}</div>
+              <div className="text-3xl font-extrabold tracking-tight tabular">{k.value}</div>
               {k.delta && (
-                <Badge variant="secondary" className="mt-2 text-xs">
+                <Badge variant="secondary" className="mt-2 text-xs font-bold">
                   {k.delta}
                 </Badge>
               )}

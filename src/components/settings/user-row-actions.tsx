@@ -69,11 +69,11 @@ export function UserRowActions({ user, branches }: Props) {
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setPinOpen(true)}>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setPinOpen(true))}>
               <KeyRound className="size-4" />
               {user.has_pin ? 'Reset Manager PIN' : 'Set Manager PIN'}
             </DropdownMenuItem>
@@ -87,7 +87,7 @@ export function UserRowActions({ user, branches }: Props) {
             {user.active ? (
               <DropdownMenuItem
                 variant="destructive"
-                onSelect={() => setConfirmDeactivate(true)}
+                onSelect={() => setTimeout(() => setConfirmDeactivate(true))}
               >
                 <PowerOff className="size-4" />
                 Deactivate

@@ -62,7 +62,7 @@ export function DiscountClassRowActions({ item }: { item: DiscountItem }) {
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit
             </DropdownMenuItem>
@@ -70,7 +70,7 @@ export function DiscountClassRowActions({ item }: { item: DiscountItem }) {
             {item.active ? (
               <DropdownMenuItem
                 variant="destructive"
-                onSelect={() => setConfirmDeactivate(true)}
+                onSelect={() => setTimeout(() => setConfirmDeactivate(true))}
               >
                 <PowerOff className="size-4" />
                 Deactivate

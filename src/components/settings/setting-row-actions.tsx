@@ -56,14 +56,14 @@ export function SettingRowActions({ setting, branches }: Props) {
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit Value
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
-              onSelect={() => setConfirmDelete(true)}
+              onSelect={() => setTimeout(() => setConfirmDelete(true))}
             >
               <Trash2 className="size-4" />
               Delete

@@ -57,7 +57,7 @@ export function TransactionCodeRowActions({ item, branches, paymentMethods }: Pr
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit
             </DropdownMenuItem>
@@ -65,7 +65,7 @@ export function TransactionCodeRowActions({ item, branches, paymentMethods }: Pr
             {item.active ? (
               <DropdownMenuItem
                 variant="destructive"
-                onSelect={() => setConfirmDeactivate(true)}
+                onSelect={() => setTimeout(() => setConfirmDeactivate(true))}
               >
                 <PowerOff className="size-4" />
                 Deactivate

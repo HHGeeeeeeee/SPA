@@ -55,7 +55,7 @@ export function PaymentMethodRowActions({ item }: Props) {
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit
             </DropdownMenuItem>
@@ -63,7 +63,7 @@ export function PaymentMethodRowActions({ item }: Props) {
             {item.active ? (
               <DropdownMenuItem
                 variant="destructive"
-                onSelect={() => setConfirmDeactivate(true)}
+                onSelect={() => setTimeout(() => setConfirmDeactivate(true))}
               >
                 <PowerOff className="size-4" />
                 Deactivate

@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { MoreVertical, Pencil, Power, Sparkles, Wrench, Ban } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -23,6 +23,7 @@ interface Props {
 
 export function ResourceRowActions({ resource, branches }: Props) {
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
 
   function setStatus(next: 'active' | 'cleaning' | 'maintenance' | 'closed') {
     startTransition(async () => {
@@ -33,54 +34,57 @@ export function ResourceRowActions({ resource, branches }: Props) {
   }
 
   return (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button variant="ghost" size="icon" disabled={pending}>
-              <MoreVertical className="size-4" />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="end">
-          <ResourceFormDialog
-            mode="edit"
-            resource={resource}
-            branches={branches}
-            trigger={
-              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
+    <>
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" disabled={pending}>
+                <MoreVertical className="size-4" />
+              </Button>
             }
           />
-          <DropdownMenuSeparator />
-          {resource.status !== 'active' && (
-            <DropdownMenuItem onSelect={() => setStatus('active')}>
-              <Power className="size-4" />
-              Set Active
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
             </DropdownMenuItem>
-          )}
-          {resource.status !== 'cleaning' && (
-            <DropdownMenuItem onSelect={() => setStatus('cleaning')}>
-              <Sparkles className="size-4" />
-              Mark Cleaning
-            </DropdownMenuItem>
-          )}
-          {resource.status !== 'maintenance' && (
-            <DropdownMenuItem onSelect={() => setStatus('maintenance')}>
-              <Wrench className="size-4" />
-              Mark Maintenance
-            </DropdownMenuItem>
-          )}
-          {resource.status !== 'closed' && (
-            <DropdownMenuItem variant="destructive" onSelect={() => setStatus('closed')}>
-              <Ban className="size-4" />
-              Mark Closed
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+            <DropdownMenuSeparator />
+            {resource.status !== 'active' && (
+              <DropdownMenuItem onSelect={() => setStatus('active')}>
+                <Power className="size-4" />
+                Set Active
+              </DropdownMenuItem>
+            )}
+            {resource.status !== 'cleaning' && (
+              <DropdownMenuItem onSelect={() => setStatus('cleaning')}>
+                <Sparkles className="size-4" />
+                Mark Cleaning
+              </DropdownMenuItem>
+            )}
+            {resource.status !== 'maintenance' && (
+              <DropdownMenuItem onSelect={() => setStatus('maintenance')}>
+                <Wrench className="size-4" />
+                Mark Maintenance
+              </DropdownMenuItem>
+            )}
+            {resource.status !== 'closed' && (
+              <DropdownMenuItem variant="destructive" onSelect={() => setStatus('closed')}>
+                <Ban className="size-4" />
+                Mark Closed
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <ResourceFormDialog
+        mode="edit"
+        resource={resource}
+        branches={branches}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+    </>
   );
 }

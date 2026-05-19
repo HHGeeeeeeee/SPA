@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { MoreVertical, Pencil, Power, PowerOff, Plane } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -24,6 +24,7 @@ interface Props {
 
 export function EmployeeRowActions({ employee, branches, classes }: Props) {
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
 
   function setStatus(next: EmployeeItem['status']) {
     startTransition(async () => {
@@ -34,49 +35,52 @@ export function EmployeeRowActions({ employee, branches, classes }: Props) {
   }
 
   return (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button variant="ghost" size="icon" disabled={pending}>
-              <MoreVertical className="size-4" />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="end">
-          <EmployeeFormDialog
-            mode="edit"
-            employee={employee}
-            branches={branches}
-            classes={classes}
-            trigger={
-              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
+    <>
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" disabled={pending}>
+                <MoreVertical className="size-4" />
+              </Button>
             }
           />
-          <DropdownMenuSeparator />
-          {employee.status !== 'active' && (
-            <DropdownMenuItem onSelect={() => setStatus('active')}>
-              <Power className="size-4" />
-              Activate
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
             </DropdownMenuItem>
-          )}
-          {employee.status !== 'on_leave' && (
-            <DropdownMenuItem onSelect={() => setStatus('on_leave')}>
-              <Plane className="size-4" />
-              Mark on leave
-            </DropdownMenuItem>
-          )}
-          {employee.status !== 'inactive' && (
-            <DropdownMenuItem variant="destructive" onSelect={() => setStatus('inactive')}>
-              <PowerOff className="size-4" />
-              Deactivate
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+            <DropdownMenuSeparator />
+            {employee.status !== 'active' && (
+              <DropdownMenuItem onSelect={() => setStatus('active')}>
+                <Power className="size-4" />
+                Activate
+              </DropdownMenuItem>
+            )}
+            {employee.status !== 'on_leave' && (
+              <DropdownMenuItem onSelect={() => setStatus('on_leave')}>
+                <Plane className="size-4" />
+                Mark on leave
+              </DropdownMenuItem>
+            )}
+            {employee.status !== 'inactive' && (
+              <DropdownMenuItem variant="destructive" onSelect={() => setStatus('inactive')}>
+                <PowerOff className="size-4" />
+                Deactivate
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <EmployeeFormDialog
+        mode="edit"
+        employee={employee}
+        branches={branches}
+        classes={classes}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+    </>
   );
 }

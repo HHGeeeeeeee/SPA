@@ -49,7 +49,9 @@ interface Props {
   mode?: 'create' | 'edit';
   item?: BillingDestinationItem;
   paymentMethods: PaymentMethodOption[];
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const NONE = '__none__';
@@ -59,8 +61,12 @@ export function BillingDestinationFormDialog({
   item,
   paymentMethods,
   trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pending, startTransition] = useTransition();
   const isEdit = mode === 'edit';
 
@@ -106,7 +112,9 @@ export function BillingDestinationFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-xl">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

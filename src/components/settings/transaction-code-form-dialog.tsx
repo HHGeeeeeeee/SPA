@@ -58,13 +58,25 @@ interface Props {
   item?: TxCodeItem;
   branches: BranchOption[];
   paymentMethods: PaymentMethodOption[];
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const NONE = '__none__';
 
-export function TransactionCodeFormDialog({ mode = 'create', item, branches, paymentMethods, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function TransactionCodeFormDialog({
+  mode = 'create',
+  item,
+  branches,
+  paymentMethods,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pending, startTransition] = useTransition();
   const isEdit = mode === 'edit';
 
@@ -117,7 +129,9 @@ export function TransactionCodeFormDialog({ mode = 'create', item, branches, pay
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-2xl">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

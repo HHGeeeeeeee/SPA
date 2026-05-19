@@ -53,7 +53,9 @@ interface Props {
   item?: CustomerSourceItem;
   billingDestinations: BillingOption[];
   discountClasses: DiscountOption[];
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const NONE = '__none__';
@@ -64,8 +66,12 @@ export function CustomerSourceFormDialog({
   billingDestinations,
   discountClasses,
   trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pending, startTransition] = useTransition();
   const isEdit = mode === 'edit';
 
@@ -101,7 +107,9 @@ export function CustomerSourceFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

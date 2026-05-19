@@ -24,11 +24,21 @@ import {
 interface Props {
   mode?: 'create' | 'edit';
   item?: { id: string; class_code: string; name: string; commission_rate: number };
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function CommissionClassFormDialog({ mode = 'create', item, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function CommissionClassFormDialog({
+  mode = 'create',
+  item,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [classCode, setClassCode] = useState(item?.class_code ?? '');
   const [name, setName] = useState(item?.name ?? '');
   const [ratePercent, setRatePercent] = useState(
@@ -60,7 +70,9 @@ export function CommissionClassFormDialog({ mode = 'create', item, trigger }: Pr
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

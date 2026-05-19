@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { MoreVertical, Power, PowerOff, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -14,7 +14,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
   DropdownMenu,
@@ -33,12 +32,14 @@ interface Props {
 
 export function BranchRowActions({ branch }: Props) {
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
-  function toggleActive() {
+  function toggleActive(next: boolean) {
     startTransition(async () => {
-      const result = await setBranchActive(branch.id, !branch.active);
+      const result = await setBranchActive(branch.id, next);
       if (result.ok) {
-        toast.success(branch.active ? 'Branch deactivated' : 'Branch reactivated');
+        toast.success(next ? 'Branch reactivated' : 'Branch deactivated');
       } else {
         toast.error(result.error);
       }
@@ -46,66 +47,65 @@ export function BranchRowActions({ branch }: Props) {
   }
 
   return (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button variant="ghost" size="icon" disabled={pending}>
-              <MoreVertical className="size-4" />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="end">
-          <BranchFormDialog
-            mode="edit"
-            branch={{ id: branch.id, code: branch.code, name: branch.name }}
-            trigger={
-              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
+    <>
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" disabled={pending}>
+                <MoreVertical className="size-4" />
+              </Button>
             }
           />
-          <DropdownMenuSeparator />
-          {branch.active ? (
-            <AlertDialog>
-              <AlertDialogTrigger
-                nativeButton={false}
-                render={
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={(e) => e.preventDefault()}
-                  >
-                    <PowerOff className="size-4" />
-                    Deactivate
-                  </DropdownMenuItem>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Deactivate branch?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Branch <strong>{branch.code}</strong> will be hidden from
-                    operations. Existing orders & history remain visible. You can
-                    reactivate anytime.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={toggleActive}>
-                    Deactivate
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : (
-            <DropdownMenuItem onSelect={toggleActive}>
-              <Power className="size-4" />
-              Reactivate
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
             </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+            <DropdownMenuSeparator />
+            {branch.active ? (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setConfirmDeactivate(true)}
+              >
+                <PowerOff className="size-4" />
+                Deactivate
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={() => toggleActive(true)}>
+                <Power className="size-4" />
+                Reactivate
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <BranchFormDialog
+        mode="edit"
+        branch={{ id: branch.id, code: branch.code, name: branch.name }}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+
+      <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate branch?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Branch <strong>{branch.code}</strong> will be hidden from operations.
+              Existing orders &amp; history remain visible. You can reactivate
+              anytime.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => toggleActive(false)}>
+              Deactivate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

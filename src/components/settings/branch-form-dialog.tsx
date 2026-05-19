@@ -21,15 +21,21 @@ import { createBranch, updateBranch } from '@/app/(dashboard)/settings/branches/
 interface BranchFormDialogProps {
   mode?: 'create' | 'edit';
   branch?: { id: string; code: string; name: string };
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function BranchFormDialog({
   mode = 'create',
   branch,
   trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }: BranchFormDialogProps) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [code, setCode] = useState(branch?.code ?? '');
   const [name, setName] = useState(branch?.name ?? '');
   const [pending, startTransition] = useTransition();
@@ -57,7 +63,9 @@ export function BranchFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

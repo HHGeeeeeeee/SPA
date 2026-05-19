@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { MoreVertical, Pencil, Power, PowerOff } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -14,7 +14,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
   DropdownMenu,
@@ -34,6 +33,8 @@ interface Props {
 
 export function ServiceItemRowActions({ item, categories }: Props) {
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   function toggleActive() {
     startTransition(async () => {
@@ -44,61 +45,63 @@ export function ServiceItemRowActions({ item, categories }: Props) {
   }
 
   return (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button variant="ghost" size="icon" disabled={pending}>
-              <MoreVertical className="size-4" />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="end">
-          <ServiceItemFormDialog
-            mode="edit"
-            item={item}
-            categories={categories}
-            trigger={
-              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
+    <>
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" disabled={pending}>
+                <MoreVertical className="size-4" />
+              </Button>
             }
           />
-          <DropdownMenuSeparator />
-          {item.active ? (
-            <AlertDialog>
-              <AlertDialogTrigger
-                nativeButton={false}
-                render={
-                  <DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}>
-                    <PowerOff className="size-4" />
-                    Deactivate
-                  </DropdownMenuItem>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Deactivate service?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    <strong>{item.code} — {item.name}</strong> will not be selectable on new
-                    orders. Existing orders are unaffected.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={toggleActive}>Deactivate</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : (
-            <DropdownMenuItem onSelect={toggleActive}>
-              <Power className="size-4" />
-              Reactivate
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
             </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+            <DropdownMenuSeparator />
+            {item.active ? (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setConfirmDeactivate(true)}
+              >
+                <PowerOff className="size-4" />
+                Deactivate
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={toggleActive}>
+                <Power className="size-4" />
+                Reactivate
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <ServiceItemFormDialog
+        mode="edit"
+        item={item}
+        categories={categories}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+
+      <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate service?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{item.code} — {item.name}</strong> will not be selectable on new
+              orders. Existing orders are unaffected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={toggleActive}>Deactivate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

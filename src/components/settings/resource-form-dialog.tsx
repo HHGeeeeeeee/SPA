@@ -47,7 +47,9 @@ interface Props {
   mode?: 'create' | 'edit';
   resource?: ResourceItem;
   branches: BranchOption[];
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const RESOURCE_TYPES: { value: ResourceType; label: string }[] = [
@@ -58,8 +60,17 @@ const RESOURCE_TYPES: { value: ResourceType; label: string }[] = [
   { value: 'steam_room', label: 'Steam Room' },
 ];
 
-export function ResourceFormDialog({ mode = 'create', resource, branches, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function ResourceFormDialog({
+  mode = 'create',
+  resource,
+  branches,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pending, startTransition] = useTransition();
 
   const [branchId, setBranchId] = useState(resource?.branch_id ?? branches[0]?.id ?? '');
@@ -100,7 +111,9 @@ export function ResourceFormDialog({ mode = 'create', resource, branches, trigge
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

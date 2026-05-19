@@ -46,13 +46,24 @@ interface Props {
   mode?: 'create' | 'edit';
   setting?: SettingItem;
   branches: BranchOption[];
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const NONE = '__none__';
 
-export function SettingFormDialog({ mode = 'create', setting, branches, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function SettingFormDialog({
+  mode = 'create',
+  setting,
+  branches,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pending, startTransition] = useTransition();
   const isEdit = mode === 'edit';
 
@@ -92,7 +103,9 @@ export function SettingFormDialog({ mode = 'create', setting, branches, trigger 
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

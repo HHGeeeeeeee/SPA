@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { MoreVertical, Pencil, Power, PowerOff, KeyRound, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -14,7 +14,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
   DropdownMenu,
@@ -38,6 +37,9 @@ interface Props {
 
 export function UserRowActions({ user, branches }: Props) {
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   function toggleActive() {
     startTransition(async () => {
@@ -56,77 +58,80 @@ export function UserRowActions({ user, branches }: Props) {
   }
 
   return (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button variant="ghost" size="icon" disabled={pending}>
-              <MoreVertical className="size-4" />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="end">
-          <UserFormDialog
-            mode="edit"
-            user={user}
-            branches={branches}
-            trigger={
-              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
+    <>
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" disabled={pending}>
+                <MoreVertical className="size-4" />
+              </Button>
             }
           />
-          <UserPinDialog
-            userId={user.id}
-            username={user.acumatica_user_id}
-            trigger={
-              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                <KeyRound className="size-4" />
-                {user.has_pin ? 'Reset Manager PIN' : 'Set Manager PIN'}
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setPinOpen(true)}>
+              <KeyRound className="size-4" />
+              {user.has_pin ? 'Reset Manager PIN' : 'Set Manager PIN'}
+            </DropdownMenuItem>
+            {user.has_pin && (
+              <DropdownMenuItem onSelect={handleClearPin}>
+                <Trash2 className="size-4" />
+                Clear Manager PIN
               </DropdownMenuItem>
-            }
-          />
-          {user.has_pin && (
-            <DropdownMenuItem onSelect={handleClearPin}>
-              <Trash2 className="size-4" />
-              Clear Manager PIN
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          {user.active ? (
-            <AlertDialog>
-              <AlertDialogTrigger
-                nativeButton={false}
-                render={
-                  <DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}>
-                    <PowerOff className="size-4" />
-                    Deactivate
-                  </DropdownMenuItem>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Deactivate user?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    <strong>{user.acumatica_user_id}</strong> will not be able to log in until
-                    reactivated. Past activity stays intact.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={toggleActive}>Deactivate</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : (
-            <DropdownMenuItem onSelect={toggleActive}>
-              <Power className="size-4" />
-              Activate
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+            )}
+            <DropdownMenuSeparator />
+            {user.active ? (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setConfirmDeactivate(true)}
+              >
+                <PowerOff className="size-4" />
+                Deactivate
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={toggleActive}>
+                <Power className="size-4" />
+                Activate
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <UserFormDialog
+        mode="edit"
+        user={user}
+        branches={branches}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+
+      <UserPinDialog
+        userId={user.id}
+        username={user.acumatica_user_id}
+        open={pinOpen}
+        onOpenChange={setPinOpen}
+      />
+
+      <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate user?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{user.acumatica_user_id}</strong> will not be able to log in until
+              reactivated. Past activity stays intact.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={toggleActive}>Deactivate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

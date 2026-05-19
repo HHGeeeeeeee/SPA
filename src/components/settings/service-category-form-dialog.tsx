@@ -42,11 +42,21 @@ export interface CategoryItem {
 interface Props {
   mode?: 'create' | 'edit';
   item?: CategoryItem;
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function ServiceCategoryFormDialog({ mode = 'create', item, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function ServiceCategoryFormDialog({
+  mode = 'create',
+  item,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [code, setCode] = useState(item?.code ?? '');
   const [name, setName] = useState(item?.name ?? '');
   const [businessUnit, setBusinessUnit] = useState(item?.business_unit ?? 'spa');
@@ -87,7 +97,9 @@ export function ServiceCategoryFormDialog({ mode = 'create', item, trigger }: Pr
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

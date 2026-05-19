@@ -21,11 +21,21 @@ import { setManagerPin } from '@/app/(dashboard)/settings/users/actions';
 interface Props {
   userId: string;
   username: string;
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function UserPinDialog({ userId, username, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function UserPinDialog({
+  userId,
+  username,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [pending, startTransition] = useTransition();
@@ -51,7 +61,9 @@ export function UserPinDialog({ userId, username, trigger }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-sm">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

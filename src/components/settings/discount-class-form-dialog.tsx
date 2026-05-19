@@ -35,11 +35,21 @@ interface DiscountItem {
 interface Props {
   mode?: 'create' | 'edit';
   item?: DiscountItem;
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function DiscountClassFormDialog({ mode = 'create', item, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+export function DiscountClassFormDialog({
+  mode = 'create',
+  item,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [code, setCode] = useState(item?.code ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const initialType = item && item.discount_amount_cents > 0 ? 'amount' : 'percent';
@@ -93,7 +103,9 @@ export function DiscountClassFormDialog({ mode = 'create', item, trigger }: Prop
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? (
+        <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      ) : null}
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>

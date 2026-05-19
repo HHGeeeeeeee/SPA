@@ -24,8 +24,9 @@ function NavLink({
   item: NavItem;
   pathname: string;
 }) {
-  const hasChildren = !!item.children?.length;
-  const active = isActive(pathname, item.href, item.children);
+  const flatChildren = item.children ?? item.childGroups?.flatMap((g) => g.items);
+  const hasChildren = !!flatChildren?.length;
+  const active = isActive(pathname, item.href, flatChildren);
   const [open, setOpen] = useState(active);
   const Icon = item.icon;
 
@@ -67,29 +68,48 @@ function NavLink({
           strokeWidth={2}
         />
       </button>
-      {open && item.children && (
+      {open && (item.children || item.childGroups) && (
         <div className="mt-1 ml-3 flex flex-col gap-px border-l border-sidebar-border pl-3">
-          {item.children.map((c) => {
-            const childActive = pathname === c.href || pathname.startsWith(c.href + '/');
-            return (
-              <Link
-                key={c.href}
-                href={c.href}
-                className={cn(
-                  'rounded-md px-3 py-1.5 text-sm transition-colors',
-                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                  childActive
-                    ? 'text-sidebar-primary font-bold'
-                    : 'text-sidebar-foreground/75 font-semibold',
-                )}
-              >
-                {c.label}
-              </Link>
-            );
-          })}
+          {item.children?.map((c) => (
+            <ChildLink key={c.href} item={c} pathname={pathname} />
+          ))}
+          {item.childGroups?.map((group, idx) => (
+            <div key={group.label} className={cn('flex flex-col gap-px', idx > 0 && 'mt-2')}>
+              <p className="px-3 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                {group.label}
+              </p>
+              {group.items.map((c) => (
+                <ChildLink key={c.href} item={c} pathname={pathname} />
+              ))}
+            </div>
+          ))}
         </div>
       )}
     </div>
+  );
+}
+
+function ChildLink({
+  item,
+  pathname,
+}: {
+  item: { label: string; href: string };
+  pathname: string;
+}) {
+  const active = pathname === item.href || pathname.startsWith(item.href + '/');
+  return (
+    <Link
+      href={item.href}
+      className={cn(
+        'rounded-md px-3 py-1.5 text-sm transition-colors',
+        'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+        active
+          ? 'text-sidebar-primary font-bold'
+          : 'text-sidebar-foreground/75 font-semibold',
+      )}
+    >
+      {item.label}
+    </Link>
   );
 }
 

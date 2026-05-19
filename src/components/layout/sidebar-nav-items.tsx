@@ -21,11 +21,17 @@ export interface NavSubItem {
   href: string;
 }
 
+export interface NavSubGroup {
+  label: string;
+  items: NavSubItem[];
+}
+
 export interface NavItem {
   label: string;
   href?: string;
   icon: LucideIcon;
   children?: NavSubItem[];
+  childGroups?: NavSubGroup[];
 }
 
 export const mainNavItems: NavItem[] = [
@@ -51,21 +57,42 @@ export const mainNavItems: NavItem[] = [
   {
     label: 'Settings',
     icon: Settings,
-    children: [
-      { label: 'Business Units', href: '/settings/business-units' },
-      { label: 'Branches', href: '/settings/branches' },
-      { label: 'Employees', href: '/settings/employees' },
-      { label: 'Positions', href: '/settings/positions' },
-      { label: 'Commission Classes', href: '/settings/commission-classes' },
-      { label: 'Service Categories', href: '/settings/service-categories' },
-      { label: 'Service Items', href: '/settings/service-items' },
-      { label: 'Resources', href: '/settings/resources' },
-      { label: 'Discount Classes', href: '/settings/discount-classes' },
-      { label: 'Sources & Billing', href: '/settings/sources-billing' },
-      { label: 'Payment Methods', href: '/settings/payment-methods' },
-      { label: 'Transaction Codes', href: '/settings/transaction-codes' },
-      { label: 'Users', href: '/settings/users' },
-      { label: 'System Settings', href: '/settings/system' },
+    childGroups: [
+      {
+        label: 'Organization',
+        items: [
+          { label: 'Business Units', href: '/settings/business-units' },
+          { label: 'Branches', href: '/settings/branches' },
+          { label: 'Employees', href: '/settings/employees' },
+          { label: 'Positions', href: '/settings/positions' },
+          { label: 'Commission Classes', href: '/settings/commission-classes' },
+        ],
+      },
+      {
+        label: 'Catalog',
+        items: [
+          { label: 'Service Categories', href: '/settings/service-categories' },
+          { label: 'Service Items', href: '/settings/service-items' },
+          { label: 'Resources', href: '/settings/resources' },
+        ],
+      },
+      {
+        label: 'Customer & Billing',
+        items: [
+          { label: 'Customer Sources', href: '/settings/customer-sources' },
+          { label: 'Billing Destinations', href: '/settings/billing-destinations' },
+          { label: 'Discount Classes', href: '/settings/discount-classes' },
+          { label: 'Payment Methods', href: '/settings/payment-methods' },
+          { label: 'Transaction Codes', href: '/settings/transaction-codes' },
+        ],
+      },
+      {
+        label: 'System',
+        items: [
+          { label: 'Users', href: '/settings/users' },
+          { label: 'System Settings', href: '/settings/system' },
+        ],
+      },
     ],
   },
 ];

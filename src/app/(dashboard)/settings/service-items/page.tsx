@@ -1,0 +1,147 @@
+import Link from 'next/link';
+import { ChevronLeft, Plus, Clock } from 'lucide-react';
+
+import { createServiceClient } from '@/lib/supabase/server';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Card } from '@/components/ui/card';
+import { ServiceItemFormDialog, type ServiceItemRecord } from '@/components/settings/service-item-form-dialog';
+import { ServiceItemRowActions } from '@/components/settings/service-item-row-actions';
+
+export const dynamic = 'force-dynamic';
+
+async function fetchData() {
+  const supabase = createServiceClient();
+  const [items, categories] = await Promise.all([
+    supabase
+      .from('service_items')
+      .select(`
+        id, code, name, service_category_id, duration_minutes,
+        prep_before_minutes, cleanup_after_minutes,
+        required_resource_type, pricing_model,
+        commission_applicable, tip_applicable, business_unit, active,
+        category:service_categories ( code, name )
+      `)
+      .order('code'),
+    supabase.from('service_categories').select('id, code, name').eq('active', true).order('code'),
+  ]);
+  if (items.error) throw new Error(items.error.message);
+  if (categories.error) throw new Error(categories.error.message);
+  return { items: items.data ?? [], categories: categories.data ?? [] };
+}
+
+export default async function ServiceItemsPage() {
+  const { items, categories } = await fetchData();
+  const activeCount = items.filter((i) => i.active).length;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="size-3" />
+            Settings
+          </Link>
+          <h2 className="text-3xl font-bold tracking-tight mt-1">Service Items</h2>
+          <p className="text-sm font-semibold text-muted-foreground mt-1">
+            {items.length} total · {activeCount} active
+          </p>
+        </div>
+        <ServiceItemFormDialog
+          categories={categories}
+          trigger={
+            <Button>
+              <Plus className="size-4" />
+              Add Service
+            </Button>
+          }
+        />
+      </div>
+
+      <Card className="p-0 overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-24 font-bold">Code</TableHead>
+              <TableHead className="font-bold">Name</TableHead>
+              <TableHead className="font-bold">Category</TableHead>
+              <TableHead className="font-bold">Duration</TableHead>
+              <TableHead className="font-bold">Slot</TableHead>
+              <TableHead className="font-bold">Resource</TableHead>
+              <TableHead className="w-28 font-bold">Status</TableHead>
+              <TableHead className="w-12" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center py-12">
+                  <p className="text-sm font-semibold text-muted-foreground">
+                    No service items yet.
+                  </p>
+                </TableCell>
+              </TableRow>
+            ) : (
+              items.map((i) => {
+                const category = Array.isArray(i.category) ? i.category[0] : i.category;
+                const slot = i.duration_minutes + i.prep_before_minutes + i.cleanup_after_minutes;
+                const itemRecord: ServiceItemRecord = {
+                  id: i.id,
+                  code: i.code,
+                  name: i.name,
+                  service_category_id: i.service_category_id,
+                  duration_minutes: i.duration_minutes,
+                  prep_before_minutes: i.prep_before_minutes,
+                  cleanup_after_minutes: i.cleanup_after_minutes,
+                  required_resource_type: i.required_resource_type,
+                  pricing_model: i.pricing_model as ServiceItemRecord['pricing_model'],
+                  commission_applicable: i.commission_applicable,
+                  tip_applicable: i.tip_applicable,
+                  business_unit: i.business_unit,
+                };
+                return (
+                  <TableRow key={i.id}>
+                    <TableCell className="font-mono font-bold">{i.code}</TableCell>
+                    <TableCell className="font-semibold">{i.name}</TableCell>
+                    <TableCell className="font-mono font-bold">{category?.code ?? '—'}</TableCell>
+                    <TableCell className="font-bold tabular">{i.duration_minutes} min</TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">
+                        <Clock className="size-3" />
+                        {slot} min
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono font-medium text-muted-foreground">
+                      {i.required_resource_type ?? '—'}
+                    </TableCell>
+                    <TableCell>
+                      {i.active ? (
+                        <Badge className="font-bold">Active</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="font-bold">Inactive</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <ServiceItemRowActions item={{ ...itemRecord, active: i.active }} categories={categories} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}

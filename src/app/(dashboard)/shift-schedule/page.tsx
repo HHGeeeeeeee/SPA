@@ -9,7 +9,8 @@ export const dynamic = 'force-dynamic';
 
 const TIMED = ['regular', 'cross_branch', 'on_call'];
 
-type ShiftView = 'employee' | 'station' | 'day';
+type ShiftView = 'employee' | 'station';
+type ShiftScale = 'week' | 'day';
 
 function todayISO(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -26,52 +27,66 @@ function tsToMin(iso: string): number {
   return h * 60 + m;
 }
 
-// Day view: each rostered therapist's working window + actual service blocks.
-async function fetchDayData(branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number }> {
+// Day (hourly) view for either subject. Therapist rows show each rostered
+// therapist's working window + their actual service blocks; Station rows show
+// each bed's occupancy from actual service times.
+async function fetchDayData(subject: ShiftView, branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number }> {
   const supabase = createServiceClient();
-  const [shRes, itemRes] = await Promise.all([
-    supabase
+  const { data: itemData } = await supabase
+    .from('order_items')
+    .select('therapist_id, resource_id, actual_start, actual_end, duration_minutes, service:service_items ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
+    .not('actual_start', 'is', null);
+  const dayItems = (itemData ?? []).filter((it) => {
+    const ord = one(it.order);
+    return ord && ord.branch_id === branchId && ord.service_date === day && it.actual_start;
+  });
+
+  let rows: DayRow[];
+  if (subject === 'station') {
+    const { data: stations } = await supabase
+      .from('resources').select('id, resource_name').eq('branch_id', branchId).eq('status', 'active').order('resource_name');
+    const byStation = new Map<string, { name: string; startMin: number; endMin: number; ongoing: boolean }[]>();
+    for (const it of dayItems) {
+      if (!it.resource_id) continue;
+      const startMin = tsToMin(it.actual_start!);
+      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
+      const arr = byStation.get(it.resource_id) ?? [];
+      arr.push({ name: one(it.therapist)?.name ?? one(it.service)?.name ?? 'Service', startMin, endMin, ongoing: !it.actual_end });
+      byStation.set(it.resource_id, arr);
+    }
+    rows = (stations ?? []).map((s) => ({
+      id: s.id, name: s.resource_name, code: '', shiftType: 'regular',
+      shiftStartMin: null, shiftEndMin: null, services: byStation.get(s.id) ?? [],
+    }));
+  } else {
+    const { data: shifts } = await supabase
       .from('employee_shifts')
       .select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )')
-      .eq('branch_id', branchId)
-      .eq('shift_date', day)
-      .in('shift_type', TIMED),
-    supabase
-      .from('order_items')
-      .select('therapist_id, actual_start, actual_end, duration_minutes, service:service_items ( name ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
-      .not('therapist_id', 'is', null)
-      .not('actual_start', 'is', null),
-  ]);
-
-  const servicesByTherapist = new Map<string, { name: string; startMin: number; endMin: number; ongoing: boolean }[]>();
-  for (const it of itemRes.data ?? []) {
-    const ord = one(it.order);
-    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || !it.actual_start) continue;
-    const startMin = tsToMin(it.actual_start);
-    const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
-    const arr = servicesByTherapist.get(it.therapist_id as string) ?? [];
-    arr.push({ name: one(it.service)?.name ?? 'Service', startMin, endMin, ongoing: !it.actual_end });
-    servicesByTherapist.set(it.therapist_id as string, arr);
+      .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED);
+    const byTherapist = new Map<string, { name: string; startMin: number; endMin: number; ongoing: boolean }[]>();
+    for (const it of dayItems) {
+      if (!it.therapist_id) continue;
+      const startMin = tsToMin(it.actual_start!);
+      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
+      const arr = byTherapist.get(it.therapist_id) ?? [];
+      arr.push({ name: one(it.service)?.name ?? 'Service', startMin, endMin, ongoing: !it.actual_end });
+      byTherapist.set(it.therapist_id, arr);
+    }
+    rows = (shifts ?? []).map((s) => {
+      const emp = one(s.employees);
+      return {
+        id: s.employee_id, name: emp?.name ?? '—', code: emp?.employee_code ?? '', shiftType: s.shift_type,
+        shiftStartMin: timeToMin(s.shift_start), shiftEndMin: timeToMin(s.shift_end),
+        services: byTherapist.get(s.employee_id) ?? [],
+      };
+    }).sort((a, b) => a.code.localeCompare(b.code));
   }
-
-  const rows: DayRow[] = (shRes.data ?? []).map((s) => {
-    const emp = one(s.employees);
-    return {
-      id: s.employee_id,
-      name: emp?.name ?? '—',
-      code: emp?.employee_code ?? '',
-      shiftType: s.shift_type,
-      shiftStartMin: timeToMin(s.shift_start),
-      shiftEndMin: timeToMin(s.shift_end),
-      services: servicesByTherapist.get(s.employee_id) ?? [],
-    };
-  }).sort((a, b) => a.code.localeCompare(b.code));
 
   const allMins: number[] = [];
   for (const r of rows) {
     if (r.shiftStartMin != null) allMins.push(r.shiftStartMin);
     if (r.shiftEndMin != null) allMins.push(r.shiftEndMin);
-    for (const s of r.services) { allMins.push(s.startMin, s.endMin); }
+    for (const s of r.services) allMins.push(s.startMin, s.endMin);
   }
   const windowStartMin = allMins.length ? Math.min(540, Math.floor(Math.min(...allMins) / 60) * 60) : 540;
   const windowEndMin = allMins.length ? Math.max(1320, Math.ceil(Math.max(...allMins) / 60) * 60) : 1320;
@@ -146,13 +161,14 @@ async function fetchData(branchParam?: string, weekParam?: string) {
 export default async function ShiftSchedulePage({
   searchParams,
 }: {
-  searchParams: Promise<{ branch?: string; week?: string; view?: string; day?: string }>;
+  searchParams: Promise<{ branch?: string; week?: string; view?: string; scale?: string; day?: string }>;
 }) {
   const sp = await searchParams;
-  const view: ShiftView = sp.view === 'station' ? 'station' : sp.view === 'day' ? 'day' : 'employee';
+  const view: ShiftView = sp.view === 'station' ? 'station' : 'employee';
+  const scale: ShiftScale = sp.scale === 'day' ? 'day' : 'week';
   const day = sp.day || todayISO();
   const { branches, branchId, monday, days, employees, shifts, stations } = await fetchData(sp.branch, sp.week);
-  const dayData = view === 'day' && branchId ? await fetchDayData(branchId, day) : null;
+  const dayData = scale === 'day' && branchId ? await fetchDayData(view, branchId, day) : null;
 
   const shiftAt = (empId: string, date: string): ShiftData | null => {
     const s = shifts.find((x) => x.employee_id === empId && x.shift_date === date);
@@ -182,19 +198,19 @@ export default async function ShiftSchedulePage({
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Shift Schedule</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
-            {view === 'day'
-              ? `${day} · hourly timeline · working hours and actual services`
+            {scale === 'day'
+              ? `${day} · hourly · ${view === 'station' ? 'bed occupancy' : 'therapist hours & services'}`
               : `Week of ${monday} · ${view === 'station' ? 'stations × days · click a cell to assign a therapist' : 'home-branch therapists · click a cell to set a shift'}`}
           </p>
         </div>
-        {branchId && <ShiftControls branches={branches} branchId={branchId} weekStart={monday} day={day} view={view} />}
+        {branchId && <ShiftControls branches={branches} branchId={branchId} weekStart={monday} day={day} view={view} scale={scale} />}
       </div>
 
       {!branchId ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           Create a branch first.
         </Card>
-      ) : view === 'day' ? (
+      ) : scale === 'day' ? (
         <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} />
       ) : view === 'employee' ? (
         employees.length === 0 ? (

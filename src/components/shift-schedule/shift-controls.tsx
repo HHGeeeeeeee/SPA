@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Users, BedDouble, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Users, BedDouble, CalendarDays, Clock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -13,14 +13,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-type ShiftView = 'employee' | 'station' | 'day';
+type ShiftView = 'employee' | 'station';
+type ShiftScale = 'week' | 'day';
 
 interface Props {
   branches: { id: string; code: string; name: string }[];
   branchId: string;
   weekStart: string; // YYYY-MM-DD (Monday)
-  day: string; // YYYY-MM-DD (selected day for the Day view)
+  day: string; // YYYY-MM-DD (selected day for the Day scale)
   view: ShiftView;
+  scale: ShiftScale;
 }
 
 function addDays(date: string, delta: number): string {
@@ -38,43 +40,44 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function ShiftControls({ branches, branchId, weekStart, day, view }: Props) {
+export function ShiftControls({ branches, branchId, weekStart, day, view, scale }: Props) {
   const router = useRouter();
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
 
-  function go(opts: { branch?: string; week?: string; day?: string; view?: ShiftView }) {
+  function go(opts: { branch?: string; week?: string; day?: string; view?: ShiftView; scale?: ShiftScale }) {
     const branch = opts.branch ?? branchId;
     const v = opts.view ?? view;
+    const sc = opts.scale ?? scale;
     const w = opts.week ?? weekStart;
     const dy = opts.day ?? day;
-    router.push(`/shift-schedule?branch=${branch}&view=${v}&week=${w}&day=${dy}`);
+    router.push(`/shift-schedule?branch=${branch}&view=${v}&scale=${sc}&week=${w}&day=${dy}`);
   }
+
+  const tabBtn = (active: boolean) =>
+    cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-bold transition-colors', active ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-muted-foreground hover:bg-accent');
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {/* subject: therapist vs station */}
       <div className="inline-flex rounded-lg border border-border p-0.5">
-        <button
-          type="button"
-          onClick={() => go({ view: 'employee' })}
-          className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-bold transition-colors', view === 'employee' ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-muted-foreground hover:bg-accent')}
-        >
+        <button type="button" onClick={() => go({ view: 'employee' })} className={tabBtn(view === 'employee')}>
           <Users className="size-4" /> Therapist
         </button>
-        <button
-          type="button"
-          onClick={() => go({ view: 'station' })}
-          className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-bold transition-colors', view === 'station' ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-muted-foreground hover:bg-accent')}
-        >
+        <button type="button" onClick={() => go({ view: 'station' })} className={tabBtn(view === 'station')}>
           <BedDouble className="size-4" /> Station
         </button>
-        <button
-          type="button"
-          onClick={() => go({ view: 'day' })}
-          className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-bold transition-colors', view === 'day' ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-muted-foreground hover:bg-accent')}
-        >
+      </div>
+
+      {/* scale: week grid vs hourly day */}
+      <div className="inline-flex rounded-lg border border-border p-0.5">
+        <button type="button" onClick={() => go({ scale: 'week' })} className={tabBtn(scale === 'week')}>
+          <CalendarDays className="size-4" /> Week
+        </button>
+        <button type="button" onClick={() => go({ scale: 'day' })} className={tabBtn(scale === 'day')}>
           <Clock className="size-4" /> Day
         </button>
       </div>
+
       <Select items={branchOptions} value={branchId} onValueChange={(v) => v && go({ branch: v })}>
         <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
         <SelectContent>
@@ -82,7 +85,7 @@ export function ShiftControls({ branches, branchId, weekStart, day, view }: Prop
         </SelectContent>
       </Select>
 
-      {view === 'day' ? (
+      {scale === 'day' ? (
         <div className="flex items-center gap-1">
           <Button size="icon" variant="outline" onClick={() => go({ day: addDays(day, -1) })}><ChevronLeft className="size-4" /></Button>
           <Button size="sm" variant="outline" onClick={() => go({ day: today() })}>Today</Button>

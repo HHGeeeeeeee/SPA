@@ -213,65 +213,71 @@ export function PaymentMethodFormDialog({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-da" className="font-semibold">Debit · Account</Label>
+              <Label htmlFor="pm-da" className="font-semibold">Debit · Account *</Label>
               <Input
                 id="pm-da"
                 value={debitAccount ?? ''}
                 onChange={(e) => setDebitAccount(e.target.value)}
                 placeholder="10108"
+                required
                 maxLength={20}
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-ds" className="font-semibold">Debit · Subaccount</Label>
+              <Label htmlFor="pm-ds" className="font-semibold">Debit · Subaccount *</Label>
               <Input
                 id="pm-ds"
                 value={debitSubaccount ?? ''}
                 onChange={(e) => setDebitSubaccount(e.target.value)}
                 placeholder="000000000"
+                required
                 maxLength={20}
                 pattern="[^-]*"
               />
             </div>
             <div className="flex flex-col gap-2 col-span-2">
-              <Label htmlFor="pm-db" className="font-semibold">Debit · Branch (optional)</Label>
+              <Label htmlFor="pm-db" className="font-semibold">Debit · Branch *</Label>
               <Input
                 id="pm-db"
                 value={debitBranch ?? ''}
                 onChange={(e) => setDebitBranch(e.target.value)}
-                placeholder="OSP2 (leave blank to use env default)"
+                placeholder="OSP2"
+                required
                 maxLength={20}
               />
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-ca" className="font-semibold">Credit · Account</Label>
+              <Label htmlFor="pm-ca" className="font-semibold">Credit · Account *</Label>
               <Input
                 id="pm-ca"
                 value={creditAccount ?? ''}
                 onChange={(e) => setCreditAccount(e.target.value)}
                 placeholder="40140"
+                required
                 maxLength={20}
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-cs" className="font-semibold">Credit · Subaccount</Label>
+              <Label htmlFor="pm-cs" className="font-semibold">Credit · Subaccount *</Label>
               <Input
                 id="pm-cs"
                 value={creditSubaccount ?? ''}
                 onChange={(e) => setCreditSubaccount(e.target.value)}
                 placeholder="000000000"
+                required
                 maxLength={20}
                 pattern="[^-]*"
               />
             </div>
             <div className="flex flex-col gap-2 col-span-2">
-              <Label htmlFor="pm-cb" className="font-semibold">Credit · Branch (optional)</Label>
+              <Label htmlFor="pm-cb" className="font-semibold">Credit · Branch *</Label>
               <Input
                 id="pm-cb"
                 value={creditBranch ?? ''}
                 onChange={(e) => setCreditBranch(e.target.value)}
                 placeholder="OSP2"
+                required
                 maxLength={20}
               />
             </div>

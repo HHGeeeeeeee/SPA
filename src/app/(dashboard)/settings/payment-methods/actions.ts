@@ -17,12 +17,12 @@ const schema = z.object({
   method_type: z.enum(['one_time', 'recurring', 'stored_value', 'prepaid_quota']).default('one_time'),
   manual_reconciliation: z.boolean().default(true),
   requires_reference: z.boolean().default(false),
-  debit_account: z.string().max(20).optional().nullable().or(z.literal('')),
-  debit_subaccount: noDash.max(20).optional().nullable().or(z.literal('')),
-  debit_branch: z.string().max(20).optional().nullable().or(z.literal('')),
-  credit_account: z.string().max(20).optional().nullable().or(z.literal('')),
-  credit_subaccount: noDash.max(20).optional().nullable().or(z.literal('')),
-  credit_branch: z.string().max(20).optional().nullable().or(z.literal('')),
+  debit_account: z.string().min(1, 'Debit account is required').max(20),
+  debit_subaccount: noDash.min(1, 'Debit subaccount is required').max(20),
+  debit_branch: z.string().min(1, 'Debit branch is required').max(20),
+  credit_account: z.string().min(1, 'Credit account is required').max(20),
+  credit_subaccount: noDash.min(1, 'Credit subaccount is required').max(20),
+  credit_branch: z.string().min(1, 'Credit branch is required').max(20),
 });
 
 const updateSchema = schema.partial().extend({ id: z.string().uuid() });

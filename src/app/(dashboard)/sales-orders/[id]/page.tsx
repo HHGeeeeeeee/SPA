@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { currentSession, isManager } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
@@ -124,6 +125,7 @@ async function fetchData(id: string) {
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
   const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods } = result;
@@ -132,13 +134,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const source = one(order.source);
   const billing = one(order.billing);
 
-  // Payment policy: intercompany billing is settled via AR only (no cash at the
-  // counter), so the payment method is locked. Everything else is flexible.
-  const intercompany = billing?.settlement_type === 'intercompany';
+  // An order is AR-billed (invoiced, settled later via Revenue SOA — no counter
+  // collection) when its billing destination defaults to the AR method. Those
+  // orders stay Completed until the daily Revenue Confirm closes them. Everyone
+  // else pays at the counter (cash / PAYMAYA / stored value), flexible.
+  const arMethodId = paymentMethods.find((m) => m.code === 'ar')?.id ?? null;
+  const arBilled = !!billing?.default_payment_method_id && billing.default_payment_method_id === arMethodId;
   const paymentPolicy = {
-    locked: !!intercompany,
-    lockedMethodId: intercompany ? billing?.default_payment_method_id ?? null : null,
+    arBilled,
     defaultMethodId: billing?.default_payment_method_id ?? null,
+    arBillingLabel: billing ? `${billing.code} — ${billing.name}` : null,
   };
 
   const orderItemsRaw = order.order_items ?? [];
@@ -264,6 +269,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         discountClasses={discountClasses}
         paymentMethods={paymentMethods}
         paymentPolicy={paymentPolicy}
+        canManage={canManage}
       />
     </div>
   );

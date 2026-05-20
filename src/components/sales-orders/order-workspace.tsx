@@ -28,8 +28,11 @@ import {
   finishOrderItem,
   setOrderStatus,
   voidPayment,
+  voidOrder,
+  reopenOrder,
 } from '@/app/(dashboard)/sales-orders/actions';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
+import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
 
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -93,7 +96,8 @@ interface Props {
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
   paymentMethods: { id: string; code: string; display_name: string }[];
-  paymentPolicy: { locked: boolean; lockedMethodId: string | null; defaultMethodId: string | null };
+  paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
+  canManage: boolean;
 }
 
 const NONE = '__none__';
@@ -120,6 +124,7 @@ export function OrderWorkspace({
   discountClasses,
   paymentMethods,
   paymentPolicy,
+  canManage,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -136,13 +141,17 @@ export function OrderWorkspace({
   const noDiscount = discountClasses.find((d) => d.code === 'DIS-00');
   const [discountId, setDiscountId] = useState(noDiscount?.id ?? discountClasses[0]?.id ?? '');
 
-  // payment — intercompany billing locks the method to AR; others are flexible.
-  const allowedPaymentMethods = paymentPolicy.locked && paymentPolicy.lockedMethodId
-    ? paymentMethods.filter((p) => p.id === paymentPolicy.lockedMethodId)
-    : paymentMethods;
-  const defaultPayMethod =
-    paymentPolicy.lockedMethodId ?? paymentPolicy.defaultMethodId ?? allowedPaymentMethods[0]?.id ?? '';
+  // Counter payment methods only — AR is an invoice arrangement, not a counter
+  // collection, so it is never offered here. AR-billed orders skip payment.
+  const allowedPaymentMethods = paymentMethods.filter((p) => p.code !== 'ar');
+  const defaultMethodIsCounter = allowedPaymentMethods.some((p) => p.id === paymentPolicy.defaultMethodId);
+  const defaultPayMethod = (defaultMethodIsCounter ? paymentPolicy.defaultMethodId : null)
+    ?? allowedPaymentMethods.find((p) => p.code === 'cash')?.id
+    ?? allowedPaymentMethods[0]?.id
+    ?? '';
   const [payMode, setPayMode] = useState<'split' | 'together'>('split');
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const canRunService = ['open', 'in_service'].includes(order.status);
@@ -253,6 +262,22 @@ export function OrderWorkspace({
     });
   }
 
+  function doVoid(reason: string) {
+    startTransition(async () => {
+      const r = await voidOrder(order.id, reason);
+      if (r.ok) { toast.success('Order voided'); setVoidOpen(false); }
+      else toast.error(r.error);
+    });
+  }
+
+  function doReopen(reason: string) {
+    startTransition(async () => {
+      const r = await reopenOrder(order.id, reason);
+      if (r.ok) { toast.success('Order reopened'); setReopenOpen(false); }
+      else toast.error(r.error);
+    });
+  }
+
   const groupOptions = [...new Set(serviceItems.map((s) => s.group))]
     .sort()
     .map((g) => ({ value: g, label: g }));
@@ -299,10 +324,15 @@ export function OrderWorkspace({
             <Button size="sm" onClick={() => doStatus('completed')} disabled={pending}>Complete</Button>
           )}
           {order.status === 'paid' && (
-            <Button size="sm" onClick={() => doStatus('closed')} disabled={pending}>Close Order</Button>
+            <span className="text-xs font-medium text-muted-foreground">Paid — closes at daily Revenue Confirm</span>
           )}
-          {!['closed', 'void'].includes(order.status) && (
-            <Button size="sm" variant="ghost" className="text-destructive ml-auto" onClick={() => doStatus('void')} disabled={pending}>
+          {order.status === 'completed' && canManage && (
+            <Button size="sm" variant="outline" onClick={() => setReopenOpen(true)} disabled={pending}>
+              Reopen
+            </Button>
+          )}
+          {!['closed', 'void'].includes(order.status) && canManage && (
+            <Button size="sm" variant="ghost" className="text-destructive ml-auto" onClick={() => setVoidOpen(true)} disabled={pending}>
               Void
             </Button>
           )}
@@ -495,8 +525,18 @@ export function OrderWorkspace({
         ))
       )}
 
-      {/* payment */}
-      {['completed', 'paid'].includes(order.status) && (due > 0 || payments.length > 0) && (
+      {/* AR-billed orders are invoiced, not collected at the counter */}
+      {paymentPolicy.arBilled && ['completed', 'paid'].includes(order.status) && (
+        <Card className="border-dashed bg-muted/30">
+          <CardContent className="py-3 text-sm font-medium text-muted-foreground">
+            Billed to <span className="font-bold text-foreground">{paymentPolicy.arBillingLabel ?? 'AR'}</span> via AR —
+            no counter payment. Closed at the daily Revenue Confirm and settled on the monthly Revenue SOA.
+          </CardContent>
+        </Card>
+      )}
+
+      {/* payment (counter-paid orders only) */}
+      {!paymentPolicy.arBilled && ['completed', 'paid'].includes(order.status) && (due > 0 || payments.length > 0) && (
         <Card>
           <CardHeader className="pb-2 flex-row items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
@@ -543,7 +583,7 @@ export function OrderWorkspace({
                       dueCents={c.subtotal_cents - c.paid_cents}
                       tipTargets={tipTargetsFor(c.id)}
                       paymentMethods={allowedPaymentMethods}
-                      locked={paymentPolicy.locked}
+                      locked={false}
                       defaultMethodId={defaultPayMethod}
                     />
                   ))
@@ -555,7 +595,7 @@ export function OrderWorkspace({
                   dueCents={due}
                   tipTargets={tipTargetsFor(multiCustomer ? null : customers[0]?.id ?? null)}
                   paymentMethods={allowedPaymentMethods}
-                  locked={paymentPolicy.locked}
+                  locked={false}
                   defaultMethodId={defaultPayMethod}
                 />
               ))}
@@ -584,6 +624,26 @@ export function OrderWorkspace({
           </CardContent>
         </Card>
       )}
+
+      <ReasonDialog
+        open={voidOpen}
+        onOpenChange={setVoidOpen}
+        title="Void this order?"
+        description="The order is cancelled and locked. Past activity is kept."
+        confirmLabel="Void order"
+        destructive
+        pending={pending}
+        onConfirm={doVoid}
+      />
+      <ReasonDialog
+        open={reopenOpen}
+        onOpenChange={setReopenOpen}
+        title="Reopen this order?"
+        description="Moves the order back to Open so it can be edited. Logged for audit."
+        confirmLabel="Reopen"
+        pending={pending}
+        onConfirm={doReopen}
+      />
     </div>
   );
 }

@@ -4,6 +4,26 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { currentSession, isManager } from '@/lib/auth';
+
+// Append a row to the generic status-change audit log.
+async function logStatus(
+  orderId: string,
+  from: string | null,
+  to: string,
+  reason: string | null,
+  staffId: string | null,
+) {
+  const supabase = createServiceClient();
+  await supabase.from('order_status_log').insert({
+    entity_type: 'order',
+    entity_id: orderId,
+    from_status: from,
+    to_status: to,
+    reason: reason ?? null,
+    changed_by_staff_id: staffId,
+  });
+}
 
 const schema = z.object({
   branch_id: z.string().uuid(),
@@ -76,10 +96,52 @@ export async function createDraftOrder(input: unknown): Promise<ActionResult<{ i
   return { ok: true, data: { id: data.id } };
 }
 
-export async function voidOrder(id: string): Promise<ActionResult> {
+export async function voidOrder(id: string, reason: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required to void' };
+  if (!reason || reason.trim().length < 3) return { ok: false, error: 'A reason is required to void' };
   const supabase = createServiceClient();
+  const { data: order } = await supabase.from('orders').select('status').eq('id', id).single();
+  if (!order) return { ok: false, error: 'Order not found' };
+  if (['closed', 'void'].includes(order.status)) {
+    return { ok: false, error: 'A closed or already-void order cannot be voided' };
+  }
   const { error } = await supabase.from('orders').update({ status: 'void' }).eq('id', id);
   if (error) return { ok: false, error: error.message };
+  await logStatus(id, order.status, 'void', reason.trim(), session!.staffUserId);
+  revalidatePath('/sales-orders');
+  revalidatePath(`/sales-orders/${id}`);
+  return { ok: true };
+}
+
+// Reopen a Completed order back to Open so it can be edited again. Manager-only,
+// reason required, snapshot written to order_edit_log.
+export async function reopenOrder(id: string, reason: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required to reopen' };
+  if (!reason || reason.trim().length < 3) return { ok: false, error: 'A reason is required to reopen' };
+  const supabase = createServiceClient();
+  const { data: order } = await supabase
+    .from('orders')
+    .select('id, status, total_cents, paid_cents, subtotal_cents, discount_cents')
+    .eq('id', id)
+    .single();
+  if (!order) return { ok: false, error: 'Order not found' };
+  if (order.status !== 'completed') {
+    return { ok: false, error: 'Only a Completed order can be reopened. Reverse the payment first if it is Paid.' };
+  }
+  const { error } = await supabase.from('orders').update({ status: 'open' }).eq('id', id);
+  if (error) return { ok: false, error: error.message };
+  await supabase.from('order_edit_log').insert({
+    order_id: id,
+    before_snapshot: order,
+    after_snapshot: { ...order, status: 'open' },
+    edit_reason: reason.trim(),
+    from_status: 'completed',
+    to_status: 'open',
+    edited_by_staff_id: session!.staffUserId,
+  });
+  await logStatus(id, 'completed', 'open', reason.trim(), session!.staffUserId);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${id}`);
   return { ok: true };
@@ -272,15 +334,17 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
 // Payment + status machine
 // ---------------------------------------------------------------------------
 
+// Forward-only moves a cashier drives. Paid is reached by takePayment; Closed is
+// reached only by Revenue Confirm (daily close); Void/Reopen are separate gated
+// actions.
 const ALLOWED_NEXT: Record<string, string[]> = {
-  draft: ['open', 'void'],
-  open: ['in_service', 'void'],
-  in_service: ['completed', 'void'],
-  completed: ['paid', 'void'],
-  paid: ['closed'],
+  draft: ['open'],
+  open: ['in_service'],
+  in_service: ['completed'],
 };
 
 export async function setOrderStatus(orderId: string, next: string): Promise<ActionResult> {
+  const session = await currentSession();
   const supabase = createServiceClient();
   const { data: order, error: oe } = await supabase
     .from('orders')
@@ -292,11 +356,9 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
   if (!allowed.includes(next)) {
     return { ok: false, error: `Cannot move from ${order.status} to ${next}` };
   }
-  if (next === 'paid' && order.paid_cents < order.total_cents) {
-    return { ok: false, error: 'Order is not fully paid yet' };
-  }
   const { error } = await supabase.from('orders').update({ status: next }).eq('id', orderId);
   if (error) return { ok: false, error: error.message };
+  await logStatus(orderId, order.status, next, null, session?.staffUserId ?? null);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${orderId}`);
   return { ok: true };

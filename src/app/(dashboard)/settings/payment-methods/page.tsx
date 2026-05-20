@@ -73,12 +73,12 @@ export default async function PaymentMethodsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="font-bold">Code</TableHead>
+              <TableHead className="w-44 font-bold">Code</TableHead>
               <TableHead className="font-bold">Display Name</TableHead>
-              <TableHead className="w-20 font-bold">CCY</TableHead>
+              <TableHead className="w-28 font-bold">Currency</TableHead>
               <TableHead className="w-32 font-bold">Type</TableHead>
-              <TableHead className="w-20 font-bold">Manual</TableHead>
-              <TableHead className="w-20 font-bold">Ref?</TableHead>
+              <TableHead className="w-40 font-bold">Manual Reconcile</TableHead>
+              <TableHead className="w-44 font-bold">Requires Reference</TableHead>
               <TableHead className="w-24 font-bold">Status</TableHead>
               <TableHead className="w-12" />
             </TableRow>

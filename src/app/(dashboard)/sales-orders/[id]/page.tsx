@@ -35,6 +35,7 @@ async function fetchData(id: string) {
       order_customers ( id, customer_name, customer_phone, seq_no ),
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
+        therapist_id, resource_id,
         service:service_items ( name ),
         therapist:employees ( name )
       )
@@ -48,12 +49,12 @@ async function fetchData(id: string) {
   const [svc, emp, res, disc, pm, shifts] = await Promise.all([
     supabase
       .from('service_items')
-      .select('id, code, name, service_group, duration_minutes, service_item_prices ( price_cents, price_class, branch_id )')
+      .select('id, code, name, service_group, duration_minutes, required_resource_type, service_item_prices ( price_cents, price_class, branch_id )')
       .eq('active', true)
       .order('service_group')
       .order('duration_minutes'),
     supabase.from('employees').select('id, employee_code, name').eq('status', 'active').order('employee_code'),
-    supabase.from('resources').select('id, resource_name').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
+    supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description').eq('active', true).order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
     // Therapists with a working shift at this branch on the service date.
@@ -65,13 +66,13 @@ async function fetchData(id: string) {
       .in('shift_type', ['regular', 'cross_branch', 'on_call']),
   ]);
 
-  // Therapists currently mid-service anywhere (started, not finished).
+  // Therapists / stations currently mid-service anywhere (started, not finished).
   const busy = await supabase
     .from('order_items')
-    .select('therapist_id')
-    .eq('status', 'in_service')
-    .not('therapist_id', 'is', null);
+    .select('therapist_id, resource_id')
+    .eq('status', 'in_service');
   const busyTherapistIds = [...new Set((busy.data ?? []).map((b) => b.therapist_id).filter(Boolean) as string[])];
+  const busyResourceIds = [...new Set((busy.data ?? []).map((b) => b.resource_id).filter(Boolean) as string[])];
 
   const scheduledIds = new Set((shifts.data ?? []).map((s) => s.employee_id));
   const allEmployees = (emp.data ?? []).map((e) => ({ id: e.id, code: e.employee_code, name: e.name }));
@@ -90,11 +91,13 @@ async function fetchData(id: string) {
         group: s.service_group ?? s.name,
         duration_minutes: s.duration_minutes,
         price_cents: normal?.price_cents ?? null,
+        required_resource_type: s.required_resource_type ?? null,
       };
     }),
     employees: employeesScoped,
     busyTherapistIds,
-    resources: (res.data ?? []).map((r) => ({ id: r.id, code: '', name: r.resource_name })),
+    busyResourceIds,
+    resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null })),
     discountClasses: disc.data ?? [],
     paymentMethods: pm.data ?? [],
   };
@@ -104,7 +107,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const { id } = await params;
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, busyTherapistIds, resources, discountClasses, paymentMethods } = result;
+  const { order, serviceItems, employees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods } = result;
 
   const branch = one(order.branch);
   const source = one(order.source);
@@ -121,6 +124,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       order_customer_id: it.order_customer_id,
       service_name: svc?.name ?? 'Service',
       therapist_name: th?.name ?? null,
+      therapist_id: it.therapist_id,
+      resource_id: it.resource_id,
       list_price_cents: it.list_price_cents,
       discount_amount_cents: it.discount_amount_cents,
       final_amount_cents: it.final_amount_cents,
@@ -192,6 +197,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         serviceItems={serviceItems}
         employees={employees}
         busyTherapistIds={busyTherapistIds}
+        busyResourceIds={busyResourceIds}
         resources={resources}
         discountClasses={discountClasses}
         paymentMethods={paymentMethods}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Plus, Trash2, UserPlus, CreditCard } from 'lucide-react';
+import { Plus, Trash2, UserPlus, CreditCard, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,8 @@ interface OrderItem {
   order_customer_id: string;
   service_name: string;
   therapist_name: string | null;
+  therapist_id: string | null;
+  resource_id: string | null;
   list_price_cents: number;
   discount_amount_cents: number;
   final_amount_cents: number;
@@ -47,8 +49,9 @@ interface OrderCustomer {
   seq_no: number;
 }
 interface Opt { id: string; code: string; name: string }
+interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string }
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null }
+interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
 
 interface Props {
   order: {
@@ -63,7 +66,8 @@ interface Props {
   serviceItems: ServiceVariant[];
   employees: Opt[];
   busyTherapistIds: string[];
-  resources: Opt[];
+  busyResourceIds: string[];
+  resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
   paymentMethods: { id: string; code: string; display_name: string }[];
 }
@@ -81,6 +85,7 @@ export function OrderWorkspace({
   serviceItems,
   employees,
   busyTherapistIds,
+  busyResourceIds,
   resources,
   discountClasses,
   paymentMethods,
@@ -135,6 +140,39 @@ export function OrderWorkspace({
       if (r.ok) { setSvcId(''); setGroupSel(''); setActiveCustomer(null); toast.success('Service added'); }
       else toast.error(r.error);
     });
+  }
+
+  // Pick the first free therapist + a matching free station for this line.
+  // "Free" = not mid-service anywhere, and not already taken by another live
+  // line on this same order. Station type is matched to the service when known.
+  function autoAssign() {
+    const takenTherapists = new Set<string>(busyTherapistIds);
+    const takenStations = new Set<string>(busyResourceIds);
+    items
+      .filter((i) => ['scheduled', 'in_service'].includes(i.status))
+      .forEach((i) => {
+        if (i.therapist_id) takenTherapists.add(i.therapist_id);
+        if (i.resource_id) takenStations.add(i.resource_id);
+      });
+
+    const freeTherapist = employees.find((e) => !takenTherapists.has(e.id));
+    const neededType = serviceItems.find((s) => s.id === svcId)?.required_resource_type ?? null;
+    const freeStation = resources.find(
+      (r) => !takenStations.has(r.id) && (!neededType || r.resource_type === neededType),
+    );
+
+    if (freeTherapist) setTherapistId(freeTherapist.id);
+    if (freeStation) setResourceId(freeStation.id);
+
+    if (freeTherapist && freeStation) {
+      toast.success(`Auto-assigned ${freeTherapist.name} · ${freeStation.name}`);
+    } else if (!freeTherapist && !freeStation) {
+      toast.error('No free therapist or station right now');
+    } else if (!freeTherapist) {
+      toast.warning(`Station ${freeStation!.name} set — no free therapist`);
+    } else {
+      toast.warning(`${freeTherapist!.name} set — no free station${neededType ? ` (${neededType})` : ''}`);
+    }
   }
 
   function doRemoveItem(id: string) {
@@ -318,6 +356,12 @@ export function OrderWorkspace({
                           {variantOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
+                    </div>
+                    <div className="col-span-2 flex items-center justify-between">
+                      <Label className="text-xs font-semibold text-muted-foreground">Therapist &amp; Station</Label>
+                      <Button type="button" size="sm" variant="outline" onClick={autoAssign} disabled={pending}>
+                        <Wand2 className="size-3.5" /> Auto-assign
+                      </Button>
                     </div>
                     <div>
                       <Label className="text-xs font-semibold">Therapist</Label>

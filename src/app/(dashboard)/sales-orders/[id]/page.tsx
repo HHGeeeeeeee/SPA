@@ -7,6 +7,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
+import { ReportIncidentDialog } from '@/components/incidents/report-incident-dialog';
 
 export const dynamic = 'force-dynamic';
 
@@ -255,6 +256,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           <Badge variant={STATUS_VARIANT[order.status] ?? 'secondary'} className="font-bold capitalize">
             {order.status.replace('_', ' ')}
           </Badge>
+          <div className="ml-auto">
+            <ReportIncidentDialog orderId={order.id} defaultCustomerName={customers[0]?.customer_name ?? ''} />
+          </div>
         </div>
       </div>
 

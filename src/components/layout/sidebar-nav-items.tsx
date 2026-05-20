@@ -14,6 +14,7 @@ import {
   UserCheck,
   Building2,
   Database,
+  CircleAlert,
   LucideIcon,
 } from 'lucide-react';
 
@@ -56,6 +57,7 @@ export const mainNavItems: NavItem[] = [
     ],
   },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
+  { label: 'Incidents', href: '/incidents', icon: CircleAlert },
   { label: 'Help', href: '/help', icon: BookOpen },
   {
     label: 'Settings',

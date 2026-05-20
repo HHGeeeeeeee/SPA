@@ -11,6 +11,7 @@ import {
   KeyRound,
   LogOut,
   Users,
+  UserCheck,
   Building2,
   Database,
   LucideIcon,
@@ -40,6 +41,7 @@ export const mainNavItems: NavItem[] = [
   { label: 'Customers', href: '/customers', icon: Users },
   { label: 'Reservations', href: '/reservations', icon: CalendarDays },
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarClock },
+  { label: 'Availability', href: '/availability', icon: UserCheck },
   { label: 'Stored Value Cards', href: '/stored-value-cards', icon: CreditCard },
   {
     label: 'Reconciliation',

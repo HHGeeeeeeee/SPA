@@ -79,6 +79,7 @@ interface Props {
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
   paymentMethods: { id: string; code: string; display_name: string }[];
+  paymentPolicy: { locked: boolean; lockedMethodId: string | null; defaultMethodId: string | null };
 }
 
 const NONE = '__none__';
@@ -103,6 +104,7 @@ export function OrderWorkspace({
   resources,
   discountClasses,
   paymentMethods,
+  paymentPolicy,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -119,8 +121,13 @@ export function OrderWorkspace({
   const noDiscount = discountClasses.find((d) => d.code === 'DIS-00');
   const [discountId, setDiscountId] = useState(noDiscount?.id ?? discountClasses[0]?.id ?? '');
 
-  // payment
-  const [payMethod, setPayMethod] = useState(paymentMethods[0]?.id ?? '');
+  // payment — intercompany billing locks the method to AR; others are flexible.
+  const allowedPaymentMethods = paymentPolicy.locked && paymentPolicy.lockedMethodId
+    ? paymentMethods.filter((p) => p.id === paymentPolicy.lockedMethodId)
+    : paymentMethods;
+  const defaultPayMethod =
+    paymentPolicy.lockedMethodId ?? paymentPolicy.defaultMethodId ?? allowedPaymentMethods[0]?.id ?? '';
+  const [payMethod, setPayMethod] = useState(defaultPayMethod);
   const [payAmount, setPayAmount] = useState('');
   const [payRef, setPayRef] = useState('');
 
@@ -257,7 +264,7 @@ export function OrderWorkspace({
   const empOptions = [{ value: NONE, label: 'Unassigned' }, ...thisBranchOptions, ...borrowOptions];
   const resOptions = [{ value: NONE, label: 'None' }, ...resources.map((r) => ({ value: r.id, label: r.name }))];
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: `${d.code} — ${d.description}` }));
-  const payOptions = paymentMethods.map((p) => ({ value: p.id, label: p.display_name }));
+  const payOptions = allowedPaymentMethods.map((p) => ({ value: p.id, label: p.display_name }));
 
   const itemsByCustomer = (cid: string) => items.filter((i) => i.order_customer_id === cid);
 
@@ -484,12 +491,15 @@ export function OrderWorkspace({
           <CardContent className="flex flex-wrap items-end gap-2">
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Method</Label>
-              <Select items={payOptions} value={payMethod} onValueChange={(v) => v && setPayMethod(v)}>
+              <Select items={payOptions} value={payMethod} onValueChange={(v) => v && setPayMethod(v)} disabled={paymentPolicy.locked}>
                 <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {payOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {paymentPolicy.locked && (
+                <p className="text-[11px] font-medium text-muted-foreground">Intercompany — AR only</p>
+              )}
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Amount (₱)</Label>

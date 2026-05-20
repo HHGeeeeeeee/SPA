@@ -85,7 +85,7 @@ async function main() {
     { code: 'S-RESTO', name: 'S Resto Guest', billing: 'HSR' },
     { code: 'J-HOTEL', name: 'J Boutique Hotel Guest', billing: 'HJH' },
     { code: 'C-HOTEL', name: 'C Hotel Guest', billing: 'HCC' },
-    { code: 'HH-VIP', name: 'HH-VIP', billing: 'HHO' },
+    { code: 'HH-VIP', name: 'HH-VIP', billing: 'SELF' },
     { code: 'NACPAN', name: 'Nacpan Beach', billing: 'HNBV' },
     { code: 'ENGO', name: 'Elnido Go', billing: 'ENGO' },
     { code: 'THIRD-PARTY', name: 'Third-Party Customer', billing: 'THIRD-PARTY' },

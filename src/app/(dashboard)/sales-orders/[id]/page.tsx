@@ -31,7 +31,7 @@ async function fetchData(id: string) {
       subtotal_cents, discount_cents, total_cents, paid_cents,
       branch:branches!orders_branch_id_fkey ( code, name ),
       source:customer_sources ( code, name ),
-      billing:billing_destinations!orders_billing_to_id_fkey ( code, name ),
+      billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
       order_customers ( id, customer_name, customer_phone, seq_no ),
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
@@ -127,6 +127,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const source = one(order.source);
   const billing = one(order.billing);
 
+  // Payment policy: intercompany billing is settled via AR only (no cash at the
+  // counter), so the payment method is locked. Everything else is flexible.
+  const intercompany = billing?.settlement_type === 'intercompany';
+  const paymentPolicy = {
+    locked: !!intercompany,
+    lockedMethodId: intercompany ? billing?.default_payment_method_id ?? null : null,
+    defaultMethodId: billing?.default_payment_method_id ?? null,
+  };
+
   const customers = (order.order_customers ?? []).map((c) => ({
     id: c.id, customer_name: c.customer_name, customer_phone: c.customer_phone, seq_no: c.seq_no,
   }));
@@ -221,6 +230,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         resources={resources}
         discountClasses={discountClasses}
         paymentMethods={paymentMethods}
+        paymentPolicy={paymentPolicy}
       />
     </div>
   );

@@ -1941,13 +1941,7 @@ export type Database = {
           code: string
           created_at: string
           created_by: string | null
-          credit_account: string | null
-          credit_branch: string | null
-          credit_subaccount: string | null
           currency: string
-          debit_account: string | null
-          debit_branch: string | null
-          debit_subaccount: string | null
           display_name: string
           id: string
           manual_reconciliation: boolean
@@ -1961,13 +1955,7 @@ export type Database = {
           code: string
           created_at?: string
           created_by?: string | null
-          credit_account?: string | null
-          credit_branch?: string | null
-          credit_subaccount?: string | null
           currency?: string
-          debit_account?: string | null
-          debit_branch?: string | null
-          debit_subaccount?: string | null
           display_name: string
           id?: string
           manual_reconciliation?: boolean
@@ -1981,13 +1969,7 @@ export type Database = {
           code?: string
           created_at?: string
           created_by?: string | null
-          credit_account?: string | null
-          credit_branch?: string | null
-          credit_subaccount?: string | null
           currency?: string
-          debit_account?: string | null
-          debit_branch?: string | null
-          debit_subaccount?: string | null
           display_name?: string
           id?: string
           manual_reconciliation?: boolean

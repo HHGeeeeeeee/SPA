@@ -37,12 +37,6 @@ export interface PaymentMethodItem {
   method_type: 'one_time' | 'recurring' | 'stored_value' | 'prepaid_quota';
   manual_reconciliation: boolean;
   requires_reference: boolean;
-  debit_account: string | null;
-  debit_subaccount: string | null;
-  debit_branch: string | null;
-  credit_account: string | null;
-  credit_subaccount: string | null;
-  credit_branch: string | null;
 }
 
 interface Props {
@@ -76,12 +70,6 @@ export function PaymentMethodFormDialog({
     item?.manual_reconciliation ?? true,
   );
   const [requiresReference, setRequiresReference] = useState(item?.requires_reference ?? false);
-  const [debitAccount, setDebitAccount] = useState(item?.debit_account ?? '');
-  const [debitSubaccount, setDebitSubaccount] = useState(item?.debit_subaccount ?? '');
-  const [debitBranch, setDebitBranch] = useState(item?.debit_branch ?? '');
-  const [creditAccount, setCreditAccount] = useState(item?.credit_account ?? '');
-  const [creditSubaccount, setCreditSubaccount] = useState(item?.credit_subaccount ?? '');
-  const [creditBranch, setCreditBranch] = useState(item?.credit_branch ?? '');
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -92,12 +80,6 @@ export function PaymentMethodFormDialog({
       method_type: methodType,
       manual_reconciliation: manualReconciliation,
       requires_reference: requiresReference,
-      debit_account: debitAccount,
-      debit_subaccount: debitSubaccount,
-      debit_branch: debitBranch,
-      credit_account: creditAccount,
-      credit_subaccount: creditSubaccount,
-      credit_branch: creditBranch,
     };
     startTransition(async () => {
       const r = isEdit
@@ -128,7 +110,7 @@ export function PaymentMethodFormDialog({
               {isEdit ? `Edit Method: ${item?.code}` : 'New Payment Method'}
             </DialogTitle>
             <DialogDescription className="font-medium">
-              Configure how customers can pay + the ERP GL accounts each method posts to.
+              Configure how customers can pay.
             </DialogDescription>
           </DialogHeader>
 
@@ -203,84 +185,10 @@ export function PaymentMethodFormDialog({
               <Switch checked={requiresReference} onCheckedChange={setRequiresReference} />
             </div>
 
-            <div className="col-span-2 mt-2">
-              <h4 className="text-sm font-bold tracking-wide uppercase text-muted-foreground">
-                ERP GL Accounts (Acumatica)
-              </h4>
-              <p className="text-xs font-medium text-muted-foreground mt-1">
-                Used when posting Revenue Confirm to Acumatica. Subaccount cannot contain dashes.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-da" className="font-semibold">Debit · Account *</Label>
-              <Input
-                id="pm-da"
-                value={debitAccount ?? ''}
-                onChange={(e) => setDebitAccount(e.target.value)}
-                placeholder="10108"
-                required
-                maxLength={20}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-ds" className="font-semibold">Debit · Subaccount *</Label>
-              <Input
-                id="pm-ds"
-                value={debitSubaccount ?? ''}
-                onChange={(e) => setDebitSubaccount(e.target.value)}
-                placeholder="000000000"
-                required
-                maxLength={20}
-                pattern="[^-]*"
-              />
-            </div>
-            <div className="flex flex-col gap-2 col-span-2">
-              <Label htmlFor="pm-db" className="font-semibold">Debit · Branch *</Label>
-              <Input
-                id="pm-db"
-                value={debitBranch ?? ''}
-                onChange={(e) => setDebitBranch(e.target.value)}
-                placeholder="OSP2"
-                required
-                maxLength={20}
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-ca" className="font-semibold">Credit · Account *</Label>
-              <Input
-                id="pm-ca"
-                value={creditAccount ?? ''}
-                onChange={(e) => setCreditAccount(e.target.value)}
-                placeholder="40140"
-                required
-                maxLength={20}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="pm-cs" className="font-semibold">Credit · Subaccount *</Label>
-              <Input
-                id="pm-cs"
-                value={creditSubaccount ?? ''}
-                onChange={(e) => setCreditSubaccount(e.target.value)}
-                placeholder="000000000"
-                required
-                maxLength={20}
-                pattern="[^-]*"
-              />
-            </div>
-            <div className="flex flex-col gap-2 col-span-2">
-              <Label htmlFor="pm-cb" className="font-semibold">Credit · Branch *</Label>
-              <Input
-                id="pm-cb"
-                value={creditBranch ?? ''}
-                onChange={(e) => setCreditBranch(e.target.value)}
-                placeholder="OSP2"
-                required
-                maxLength={20}
-              />
-            </div>
+            <p className="col-span-2 text-xs font-medium text-muted-foreground">
+              GL posting accounts are defined per Transaction Code (branch × payment method
+              × event), not here.
+            </p>
           </div>
 
           <DialogFooter>

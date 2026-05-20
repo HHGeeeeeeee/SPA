@@ -34,6 +34,7 @@ import {
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
 import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
+import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
 
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -160,6 +161,7 @@ export function OrderWorkspace({
   const [voidOpen, setVoidOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
   const [feedbackItem, setFeedbackItem] = useState<OrderItem | null>(null);
+  const [interruptItem, setInterruptItem] = useState<OrderItem | null>(null);
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const canRunService = ['open', 'in_service'].includes(order.status);
@@ -404,6 +406,9 @@ export function OrderWorkspace({
                         {(it.status === 'service_completed' || it.status === 'feedback_done') && (
                           <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-primary">Done</span>
                         )}
+                        {it.status === 'interrupted' && (
+                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-destructive">Interrupted</span>
+                        )}
                         {it.feedback_score != null && (
                           <span className="ml-2 text-[10px] font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
                         )}
@@ -419,7 +424,10 @@ export function OrderWorkspace({
                         <Button size="sm" variant="outline" onClick={() => doStartItem(it.id)} disabled={pending}>Start</Button>
                       )}
                       {canRunService && it.status === 'in_service' && (
-                        <Button size="sm" onClick={() => doFinishItem(it.id)} disabled={pending}>Finish</Button>
+                        <>
+                          <Button size="sm" onClick={() => doFinishItem(it.id)} disabled={pending}>Finish</Button>
+                          <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</Button>
+                        </>
                       )}
                       {['service_completed', 'feedback_done'].includes(it.status) && it.feedback_score == null && (
                         <Button size="sm" variant="outline" onClick={() => setFeedbackItem(it)} disabled={pending}>Feedback</Button>
@@ -675,6 +683,15 @@ export function OrderWorkspace({
           therapistName={feedbackItem.therapist_name}
           open={!!feedbackItem}
           onOpenChange={(o) => { if (!o) setFeedbackItem(null); }}
+        />
+      )}
+      {interruptItem && (
+        <InterruptDialog
+          orderId={order.id}
+          itemId={interruptItem.id}
+          serviceName={interruptItem.service_name}
+          open={!!interruptItem}
+          onOpenChange={(o) => { if (!o) setInterruptItem(null); }}
         />
       )}
     </div>

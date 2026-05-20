@@ -390,6 +390,65 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   return { ok: true };
 }
 
+const interruptSchema = z.object({
+  item_id: z.string().uuid(),
+  order_id: z.string().uuid(),
+  reason: z.string().min(3).max(300),
+  handling: z.enum(['no_charge', 'partial_charge', 'full_charge', 'reschedule']),
+});
+
+// Interrupt an in-service line. Handling decides the charge: full keeps it,
+// no_charge/reschedule zero it, partial prorates by actual vs planned minutes.
+export async function interruptOrderItem(input: unknown): Promise<ActionResult> {
+  const parsed = interruptSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const supabase = createServiceClient();
+
+  const { data: item } = await supabase
+    .from('order_items')
+    .select('actual_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status')
+    .eq('id', d.item_id)
+    .single();
+  if (!item) return { ok: false, error: 'Service line not found' };
+  if (item.status !== 'in_service') return { ok: false, error: 'Only an in-service line can be interrupted' };
+
+  const now = new Date().toISOString();
+  const actualMin = item.actual_start
+    ? Math.max(1, Math.round((Date.parse(now) - Date.parse(item.actual_start)) / 60000))
+    : 0;
+
+  let discount = item.discount_amount_cents;
+  let final = item.final_amount_cents;
+  if (d.handling === 'no_charge' || d.handling === 'reschedule') {
+    discount = item.list_price_cents;
+    final = 0;
+  } else if (d.handling === 'partial_charge') {
+    const planned = item.duration_minutes || 0;
+    const ratio = planned > 0 ? Math.min(1, actualMin / planned) : 1;
+    final = Math.round(item.final_amount_cents * ratio);
+    discount = item.list_price_cents - final;
+  }
+
+  const { error } = await supabase
+    .from('order_items')
+    .update({
+      status: 'interrupted',
+      interruption_reason: d.reason,
+      interruption_at: now,
+      interruption_handling: d.handling,
+      actual_end: now,
+      actual_duration_minutes: actualMin,
+      discount_amount_cents: discount,
+      final_amount_cents: final,
+    })
+    .eq('id', d.item_id);
+  if (error) return { ok: false, error: error.message };
+  await recomputeTotals(d.order_id);
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
 const feedbackSchema = z.object({
   order_id: z.string().uuid(),
   order_item_id: z.string().uuid(),

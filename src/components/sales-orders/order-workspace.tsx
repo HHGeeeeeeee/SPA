@@ -45,6 +45,7 @@ interface OrderCustomer {
 }
 interface Opt { id: string; code: string; name: string }
 interface DiscountOpt { id: string; code: string; description: string }
+interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null }
 
 interface Props {
   order: {
@@ -56,7 +57,7 @@ interface Props {
   };
   customers: OrderCustomer[];
   items: OrderItem[];
-  serviceItems: Opt[];
+  serviceItems: ServiceVariant[];
   employees: Opt[];
   resources: Opt[];
   discountClasses: DiscountOpt[];
@@ -64,6 +65,10 @@ interface Props {
 }
 
 const NONE = '__none__';
+
+function peso0(cents: number | null): string {
+  return cents == null ? '—' : `₱${(cents / 100).toLocaleString('en-PH')}`;
+}
 
 export function OrderWorkspace({
   order,
@@ -81,8 +86,9 @@ export function OrderWorkspace({
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
 
-  // add item (per customer)
+  // add item (per customer) — two-step: group → duration variant
   const [activeCustomer, setActiveCustomer] = useState<string | null>(null);
+  const [groupSel, setGroupSel] = useState('');
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
   const [resourceId, setResourceId] = useState(NONE);
@@ -120,7 +126,7 @@ export function OrderWorkspace({
         resource_id: resourceId === NONE ? null : resourceId,
         discount_class_id: discountId,
       });
-      if (r.ok) { setSvcId(''); setActiveCustomer(null); toast.success('Service added'); }
+      if (r.ok) { setSvcId(''); setGroupSel(''); setActiveCustomer(null); toast.success('Service added'); }
       else toast.error(r.error);
     });
   }
@@ -163,7 +169,12 @@ export function OrderWorkspace({
     });
   }
 
-  const svcOptions = serviceItems.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
+  const groupOptions = [...new Set(serviceItems.map((s) => s.group))]
+    .sort()
+    .map((g) => ({ value: g, label: g }));
+  const variantOptions = serviceItems
+    .filter((s) => s.group === groupSel)
+    .map((s) => ({ value: s.id, label: `${s.duration_minutes} min · ${peso0(s.price_cents)}` }));
   const empOptions = [{ value: NONE, label: 'Unassigned' }, ...employees.map((e) => ({ value: e.id, label: `${e.code} — ${e.name}` }))];
   const resOptions = [{ value: NONE, label: 'None' }, ...resources.map((r) => ({ value: r.id, label: r.name }))];
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: `${d.code} — ${d.description}` }));
@@ -245,12 +256,30 @@ export function OrderWorkspace({
               {order.editable && (
                 activeCustomer === c.id ? (
                   <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-border p-3">
-                    <div className="col-span-2">
+                    <div>
                       <Label className="text-xs font-semibold">Service</Label>
-                      <Select items={svcOptions} value={svcId} onValueChange={(v) => v && setSvcId(v)}>
+                      <Select
+                        items={groupOptions}
+                        value={groupSel}
+                        onValueChange={(v) => { if (v) { setGroupSel(v); setSvcId(''); } }}
+                      >
                         <SelectTrigger><SelectValue placeholder="Pick a service" /></SelectTrigger>
                         <SelectContent>
-                          {svcOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                          {groupOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs font-semibold">Duration</Label>
+                      <Select
+                        items={variantOptions}
+                        value={svcId}
+                        onValueChange={(v) => v && setSvcId(v)}
+                        disabled={!groupSel}
+                      >
+                        <SelectTrigger><SelectValue placeholder={groupSel ? 'Pick duration' : 'Pick service first'} /></SelectTrigger>
+                        <SelectContent>
+                          {variantOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>

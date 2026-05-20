@@ -30,9 +30,10 @@ interface Props {
   item: ServiceItemRecord & { active: boolean };
   categories: { id: string; code: string; name: string }[];
   businessUnits: { id: string; code: string; name: string }[];
+  groups: string[];
 }
 
-export function ServiceItemRowActions({ item, categories, businessUnits }: Props) {
+export function ServiceItemRowActions({ item, categories, businessUnits, groups }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -85,6 +86,7 @@ export function ServiceItemRowActions({ item, categories, businessUnits }: Props
         item={item}
         categories={categories}
         businessUnits={businessUnits}
+        groups={groups}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

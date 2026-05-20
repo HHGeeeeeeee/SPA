@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, Plus, Clock } from 'lucide-react';
 
@@ -24,30 +25,72 @@ async function fetchData() {
     supabase
       .from('service_items')
       .select(`
-        id, code, name, service_category_id, duration_minutes,
+        id, code, name, service_group, service_category_id, duration_minutes,
         prep_before_minutes, cleanup_after_minutes,
         required_resource_type, pricing_model,
         commission_applicable, tip_applicable, business_unit_id, active,
         category:service_categories ( code, name ),
         service_item_prices ( price_cents, price_class, branch_id )
       `)
-      .order('code'),
+      .order('service_group')
+      .order('duration_minutes'),
     supabase.from('service_categories').select('id, code, name').eq('active', true).order('code'),
     supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
   ]);
   if (items.error) throw new Error(items.error.message);
   if (categories.error) throw new Error(categories.error.message);
   if (businessUnits.error) throw new Error(businessUnits.error.message);
+  const groups = [...new Set((items.data ?? []).map((i) => i.service_group).filter(Boolean) as string[])].sort();
   return {
     items: items.data ?? [],
     categories: categories.data ?? [],
     businessUnits: businessUnits.data ?? [],
+    groups,
   };
 }
 
 export default async function ServiceItemsPage() {
-  const { items, categories, businessUnits } = await fetchData();
+  const { items, categories, businessUnits, groups } = await fetchData();
   const activeCount = items.filter((i) => i.active).length;
+
+  // Group rows by service_group (items already ordered by group then duration).
+  type Row = {
+    i: (typeof items)[number];
+    slot: number;
+    priceCents: number | null;
+    itemRecord: ServiceItemRecord;
+  };
+  const groupMap = new Map<string, { key: string; name: string; categoryCode: string; rows: Row[] }>();
+  for (const i of items) {
+    const category = Array.isArray(i.category) ? i.category[0] : i.category;
+    const slot = i.duration_minutes + i.prep_before_minutes + i.cleanup_after_minutes;
+    const normalPrice = (i.service_item_prices ?? []).find(
+      (p) => p.price_class === 'Normal' && p.branch_id === null,
+    );
+    const priceCents = normalPrice?.price_cents ?? null;
+    const itemRecord: ServiceItemRecord = {
+      id: i.id,
+      code: i.code,
+      name: i.name,
+      service_group: i.service_group,
+      service_category_id: i.service_category_id,
+      duration_minutes: i.duration_minutes,
+      prep_before_minutes: i.prep_before_minutes,
+      cleanup_after_minutes: i.cleanup_after_minutes,
+      required_resource_type: i.required_resource_type,
+      pricing_model: i.pricing_model as ServiceItemRecord['pricing_model'],
+      commission_applicable: i.commission_applicable,
+      tip_applicable: i.tip_applicable,
+      business_unit_id: i.business_unit_id,
+      price_cents: priceCents,
+    };
+    const key = i.service_group ?? i.name;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, { key, name: key, categoryCode: category?.code ?? '', rows: [] });
+    }
+    groupMap.get(key)!.rows.push({ i, slot, priceCents, itemRecord });
+  }
+  const orderedGroups = [...groupMap.values()];
 
   return (
     <div className="flex flex-col gap-6">
@@ -68,6 +111,7 @@ export default async function ServiceItemsPage() {
         <ServiceItemFormDialog
           categories={categories}
           businessUnits={businessUnits}
+          groups={groups}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -81,12 +125,10 @@ export default async function ServiceItemsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-24 font-bold">Code</TableHead>
-              <TableHead className="font-bold">Name</TableHead>
-              <TableHead className="font-bold">Category</TableHead>
-              <TableHead className="font-bold">Price</TableHead>
-              <TableHead className="font-bold">Duration</TableHead>
-              <TableHead className="font-bold">Slot</TableHead>
+              <TableHead className="w-28 font-bold">Code</TableHead>
+              <TableHead className="w-28 font-bold">Duration</TableHead>
+              <TableHead className="w-32 font-bold">Price</TableHead>
+              <TableHead className="w-24 font-bold">Slot</TableHead>
               <TableHead className="font-bold">Station</TableHead>
               <TableHead className="w-28 font-bold">Status</TableHead>
               <TableHead className="w-12" />
@@ -95,66 +137,52 @@ export default async function ServiceItemsPage() {
           <TableBody>
             {items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12">
+                <TableCell colSpan={7} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
                     No service items yet.
                   </p>
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((i) => {
-                const category = Array.isArray(i.category) ? i.category[0] : i.category;
-                const slot = i.duration_minutes + i.prep_before_minutes + i.cleanup_after_minutes;
-                const normalPrice = (i.service_item_prices ?? []).find(
-                  (p) => p.price_class === 'Normal' && p.branch_id === null,
-                );
-                const priceCents = normalPrice?.price_cents ?? null;
-                const itemRecord: ServiceItemRecord = {
-                  id: i.id,
-                  code: i.code,
-                  name: i.name,
-                  service_category_id: i.service_category_id,
-                  duration_minutes: i.duration_minutes,
-                  prep_before_minutes: i.prep_before_minutes,
-                  cleanup_after_minutes: i.cleanup_after_minutes,
-                  required_resource_type: i.required_resource_type,
-                  pricing_model: i.pricing_model as ServiceItemRecord['pricing_model'],
-                  commission_applicable: i.commission_applicable,
-                  tip_applicable: i.tip_applicable,
-                  business_unit_id: i.business_unit_id,
-                  price_cents: priceCents,
-                };
-                return (
-                  <TableRow key={i.id}>
-                    <TableCell className="font-mono font-bold">{i.code}</TableCell>
-                    <TableCell className="font-semibold">{i.name}</TableCell>
-                    <TableCell className="font-mono font-bold">{category?.code ?? '—'}</TableCell>
-                    <TableCell className="font-bold tabular">
-                      {priceCents != null ? `₱${(priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell className="font-bold tabular">{i.duration_minutes} min</TableCell>
-                    <TableCell>
-                      <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">
-                        <Clock className="size-3" />
-                        {slot} min
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-mono font-medium text-muted-foreground">
-                      {i.required_resource_type ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      {i.active ? (
-                        <Badge className="font-bold">Active</Badge>
-                      ) : (
-                        <Badge variant="secondary" className="font-bold">Inactive</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <ServiceItemRowActions item={{ ...itemRecord, active: i.active }} categories={categories} businessUnits={businessUnits} />
+              orderedGroups.map((grp) => (
+                <Fragment key={grp.key}>
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableCell colSpan={7} className="py-2">
+                      <span className="font-extrabold">{grp.name}</span>
+                      <span className="ml-2 font-mono font-bold text-xs text-muted-foreground uppercase">{grp.categoryCode}</span>
+                      <span className="ml-2 text-xs font-semibold text-muted-foreground">{grp.rows.length} variant{grp.rows.length > 1 ? 's' : ''}</span>
                     </TableCell>
                   </TableRow>
-                );
-              })
+                  {grp.rows.map((r) => (
+                    <TableRow key={r.i.id}>
+                      <TableCell className="font-mono font-bold pl-6">{r.i.code}</TableCell>
+                      <TableCell className="font-bold tabular">{r.i.duration_minutes} min</TableCell>
+                      <TableCell className="font-bold tabular">
+                        {r.priceCents != null ? `₱${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">
+                          <Clock className="size-3" />
+                          {r.slot} min
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-mono font-medium text-muted-foreground">
+                        {r.i.required_resource_type ?? '—'}
+                      </TableCell>
+                      <TableCell>
+                        {r.i.active ? (
+                          <Badge className="font-bold">Active</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="font-bold">Inactive</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <ServiceItemRowActions item={{ ...r.itemRecord, active: r.i.active }} categories={categories} businessUnits={businessUnits} groups={groups} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </Fragment>
+              ))
             )}
           </TableBody>
         </Table>

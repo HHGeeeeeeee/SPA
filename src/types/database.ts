@@ -2734,6 +2734,7 @@ export type Database = {
           pricing_model: string
           required_resource_type: string | null
           service_category_id: string
+          service_group: string | null
           tip_applicable: boolean
           updated_at: string
           updated_by: string | null
@@ -2753,6 +2754,7 @@ export type Database = {
           pricing_model?: string
           required_resource_type?: string | null
           service_category_id: string
+          service_group?: string | null
           tip_applicable?: boolean
           updated_at?: string
           updated_by?: string | null
@@ -2772,6 +2774,7 @@ export type Database = {
           pricing_model?: string
           required_resource_type?: string | null
           service_category_id?: string
+          service_group?: string | null
           tip_applicable?: boolean
           updated_at?: string
           updated_by?: string | null

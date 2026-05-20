@@ -46,7 +46,12 @@ async function fetchData(id: string) {
   if (!order) return null;
 
   const [svc, emp, res, disc, pm] = await Promise.all([
-    supabase.from('service_items').select('id, code, name').eq('active', true).order('code'),
+    supabase
+      .from('service_items')
+      .select('id, code, name, service_group, duration_minutes, service_item_prices ( price_cents, price_class, branch_id )')
+      .eq('active', true)
+      .order('service_group')
+      .order('duration_minutes'),
     supabase.from('employees').select('id, employee_code, name').eq('status', 'active').order('employee_code'),
     supabase.from('resources').select('id, resource_name').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description').eq('active', true).order('code'),
@@ -55,7 +60,16 @@ async function fetchData(id: string) {
 
   return {
     order,
-    serviceItems: (svc.data ?? []).map((s) => ({ id: s.id, code: s.code, name: s.name })),
+    serviceItems: (svc.data ?? []).map((s) => {
+      const normal = (s.service_item_prices ?? []).find((p) => p.price_class === 'Normal' && p.branch_id === null);
+      return {
+        id: s.id,
+        name: s.name,
+        group: s.service_group ?? s.name,
+        duration_minutes: s.duration_minutes,
+        price_cents: normal?.price_cents ?? null,
+      };
+    }),
     employees: (emp.data ?? []).map((e) => ({ id: e.id, code: e.employee_code, name: e.name })),
     resources: (res.data ?? []).map((r) => ({ id: r.id, code: '', name: r.resource_name })),
     discountClasses: disc.data ?? [],

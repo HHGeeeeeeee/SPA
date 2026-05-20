@@ -30,6 +30,7 @@ export interface ServiceItemRecord {
   id: string;
   code: string;
   name: string;
+  service_group: string | null;
   service_category_id: string;
   duration_minutes: number;
   prep_before_minutes: number;
@@ -59,6 +60,7 @@ interface Props {
   item?: ServiceItemRecord;
   categories: CategoryOption[];
   businessUnits: BusinessUnitOption[];
+  groups?: string[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -79,6 +81,7 @@ export function ServiceItemFormDialog({
   item,
   categories,
   businessUnits,
+  groups = [],
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -90,6 +93,7 @@ export function ServiceItemFormDialog({
 
   const [code, setCode] = useState(item?.code ?? '');
   const [name, setName] = useState(item?.name ?? '');
+  const [serviceGroup, setServiceGroup] = useState(item?.service_group ?? '');
   const [categoryId, setCategoryId] = useState(item?.service_category_id ?? categories[0]?.id ?? '');
   const [duration, setDuration] = useState(String(item?.duration_minutes ?? 60));
   const [prep, setPrep] = useState(String(item?.prep_before_minutes ?? 10));
@@ -114,6 +118,7 @@ export function ServiceItemFormDialog({
     const payload = {
       code,
       name,
+      service_group: serviceGroup || null,
       service_category_id: categoryId,
       duration_minutes: Number(duration),
       prep_before_minutes: Number(prep),
@@ -194,6 +199,25 @@ export function ServiceItemFormDialog({
                 required
                 maxLength={120}
               />
+            </div>
+
+            <div className="flex flex-col gap-2 col-span-2">
+              <Label htmlFor="si-group" className="font-semibold">Service Group</Label>
+              <Input
+                id="si-group"
+                list="si-group-list"
+                value={serviceGroup}
+                onChange={(e) => setServiceGroup(e.target.value)}
+                placeholder="Thai Massage"
+                maxLength={80}
+              />
+              <datalist id="si-group-list">
+                {groups.map((g) => <option key={g} value={g} />)}
+              </datalist>
+              <p className="text-xs font-medium text-muted-foreground">
+                Groups duration variants of the same service. The order screen lets staff
+                pick the group, then the duration.
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">

@@ -11,6 +11,7 @@ type ServiceItemUpdate = Database['public']['Tables']['service_items']['Update']
 const schema = z.object({
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
+  service_group: z.string().max(80).optional().nullable(),
   service_category_id: z.string().uuid(),
   duration_minutes: z.coerce.number().int().min(1).max(600),
   prep_before_minutes: z.coerce.number().int().min(0).max(120).default(0),
@@ -86,6 +87,7 @@ export async function updateServiceItem(input: unknown): Promise<ActionResult> {
   const d = parsed.data;
   const patch: ServiceItemUpdate = {};
   if (d.name !== undefined) patch.name = d.name;
+  if (d.service_group !== undefined) patch.service_group = d.service_group || null;
   if (d.service_category_id !== undefined) patch.service_category_id = d.service_category_id;
   if (d.duration_minutes !== undefined) patch.duration_minutes = d.duration_minutes;
   if (d.prep_before_minutes !== undefined) patch.prep_before_minutes = d.prep_before_minutes;

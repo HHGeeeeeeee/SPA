@@ -27,6 +27,8 @@ export interface TipTarget {
   serviceName: string;
 }
 
+interface StoredValueCard { id: string; card_no: string; balance_cents: number; customer_name: string | null }
+
 interface Props {
   orderId: string;
   orderCustomerId: string | null;
@@ -34,6 +36,7 @@ interface Props {
   dueCents: number;
   tipTargets: TipTarget[];
   paymentMethods: { id: string; code: string; display_name: string }[];
+  storedValueCards: StoredValueCard[];
   locked: boolean;
   defaultMethodId: string;
 }
@@ -45,6 +48,7 @@ export function CustomerPaymentCard({
   dueCents,
   tipTargets,
   paymentMethods,
+  storedValueCards,
   locked,
   defaultMethodId,
 }: Props) {
@@ -53,15 +57,23 @@ export function CustomerPaymentCard({
   const [amount, setAmount] = useState((dueCents / 100).toFixed(2));
   const [ref, setRef] = useState('');
   const [tips, setTips] = useState<Record<string, string>>({});
+  const [cardId, setCardId] = useState('');
 
   const payOptions = paymentMethods.map((p) => ({ value: p.id, label: p.display_name }));
   const paymayaId = paymentMethods.find((p) => p.code === 'paymaya')?.id ?? null;
+  const svcId = paymentMethods.find((p) => p.code === 'stored_value_card')?.id ?? null;
   const showTips = !!paymayaId && method === paymayaId && tipTargets.length > 0;
+  const showCard = !!svcId && method === svcId;
+  const cardOptions = storedValueCards.map((c) => ({
+    value: c.id,
+    label: `${c.card_no}${c.customer_name ? ` · ${c.customer_name}` : ''} · ₱${(c.balance_cents / 100).toLocaleString('en-PH')}`,
+  }));
 
   function record() {
     const amt = Number(amount);
     if (!method) return toast.error('Pick a payment method');
     if (!amt || amt <= 0) return toast.error('Enter an amount');
+    if (showCard && !cardId) return toast.error('Select a stored value card');
     const tipRows = showTips
       ? tipTargets
           .map((t) => ({ order_item_id: t.orderItemId, therapist_id: t.therapistId, amount: Number(tips[t.orderItemId] || 0) }))
@@ -74,12 +86,14 @@ export function CustomerPaymentCard({
         payment_method_id: method,
         amount: amt,
         payment_ref: ref || null,
+        stored_value_card_id: showCard ? cardId : null,
         tips: tipRows,
       });
       if (r.ok) {
         toast.success('Payment recorded');
         setRef('');
         setTips({});
+        setCardId('');
       } else {
         toast.error(r.error);
       }
@@ -112,6 +126,21 @@ export function CustomerPaymentCard({
         </div>
         <Button size="sm" onClick={record} disabled={pending}>Record</Button>
       </div>
+      {showCard && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs font-semibold">Stored value card</Label>
+          {cardOptions.length === 0 ? (
+            <p className="text-xs font-medium text-muted-foreground">No active cards with a balance.</p>
+          ) : (
+            <Select items={cardOptions} value={cardId} onValueChange={(v) => v && setCardId(v)}>
+              <SelectTrigger className="w-72"><SelectValue placeholder="Select a card" /></SelectTrigger>
+              <SelectContent>
+                {cardOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      )}
       {locked && <p className="text-[11px] font-medium text-muted-foreground">Intercompany — AR only</p>}
       {showTips && (
         <div className="mt-1 rounded-md bg-muted/40 p-2 flex flex-col gap-2">

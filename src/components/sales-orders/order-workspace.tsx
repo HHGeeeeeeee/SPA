@@ -98,6 +98,7 @@ interface Props {
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
   paymentMethods: { id: string; code: string; display_name: string }[];
+  storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
   canManage: boolean;
 }
@@ -125,6 +126,7 @@ export function OrderWorkspace({
   resources,
   discountClasses,
   paymentMethods,
+  storedValueCards,
   paymentPolicy,
   canManage,
 }: Props) {
@@ -592,6 +594,7 @@ export function OrderWorkspace({
                       dueCents={c.subtotal_cents - c.paid_cents}
                       tipTargets={tipTargetsFor(c.id)}
                       paymentMethods={allowedPaymentMethods}
+                      storedValueCards={storedValueCards}
                       locked={false}
                       defaultMethodId={defaultPayMethod}
                     />
@@ -604,6 +607,7 @@ export function OrderWorkspace({
                   dueCents={due}
                   tipTargets={tipTargetsFor(multiCustomer ? null : customers[0]?.id ?? null)}
                   paymentMethods={allowedPaymentMethods}
+                  storedValueCards={storedValueCards}
                   locked={false}
                   defaultMethodId={defaultPayMethod}
                 />

@@ -417,6 +417,7 @@ const paymentSchema = z.object({
   payment_method_id: z.string().uuid(),
   amount: z.coerce.number().positive(),
   payment_ref: z.string().max(80).optional().nullable(),
+  stored_value_card_id: z.string().uuid().optional().nullable(),
   tips: z
     .array(
       z.object({
@@ -445,17 +446,31 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     return { ok: false, error: 'Order is already closed or void' };
   }
 
+  const { data: method } = await supabase
+    .from('payment_methods')
+    .select('code')
+    .eq('id', d.payment_method_id)
+    .single();
+
   // Tips are only recorded on a PAYMAYA payment (cash tips never enter the system).
   const tips = d.tips ?? [];
-  if (tips.length > 0) {
-    const { data: pm } = await supabase
-      .from('payment_methods')
-      .select('code')
-      .eq('id', d.payment_method_id)
+  if (tips.length > 0 && method?.code !== 'paymaya') {
+    return { ok: false, error: 'Tips can only be recorded on a PAYMAYA payment' };
+  }
+
+  // Stored-value redemption: deduct the card balance and ledger the consume.
+  let svcCard: { id: string; current_balance_cents: number; branch_id: string; status: string } | null = null;
+  if (method?.code === 'stored_value_card') {
+    if (!d.stored_value_card_id) return { ok: false, error: 'Select a stored value card' };
+    const { data: card } = await supabase
+      .from('stored_value_cards')
+      .select('id, current_balance_cents, branch_id, status')
+      .eq('id', d.stored_value_card_id)
       .single();
-    if (pm?.code !== 'paymaya') {
-      return { ok: false, error: 'Tips can only be recorded on a PAYMAYA payment' };
-    }
+    if (!card) return { ok: false, error: 'Card not found' };
+    if (card.status !== 'active') return { ok: false, error: 'Card is not active' };
+    if (card.current_balance_cents < amountCents) return { ok: false, error: 'Insufficient card balance' };
+    svcCard = card;
   }
 
   const { data: payment, error: pe } = await supabase
@@ -466,11 +481,31 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       payment_method_id: d.payment_method_id,
       amount_cents: amountCents,
       payment_ref: d.payment_ref || null,
+      stored_value_card_id: svcCard?.id ?? null,
       paid_at: new Date().toISOString(),
     })
     .select('id')
     .single();
   if (pe || !payment) return { ok: false, error: pe?.message ?? 'Payment insert failed' };
+
+  if (svcCard) {
+    const balanceAfter = svcCard.current_balance_cents - amountCents;
+    const session = await currentSession();
+    await supabase
+      .from('stored_value_cards')
+      .update({ current_balance_cents: balanceAfter, status: balanceAfter === 0 ? 'depleted' : 'active' })
+      .eq('id', svcCard.id);
+    await supabase.from('stored_value_transactions').insert({
+      card_id: svcCard.id,
+      branch_id: svcCard.branch_id,
+      type: 'consume',
+      amount_cents: -amountCents,
+      balance_after_cents: balanceAfter,
+      related_order_id: d.order_id,
+      related_payment_id: payment.id,
+      approved_by_user_id: session?.staffUserId ?? null,
+    });
+  }
 
   if (tips.length > 0) {
     const { error: te } = await supabase.from('tips').insert(

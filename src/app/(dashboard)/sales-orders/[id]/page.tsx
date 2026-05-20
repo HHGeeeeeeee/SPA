@@ -74,6 +74,13 @@ async function fetchData(id: string) {
       .in('shift_type', ['regular', 'cross_branch', 'on_call']),
   ]);
 
+  const svcCardsRes = await supabase
+    .from('stored_value_cards')
+    .select('id, card_no, current_balance_cents, customer:customers ( name )')
+    .eq('status', 'active')
+    .gt('current_balance_cents', 0)
+    .order('card_no');
+
   // Therapists / stations currently mid-service anywhere (started, not finished).
   const busy = await supabase
     .from('order_items')
@@ -121,6 +128,12 @@ async function fetchData(id: string) {
     resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null })),
     discountClasses: disc.data ?? [],
     paymentMethods: pm.data ?? [],
+    storedValueCards: (svcCardsRes.data ?? []).map((c) => ({
+      id: c.id,
+      card_no: c.card_no,
+      balance_cents: c.current_balance_cents,
+      customer_name: one(c.customer)?.name ?? null,
+    })),
   };
 }
 
@@ -129,7 +142,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards } = result;
 
   const branch = one(order.branch);
   const source = one(order.source);
@@ -271,6 +284,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         resources={resources}
         discountClasses={discountClasses}
         paymentMethods={paymentMethods}
+        storedValueCards={storedValueCards}
         paymentPolicy={paymentPolicy}
         canManage={canManage}
       />

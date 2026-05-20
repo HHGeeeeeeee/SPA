@@ -27,6 +27,7 @@ import {
   startOrderItem,
   finishOrderItem,
   setOrderStatus,
+  voidPayment,
 } from '@/app/(dashboard)/sales-orders/actions';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
 
@@ -63,6 +64,15 @@ interface BorrowOpt { id: string; code: string; name: string; homeBranchCode: st
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string }
 interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
+interface PaymentRecord {
+  id: string;
+  amount_cents: number;
+  method_name: string;
+  payment_ref: string | null;
+  customer_label: string | null;
+  tip_cents: number;
+  paid_at: string;
+}
 
 interface Props {
   order: {
@@ -74,6 +84,7 @@ interface Props {
   };
   customers: OrderCustomer[];
   items: OrderItem[];
+  payments: PaymentRecord[];
   serviceItems: ServiceVariant[];
   employees: Opt[];
   borrowableEmployees: BorrowOpt[];
@@ -99,6 +110,7 @@ export function OrderWorkspace({
   order,
   customers,
   items,
+  payments,
   serviceItems,
   employees,
   borrowableEmployees,
@@ -229,6 +241,14 @@ export function OrderWorkspace({
     startTransition(async () => {
       const r = await setOrderStatus(order.id, next);
       if (r.ok) toast.success(`Order ${next.replace('_', ' ')}`);
+      else toast.error(r.error);
+    });
+  }
+
+  function doVoidPayment(paymentId: string) {
+    startTransition(async () => {
+      const r = await voidPayment(paymentId, order.id);
+      if (r.ok) toast.success('Payment removed');
       else toast.error(r.error);
     });
   }
@@ -476,13 +496,13 @@ export function OrderWorkspace({
       )}
 
       {/* payment */}
-      {['completed', 'paid'].includes(order.status) && due > 0 && (
+      {['completed', 'paid'].includes(order.status) && (due > 0 || payments.length > 0) && (
         <Card>
           <CardHeader className="pb-2 flex-row items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
-              <CreditCard className="size-4" /> Take Payment · Due {peso(due)}
+              <CreditCard className="size-4" /> {due > 0 ? `Take Payment · Due ${peso(due)}` : 'Payments'}
             </CardTitle>
-            {multiCustomer && (
+            {due > 0 && multiCustomer && (
               <div className="inline-flex rounded-lg border border-border p-0.5">
                 <button
                   type="button"
@@ -508,35 +528,58 @@ export function OrderWorkspace({
             )}
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {multiCustomer && payMode === 'split' ? (
-              customers
-                .slice()
-                .sort((a, b) => a.seq_no - b.seq_no)
-                .filter((c) => c.subtotal_cents - c.paid_cents > 0)
-                .map((c) => (
-                  <CustomerPaymentCard
-                    key={c.id}
-                    orderId={order.id}
-                    orderCustomerId={c.id}
-                    label={`#${c.seq_no} · ${c.customer_name}`}
-                    dueCents={c.subtotal_cents - c.paid_cents}
-                    tipTargets={tipTargetsFor(c.id)}
-                    paymentMethods={allowedPaymentMethods}
-                    locked={paymentPolicy.locked}
-                    defaultMethodId={defaultPayMethod}
-                  />
-                ))
-            ) : (
-              <CustomerPaymentCard
-                orderId={order.id}
-                orderCustomerId={multiCustomer ? null : customers[0]?.id ?? null}
-                label={multiCustomer ? 'Whole order' : 'Payment'}
-                dueCents={due}
-                tipTargets={tipTargetsFor(multiCustomer ? null : customers[0]?.id ?? null)}
-                paymentMethods={allowedPaymentMethods}
-                locked={paymentPolicy.locked}
-                defaultMethodId={defaultPayMethod}
-              />
+            {due > 0 &&
+              (multiCustomer && payMode === 'split' ? (
+                customers
+                  .slice()
+                  .sort((a, b) => a.seq_no - b.seq_no)
+                  .filter((c) => c.subtotal_cents - c.paid_cents > 0)
+                  .map((c) => (
+                    <CustomerPaymentCard
+                      key={c.id}
+                      orderId={order.id}
+                      orderCustomerId={c.id}
+                      label={`#${c.seq_no} · ${c.customer_name}`}
+                      dueCents={c.subtotal_cents - c.paid_cents}
+                      tipTargets={tipTargetsFor(c.id)}
+                      paymentMethods={allowedPaymentMethods}
+                      locked={paymentPolicy.locked}
+                      defaultMethodId={defaultPayMethod}
+                    />
+                  ))
+              ) : (
+                <CustomerPaymentCard
+                  orderId={order.id}
+                  orderCustomerId={multiCustomer ? null : customers[0]?.id ?? null}
+                  label={multiCustomer ? 'Whole order' : 'Payment'}
+                  dueCents={due}
+                  tipTargets={tipTargetsFor(multiCustomer ? null : customers[0]?.id ?? null)}
+                  paymentMethods={allowedPaymentMethods}
+                  locked={paymentPolicy.locked}
+                  defaultMethodId={defaultPayMethod}
+                />
+              ))}
+
+            {payments.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Recorded payments</p>
+                {payments.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-sm">
+                    <div className="min-w-0">
+                      <span className="font-semibold">{p.method_name}</span>
+                      {p.customer_label && <span className="ml-2 font-medium text-muted-foreground">{p.customer_label}</span>}
+                      {p.payment_ref && <span className="ml-2 font-mono text-xs text-muted-foreground">{p.payment_ref}</span>}
+                      {p.tip_cents > 0 && <span className="ml-2 text-xs font-semibold text-primary">+ tip {peso(p.tip_cents)}</span>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-bold tabular">{peso(p.amount_cents)}</span>
+                      <Button size="icon-sm" variant="ghost" onClick={() => doVoidPayment(p.id)} disabled={pending} title="Remove payment">
+                        <Trash2 className="size-3.5 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>

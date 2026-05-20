@@ -33,7 +33,11 @@ async function fetchData(id: string) {
       source:customer_sources ( code, name ),
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
       order_customers ( id, customer_name, customer_phone, seq_no ),
-      payments ( order_customer_id, amount_cents ),
+      payments (
+        id, order_customer_id, amount_cents, payment_ref, paid_at,
+        method:payment_methods ( display_name ),
+        tips ( amount_cents )
+      ),
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
         therapist_id, resource_id, duration_minutes, actual_start, actual_end,
@@ -155,6 +159,18 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       paid_cents: paid,
     };
   });
+  const customerLabel = new Map(
+    (order.order_customers ?? []).map((c) => [c.id, `#${c.seq_no} · ${c.customer_name}`]),
+  );
+  const payments = orderPayments.map((p) => ({
+    id: p.id,
+    amount_cents: p.amount_cents,
+    method_name: one(p.method)?.display_name ?? 'Payment',
+    payment_ref: p.payment_ref,
+    customer_label: p.order_customer_id ? customerLabel.get(p.order_customer_id) ?? null : null,
+    tip_cents: (p.tips ?? []).reduce((s, t) => s + t.amount_cents, 0),
+    paid_at: p.paid_at,
+  }));
   const items = (order.order_items ?? []).map((it) => {
     const svc = one(it.service);
     const th = one(it.therapist);
@@ -238,6 +254,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         }}
         customers={customers}
         items={items}
+        payments={payments}
         serviceItems={serviceItems}
         employees={employees}
         borrowableEmployees={borrowableEmployees}

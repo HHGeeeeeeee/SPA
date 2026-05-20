@@ -390,3 +390,45 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   revalidatePath(`/sales-orders/${d.order_id}`);
   return { ok: true };
 }
+
+// Reverse a recorded payment: drop it (and its open tips), refund the order's
+// paid total, and step a fully-paid order back to completed if it no longer is.
+export async function voidPayment(paymentId: string, orderId: string): Promise<ActionResult> {
+  const supabase = createServiceClient();
+  const { data: order, error: oe } = await supabase
+    .from('orders')
+    .select('status, total_cents')
+    .eq('id', orderId)
+    .single();
+  if (oe || !order) return { ok: false, error: 'Order not found' };
+  if (['closed', 'void'].includes(order.status)) {
+    return { ok: false, error: 'Order is locked — reopen is not possible' };
+  }
+
+  const { data: settled } = await supabase
+    .from('tips')
+    .select('id')
+    .eq('payment_id', paymentId)
+    .not('settlement_id', 'is', null);
+  if (settled && settled.length > 0) {
+    return { ok: false, error: 'A tip on this payment is already settled; cannot void it' };
+  }
+
+  await supabase.from('tips').delete().eq('payment_id', paymentId);
+  const { error: de } = await supabase.from('payments').delete().eq('id', paymentId);
+  if (de) return { ok: false, error: de.message };
+
+  const { data: remaining } = await supabase
+    .from('payments')
+    .select('amount_cents')
+    .eq('order_id', orderId);
+  const paid = (remaining ?? []).reduce((s, p) => s + p.amount_cents, 0);
+  const patch: { paid_cents: number; status?: string } = { paid_cents: paid };
+  if (order.status === 'paid' && paid < order.total_cents) patch.status = 'completed';
+  const { error: ue } = await supabase.from('orders').update(patch).eq('id', orderId);
+  if (ue) return { ok: false, error: ue.message };
+
+  revalidatePath('/sales-orders');
+  revalidatePath(`/sales-orders/${orderId}`);
+  return { ok: true };
+}

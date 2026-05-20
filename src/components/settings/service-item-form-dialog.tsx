@@ -39,6 +39,7 @@ export interface ServiceItemRecord {
   commission_applicable: boolean;
   tip_applicable: boolean;
   business_unit_id: string | null;
+  price_cents: number | null;
 }
 
 interface CategoryOption {
@@ -100,6 +101,7 @@ export function ServiceItemFormDialog({
   const [commissionApplicable, setCommissionApplicable] = useState(item?.commission_applicable ?? true);
   const [tipApplicable, setTipApplicable] = useState(item?.tip_applicable ?? true);
   const [businessUnitId, setBusinessUnitId] = useState(item?.business_unit_id ?? businessUnits[0]?.id ?? '');
+  const [price, setPrice] = useState(item?.price_cents != null ? String(item.price_cents / 100) : '');
 
   const categoryOptions = categories.map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }));
   const businessUnitOptions = businessUnits.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
@@ -121,6 +123,7 @@ export function ServiceItemFormDialog({
       commission_applicable: commissionApplicable,
       tip_applicable: tipApplicable,
       business_unit_id: businessUnitId || null,
+      price: price === '' ? undefined : Number(price),
     };
     startTransition(async () => {
       const r = isEdit
@@ -193,7 +196,7 @@ export function ServiceItemFormDialog({
               />
             </div>
 
-            <div className="flex flex-col gap-2 col-span-2">
+            <div className="flex flex-col gap-2">
               <Label className="font-semibold">Business Unit *</Label>
               <Select items={businessUnitOptions} value={businessUnitId} onValueChange={(v) => v && setBusinessUnitId(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -203,6 +206,23 @@ export function ServiceItemFormDialog({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="si-price" className="font-semibold">Price (₱) *</Label>
+              <Input
+                id="si-price"
+                type="number"
+                min="0"
+                step="0.01"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="1000"
+                required
+              />
+              <p className="text-xs font-medium text-muted-foreground">
+                List price (Normal, all branches). Used as the line price at checkout.
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">

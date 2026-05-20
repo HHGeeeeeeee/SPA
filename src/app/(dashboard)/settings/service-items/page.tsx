@@ -28,7 +28,8 @@ async function fetchData() {
         prep_before_minutes, cleanup_after_minutes,
         required_resource_type, pricing_model,
         commission_applicable, tip_applicable, business_unit_id, active,
-        category:service_categories ( code, name )
+        category:service_categories ( code, name ),
+        service_item_prices ( price_cents, price_class, branch_id )
       `)
       .order('code'),
     supabase.from('service_categories').select('id, code, name').eq('active', true).order('code'),
@@ -83,6 +84,7 @@ export default async function ServiceItemsPage() {
               <TableHead className="w-24 font-bold">Code</TableHead>
               <TableHead className="font-bold">Name</TableHead>
               <TableHead className="font-bold">Category</TableHead>
+              <TableHead className="font-bold">Price</TableHead>
               <TableHead className="font-bold">Duration</TableHead>
               <TableHead className="font-bold">Slot</TableHead>
               <TableHead className="font-bold">Station</TableHead>
@@ -93,7 +95,7 @@ export default async function ServiceItemsPage() {
           <TableBody>
             {items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={9} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
                     No service items yet.
                   </p>
@@ -103,6 +105,10 @@ export default async function ServiceItemsPage() {
               items.map((i) => {
                 const category = Array.isArray(i.category) ? i.category[0] : i.category;
                 const slot = i.duration_minutes + i.prep_before_minutes + i.cleanup_after_minutes;
+                const normalPrice = (i.service_item_prices ?? []).find(
+                  (p) => p.price_class === 'Normal' && p.branch_id === null,
+                );
+                const priceCents = normalPrice?.price_cents ?? null;
                 const itemRecord: ServiceItemRecord = {
                   id: i.id,
                   code: i.code,
@@ -116,12 +122,16 @@ export default async function ServiceItemsPage() {
                   commission_applicable: i.commission_applicable,
                   tip_applicable: i.tip_applicable,
                   business_unit_id: i.business_unit_id,
+                  price_cents: priceCents,
                 };
                 return (
                   <TableRow key={i.id}>
                     <TableCell className="font-mono font-bold">{i.code}</TableCell>
                     <TableCell className="font-semibold">{i.name}</TableCell>
                     <TableCell className="font-mono font-bold">{category?.code ?? '—'}</TableCell>
+                    <TableCell className="font-bold tabular">
+                      {priceCents != null ? `₱${(priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell className="font-bold tabular">{i.duration_minutes} min</TableCell>
                     <TableCell>
                       <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">

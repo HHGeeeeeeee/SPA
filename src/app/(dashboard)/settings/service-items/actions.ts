@@ -20,24 +20,61 @@ const schema = z.object({
   commission_applicable: z.boolean().default(true),
   tip_applicable: z.boolean().default(true),
   business_unit_id: z.string().uuid().optional().nullable(),
+  price: z.coerce.number().min(0).optional(),
 });
 
 const updateSchema = schema.partial().extend({ id: z.string().uuid() });
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+const PRICE_FROM = '2020-01-01';
+const PRICE_TO = '2999-12-31';
+
+// Upsert the canonical "Normal" all-branch open-ended price row for an item.
+async function syncNormalPrice(serviceItemId: string, pricePhp: number) {
+  const supabase = createServiceClient();
+  const priceCents = Math.round(pricePhp * 100);
+  const { data: existing } = await supabase
+    .from('service_item_prices')
+    .select('id')
+    .eq('service_item_id', serviceItemId)
+    .eq('price_class', 'Normal')
+    .is('branch_id', null)
+    .limit(1);
+  if (existing && existing.length > 0) {
+    return (await supabase.from('service_item_prices').update({ price_cents: priceCents }).eq('id', existing[0].id)).error;
+  }
+  return (await supabase.from('service_item_prices').insert({
+    service_item_id: serviceItemId,
+    price_class: 'Normal',
+    branch_id: null,
+    effective_from: PRICE_FROM,
+    effective_to: PRICE_TO,
+    price_cents: priceCents,
+  })).error;
+}
+
 export async function createServiceItem(input: unknown): Promise<ActionResult> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { price, ...fields } = parsed.data;
   const supabase = createServiceClient();
-  const { error } = await supabase.from('service_items').insert({
-    ...parsed.data,
-    required_resource_type: parsed.data.required_resource_type || null,
-    active: true,
-  });
-  if (error) {
-    if (error.code === '23505') return { ok: false, error: `Code "${parsed.data.code}" already exists` };
-    return { ok: false, error: error.message };
+  const { data, error } = await supabase
+    .from('service_items')
+    .insert({
+      ...fields,
+      required_resource_type: fields.required_resource_type || null,
+      active: true,
+    })
+    .select('id')
+    .single();
+  if (error || !data) {
+    if (error?.code === '23505') return { ok: false, error: `Code "${parsed.data.code}" already exists` };
+    return { ok: false, error: error?.message ?? 'Insert failed' };
+  }
+  if (price !== undefined) {
+    const pe = await syncNormalPrice(data.id, price);
+    if (pe) return { ok: false, error: pe.message };
   }
   revalidatePath('/settings/service-items');
   return { ok: true };
@@ -59,8 +96,14 @@ export async function updateServiceItem(input: unknown): Promise<ActionResult> {
   if (d.tip_applicable !== undefined) patch.tip_applicable = d.tip_applicable;
   if (d.business_unit_id !== undefined) patch.business_unit_id = d.business_unit_id ?? null;
   const supabase = createServiceClient();
-  const { error } = await supabase.from('service_items').update(patch).eq('id', d.id);
-  if (error) return { ok: false, error: error.message };
+  if (Object.keys(patch).length > 0) {
+    const { error } = await supabase.from('service_items').update(patch).eq('id', d.id);
+    if (error) return { ok: false, error: error.message };
+  }
+  if (d.price !== undefined) {
+    const pe = await syncNormalPrice(d.id, d.price);
+    if (pe) return { ok: false, error: pe.message };
+  }
   revalidatePath('/settings/service-items');
   return { ok: true };
 }

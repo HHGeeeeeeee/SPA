@@ -62,9 +62,19 @@ function statusBadge(status: EmployeeItem['status']) {
   );
 }
 
+function nextEmployeeCode(codes: string[]): string {
+  // Highest E### suffix + 1, padded to 3 digits. Falls back to E001.
+  const maxNum = codes.reduce((max, code) => {
+    const m = /^E(\d+)$/.exec(code);
+    return m ? Math.max(max, Number(m[1])) : max;
+  }, 0);
+  return `E${String(maxNum + 1).padStart(3, '0')}`;
+}
+
 export default async function EmployeesPage() {
   const { employees, branches, classes, positions } = await fetchData();
   const activeCount = employees.filter((e) => e.status === 'active').length;
+  const suggestedCode = nextEmployeeCode(employees.map((e) => e.employee_code));
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,6 +96,7 @@ export default async function EmployeesPage() {
           branches={branches}
           classes={classes}
           positions={positions}
+          suggestedCode={suggestedCode}
           trigger={
             <Button>
               <Plus className="size-4" />

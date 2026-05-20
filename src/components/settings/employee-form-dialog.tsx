@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -62,6 +62,7 @@ interface Props {
   branches: BranchOption[];
   classes: ClassOption[];
   positions: PositionOption[];
+  suggestedCode?: string;
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -75,6 +76,7 @@ export function EmployeeFormDialog({
   branches,
   classes,
   positions,
+  suggestedCode,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -84,7 +86,7 @@ export function EmployeeFormDialog({
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [pending, startTransition] = useTransition();
 
-  const [employeeCode, setEmployeeCode] = useState(employee?.employee_code ?? '');
+  const [employeeCode, setEmployeeCode] = useState(employee?.employee_code ?? suggestedCode ?? '');
   const [name, setName] = useState(employee?.name ?? '');
   const [phone, setPhone] = useState(employee?.phone ?? '');
   const [email, setEmail] = useState(employee?.email ?? '');
@@ -93,6 +95,14 @@ export function EmployeeFormDialog({
   const [classId, setClassId] = useState(employee?.commission_class_id ?? NONE);
   const [positionId, setPositionId] = useState(employee?.position_id ?? NONE);
   const [status, setStatus] = useState<EmployeeItem['status']>(employee?.status ?? 'active');
+
+  const isEdit = mode === 'edit';
+
+  // Re-seed the suggested code each time a create dialog opens, so it tracks
+  // the latest "next number" after a previous create + revalidation.
+  useEffect(() => {
+    if (open && !isEdit) setEmployeeCode(suggestedCode ?? '');
+  }, [open, isEdit, suggestedCode]);
 
   const branchOptions = [
     { value: NONE, label: 'None (freelance / cross)' },
@@ -106,8 +116,6 @@ export function EmployeeFormDialog({
     { value: NONE, label: 'None' },
     ...positions.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
   ];
-
-  const isEdit = mode === 'edit';
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

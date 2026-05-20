@@ -37,6 +37,10 @@ interface OrderItem {
   therapist_name: string | null;
   therapist_id: string | null;
   resource_id: string | null;
+  station_name: string | null;
+  duration_minutes: number | null;
+  actual_start: string | null;
+  actual_end: string | null;
   list_price_cents: number;
   discount_amount_cents: number;
   final_amount_cents: number;
@@ -76,6 +80,10 @@ const NONE = '__none__';
 
 function peso0(cents: number | null): string {
   return cents == null ? '—' : `₱${(cents / 100).toLocaleString('en-PH')}`;
+}
+
+function hm(ts: string | null): string {
+  return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
 }
 
 export function OrderWorkspace({
@@ -270,9 +278,28 @@ export function OrderWorkspace({
         </CardContent>
       </Card>
 
+      {/* add customer */}
+      {order.editable && (
+        <Card className="border-dashed">
+          <CardContent className="py-3 flex flex-wrap items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-semibold">Customer name</Label>
+              <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Walk-in guest" className="w-48" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-semibold">Phone</Label>
+              <Input value={custPhone} onChange={(e) => setCustPhone(e.target.value)} placeholder="optional" className="w-40" />
+            </div>
+            <Button size="sm" onClick={doAddCustomer} disabled={pending}>
+              <UserPlus className="size-4" /> Add Customer
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* customers + items */}
       {customers.length === 0 ? (
-        <p className="text-sm font-medium text-muted-foreground px-1">No customers yet — add the first below.</p>
+        <p className="text-sm font-medium text-muted-foreground px-1">No customers yet — add the first above.</p>
       ) : (
         customers.sort((a, b) => a.seq_no - b.seq_no).map((c) => (
           <Card key={c.id}>
@@ -289,16 +316,29 @@ export function OrderWorkspace({
             </CardHeader>
             <CardContent>
               <ul className="flex flex-col divide-y divide-border">
-                {itemsByCustomer(c.id).map((it) => (
+                {itemsByCustomer(c.id).map((it) => {
+                  const detailParts = [
+                    it.duration_minutes ? `${it.duration_minutes} min` : null,
+                    it.station_name,
+                    it.actual_start ? `${hm(it.actual_start)}${it.actual_end ? `–${hm(it.actual_end)}` : ''}` : null,
+                  ].filter(Boolean) as string[];
+                  return (
                   <li key={it.id} className="flex items-center justify-between py-2 text-sm gap-2">
                     <div className="min-w-0">
-                      <span className="font-semibold">{it.service_name}</span>
-                      <span className="ml-2 font-medium text-muted-foreground">{it.therapist_name ?? 'Unassigned'}</span>
-                      {it.status === 'in_service' && (
-                        <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400">In service</span>
-                      )}
-                      {it.status === 'service_completed' && (
-                        <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-primary">Done</span>
+                      <div>
+                        <span className="font-semibold">{it.service_name}</span>
+                        <span className="ml-2 font-medium text-muted-foreground">{it.therapist_name ?? 'Unassigned'}</span>
+                        {it.status === 'in_service' && (
+                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400">In service</span>
+                        )}
+                        {it.status === 'service_completed' && (
+                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-primary">Done</span>
+                        )}
+                      </div>
+                      {detailParts.length > 0 && (
+                        <div className="text-xs font-medium text-muted-foreground mt-0.5 tabular">
+                          {detailParts.join(' · ')}
+                        </div>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -321,7 +361,8 @@ export function OrderWorkspace({
                       )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
                 {itemsByCustomer(c.id).length === 0 && (
                   <li className="py-2 text-sm font-medium text-muted-foreground">No services yet</li>
                 )}
@@ -404,25 +445,6 @@ export function OrderWorkspace({
             </CardContent>
           </Card>
         ))
-      )}
-
-      {/* add customer */}
-      {order.editable && (
-        <Card className="border-dashed">
-          <CardContent className="py-3 flex flex-wrap items-end gap-2">
-            <div className="flex flex-col gap-1">
-              <Label className="text-xs font-semibold">Customer name</Label>
-              <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Walk-in guest" className="w-48" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-xs font-semibold">Phone</Label>
-              <Input value={custPhone} onChange={(e) => setCustPhone(e.target.value)} placeholder="optional" className="w-40" />
-            </div>
-            <Button size="sm" onClick={doAddCustomer} disabled={pending}>
-              <UserPlus className="size-4" /> Add Customer
-            </Button>
-          </CardContent>
-        </Card>
       )}
 
       {/* payment */}

@@ -35,9 +35,10 @@ async function fetchData(id: string) {
       order_customers ( id, customer_name, customer_phone, seq_no ),
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
-        therapist_id, resource_id,
+        therapist_id, resource_id, duration_minutes, actual_start, actual_end,
         service:service_items ( name ),
-        therapist:employees ( name )
+        therapist:employees ( name ),
+        resource:resources ( resource_name )
       )
     `)
     .eq('id', id)
@@ -119,6 +120,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const items = (order.order_items ?? []).map((it) => {
     const svc = one(it.service);
     const th = one(it.therapist);
+    const resource = one(it.resource);
     return {
       id: it.id,
       order_customer_id: it.order_customer_id,
@@ -126,6 +128,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       therapist_name: th?.name ?? null,
       therapist_id: it.therapist_id,
       resource_id: it.resource_id,
+      station_name: resource?.resource_name ?? null,
+      duration_minutes: it.duration_minutes,
+      actual_start: it.actual_start,
+      actual_end: it.actual_end,
       list_price_cents: it.list_price_cents,
       discount_amount_cents: it.discount_amount_cents,
       final_amount_cents: it.final_amount_cents,

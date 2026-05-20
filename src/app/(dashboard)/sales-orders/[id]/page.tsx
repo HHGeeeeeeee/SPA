@@ -54,7 +54,7 @@ async function fetchData(id: string) {
       .eq('active', true)
       .order('service_group')
       .order('duration_minutes'),
-    supabase.from('employees').select('id, employee_code, name').eq('status', 'active').order('employee_code'),
+    supabase.from('employees').select('id, employee_code, name, home_branch_id, home_branch:branches ( code )').eq('status', 'active').order('employee_code'),
     supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description').eq('active', true).order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
@@ -76,11 +76,23 @@ async function fetchData(id: string) {
   const busyResourceIds = [...new Set((busy.data ?? []).map((b) => b.resource_id).filter(Boolean) as string[])];
 
   const scheduledIds = new Set((shifts.data ?? []).map((s) => s.employee_id));
-  const allEmployees = (emp.data ?? []).map((e) => ({ id: e.id, code: e.employee_code, name: e.name }));
-  // Prefer scheduled therapists; fall back to all active if nobody is rostered yet.
-  const employeesScoped = scheduledIds.size > 0
-    ? allEmployees.filter((e) => scheduledIds.has(e.id))
-    : allEmployees;
+  const allEmployees = (emp.data ?? []).map((e) => ({
+    id: e.id,
+    code: e.employee_code,
+    name: e.name,
+    homeBranchId: e.home_branch_id as string | null,
+    homeBranchCode: one(e.home_branch)?.code ?? null,
+  }));
+  // "At this branch" = home-branched here OR rostered here today. Everyone else is
+  // borrowable (manual cross-branch dispatch — auto-assign never reaches for them).
+  const belongsHere = (e: { homeBranchId: string | null; id: string }) =>
+    e.homeBranchId === order.branch_id || scheduledIds.has(e.id);
+  const thisBranchEmployees = allEmployees
+    .filter(belongsHere)
+    .map((e) => ({ id: e.id, code: e.code, name: e.name }));
+  const borrowableEmployees = allEmployees
+    .filter((e) => !belongsHere(e))
+    .map((e) => ({ id: e.id, code: e.code, name: e.name, homeBranchCode: e.homeBranchCode }));
 
   return {
     order,
@@ -95,7 +107,8 @@ async function fetchData(id: string) {
         required_resource_type: s.required_resource_type ?? null,
       };
     }),
-    employees: employeesScoped,
+    employees: thisBranchEmployees,
+    borrowableEmployees,
     busyTherapistIds,
     busyResourceIds,
     resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null })),
@@ -108,7 +121,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const { id } = await params;
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods } = result;
 
   const branch = one(order.branch);
   const source = one(order.source);
@@ -202,6 +215,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         items={items}
         serviceItems={serviceItems}
         employees={employees}
+        borrowableEmployees={borrowableEmployees}
         busyTherapistIds={busyTherapistIds}
         busyResourceIds={busyResourceIds}
         resources={resources}

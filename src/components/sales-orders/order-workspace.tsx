@@ -11,7 +11,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -53,6 +56,7 @@ interface OrderCustomer {
   seq_no: number;
 }
 interface Opt { id: string; code: string; name: string }
+interface BorrowOpt { id: string; code: string; name: string; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string }
 interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
@@ -69,6 +73,7 @@ interface Props {
   items: OrderItem[];
   serviceItems: ServiceVariant[];
   employees: Opt[];
+  borrowableEmployees: BorrowOpt[];
   busyTherapistIds: string[];
   busyResourceIds: string[];
   resources: ResourceOpt[];
@@ -92,6 +97,7 @@ export function OrderWorkspace({
   items,
   serviceItems,
   employees,
+  borrowableEmployees,
   busyTherapistIds,
   busyResourceIds,
   resources,
@@ -175,9 +181,9 @@ export function OrderWorkspace({
     if (freeTherapist && freeStation) {
       toast.success(`Auto-assigned ${freeTherapist.name} · ${freeStation.name}`);
     } else if (!freeTherapist && !freeStation) {
-      toast.error('No free therapist or station right now');
+      toast.error('No free therapist at this branch or station — borrow a therapist manually if needed');
     } else if (!freeTherapist) {
-      toast.warning(`Station ${freeStation!.name} set — no free therapist`);
+      toast.warning(`Station ${freeStation!.name} set — no free therapist here, borrow one manually`);
     } else {
       toast.warning(`${freeTherapist!.name} set — no free station${neededType ? ` (${neededType})` : ''}`);
     }
@@ -242,10 +248,13 @@ export function OrderWorkspace({
     .filter((s) => s.group === groupSel)
     .map((s) => ({ value: s.id, label: `${s.duration_minutes} min · ${peso0(s.price_cents)}` }));
   const busy = new Set(busyTherapistIds);
-  const empOptions = [
-    { value: NONE, label: 'Unassigned' },
-    ...employees.map((e) => ({ value: e.id, label: `${e.code} — ${e.name}${busy.has(e.id) ? ' · in service' : ''}` })),
-  ];
+  const thisBranchOptions = employees.map((e) => ({ value: e.id, label: `${e.code} — ${e.name}${busy.has(e.id) ? ' · in service' : ''}` }));
+  const borrowOptions = borrowableEmployees.map((e) => ({
+    value: e.id,
+    label: `${e.code} — ${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`,
+  }));
+  // Combined list drives the trigger's value→label lookup; the dropdown groups them.
+  const empOptions = [{ value: NONE, label: 'Unassigned' }, ...thisBranchOptions, ...borrowOptions];
   const resOptions = [{ value: NONE, label: 'None' }, ...resources.map((r) => ({ value: r.id, label: r.name }))];
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: `${d.code} — ${d.description}` }));
   const payOptions = paymentMethods.map((p) => ({ value: p.id, label: p.display_name }));
@@ -409,7 +418,24 @@ export function OrderWorkspace({
                       <Select items={empOptions} value={therapistId} onValueChange={(v) => setTherapistId(v ?? NONE)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {empOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                          <SelectItem value={NONE}>Unassigned</SelectItem>
+                          <SelectGroup>
+                            <SelectLabel>At this branch</SelectLabel>
+                            {thisBranchOptions.length === 0 ? (
+                              <SelectItem value="__nobody__" disabled>No therapist rostered here</SelectItem>
+                            ) : (
+                              thisBranchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)
+                            )}
+                          </SelectGroup>
+                          {borrowOptions.length > 0 && (
+                            <>
+                              <SelectSeparator />
+                              <SelectGroup>
+                                <SelectLabel>Borrow from other branch</SelectLabel>
+                                {borrowOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                              </SelectGroup>
+                            </>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>

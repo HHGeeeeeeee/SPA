@@ -125,7 +125,8 @@ export default async function ServiceItemsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-28 font-bold">Code</TableHead>
+              <TableHead className="font-bold">Service Group</TableHead>
+              <TableHead className="w-24 font-bold">Code</TableHead>
               <TableHead className="w-28 font-bold">Duration</TableHead>
               <TableHead className="w-32 font-bold">Price</TableHead>
               <TableHead className="w-24 font-bold">Slot</TableHead>
@@ -137,7 +138,7 @@ export default async function ServiceItemsPage() {
           <TableBody>
             {items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12">
+                <TableCell colSpan={8} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
                     No service items yet.
                   </p>
@@ -146,16 +147,15 @@ export default async function ServiceItemsPage() {
             ) : (
               orderedGroups.map((grp) => (
                 <Fragment key={grp.key}>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
-                    <TableCell colSpan={7} className="py-2">
-                      <span className="font-extrabold">{grp.name}</span>
-                      <span className="ml-2 font-mono font-bold text-xs text-muted-foreground uppercase">{grp.categoryCode}</span>
-                      <span className="ml-2 text-xs font-semibold text-muted-foreground">{grp.rows.length} variant{grp.rows.length > 1 ? 's' : ''}</span>
-                    </TableCell>
-                  </TableRow>
-                  {grp.rows.map((r) => (
-                    <TableRow key={r.i.id}>
-                      <TableCell className="font-mono font-bold pl-6">{r.i.code}</TableCell>
+                  {grp.rows.map((r, idx) => (
+                    <TableRow key={r.i.id} className={idx === grp.rows.length - 1 ? 'border-b-2 border-border' : ''}>
+                      {idx === 0 && (
+                        <TableCell rowSpan={grp.rows.length} className="align-top border-r border-border">
+                          <span className="font-extrabold block">{grp.name}</span>
+                          <span className="font-mono font-bold text-xs text-muted-foreground uppercase">{grp.categoryCode}</span>
+                        </TableCell>
+                      )}
+                      <TableCell className="font-mono font-bold">{r.i.code}</TableCell>
                       <TableCell className="font-bold tabular">{r.i.duration_minutes} min</TableCell>
                       <TableCell className="font-bold tabular">
                         {r.priceCents != null ? `₱${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}

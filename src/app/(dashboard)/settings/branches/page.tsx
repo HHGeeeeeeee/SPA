@@ -73,7 +73,7 @@ export default async function BranchesPage() {
             <TableRow>
               <TableHead className="w-32 font-bold">Code</TableHead>
               <TableHead className="font-bold">Name</TableHead>
-              <TableHead className="w-32 font-bold">Business Unit</TableHead>
+              <TableHead className="font-bold whitespace-nowrap">Business Unit</TableHead>
               <TableHead className="w-32 font-bold">Status</TableHead>
               <TableHead className="w-48 font-bold">Updated</TableHead>
               <TableHead className="w-12" />
@@ -106,12 +106,12 @@ export default async function BranchesPage() {
                     <TableCell className="font-mono font-bold">{b.code}</TableCell>
                     <TableCell className="font-semibold">{b.name}</TableCell>
                     <TableCell>
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex items-center gap-1">
                         {units.length === 0 ? (
                           <span className="text-muted-foreground text-sm">—</span>
                         ) : (
                           units.map((u) => (
-                            <Badge key={u.id} variant="secondary" className="font-bold font-mono text-xs uppercase">
+                            <Badge key={u.id} variant="secondary" className="font-bold font-mono text-xs uppercase shrink-0 whitespace-nowrap">
                               {u.code}
                             </Badge>
                           ))

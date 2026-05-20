@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -54,16 +55,8 @@ export async function loadConfirmable(branchId: string, date: string): Promise<C
 }
 
 export async function isCashClosed(branchId: string, date: string): Promise<boolean> {
-  const supabase = createServiceClient();
-  const { data } = await supabase
-    .from('cash_reconciliations')
-    .select('id')
-    .eq('branch_id', branchId)
-    .eq('reconciliation_date', date)
-    .eq('shift_label', 'FullDay')
-    .eq('status', 'closed')
-    .maybeSingle();
-  return !!data;
+  // All of the branch's configured shifts must be closed.
+  return isDayCashClosed(branchId, date);
 }
 
 const schema = z.object({ branch_id: z.string().uuid(), date: z.string().min(1) });

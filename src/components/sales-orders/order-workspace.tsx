@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -129,6 +130,7 @@ export function OrderWorkspace({
     : paymentMethods;
   const defaultPayMethod =
     paymentPolicy.lockedMethodId ?? paymentPolicy.defaultMethodId ?? allowedPaymentMethods[0]?.id ?? '';
+  const [payMode, setPayMode] = useState<'split' | 'together'>('split');
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const canRunService = ['open', 'in_service'].includes(order.status);
@@ -476,49 +478,61 @@ export function OrderWorkspace({
       {/* payment */}
       {['completed', 'paid'].includes(order.status) && due > 0 && (
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 flex-row items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
               <CreditCard className="size-4" /> Take Payment · Due {peso(due)}
             </CardTitle>
+            {multiCustomer && (
+              <div className="inline-flex rounded-lg border border-border p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setPayMode('split')}
+                  className={cn(
+                    'rounded-md px-3 py-1 text-xs font-bold transition-colors',
+                    payMode === 'split' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent',
+                  )}
+                >
+                  Pay separately
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayMode('together')}
+                  className={cn(
+                    'rounded-md px-3 py-1 text-xs font-bold transition-colors',
+                    payMode === 'together' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent',
+                  )}
+                >
+                  Pay together
+                </button>
+              </div>
+            )}
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {multiCustomer ? (
-              <>
-                {customers
-                  .slice()
-                  .sort((a, b) => a.seq_no - b.seq_no)
-                  .filter((c) => c.subtotal_cents - c.paid_cents > 0)
-                  .map((c) => (
-                    <CustomerPaymentCard
-                      key={c.id}
-                      orderId={order.id}
-                      orderCustomerId={c.id}
-                      label={`#${c.seq_no} · ${c.customer_name}`}
-                      dueCents={c.subtotal_cents - c.paid_cents}
-                      tipTargets={tipTargetsFor(c.id)}
-                      paymentMethods={allowedPaymentMethods}
-                      locked={paymentPolicy.locked}
-                      defaultMethodId={defaultPayMethod}
-                    />
-                  ))}
-                <CustomerPaymentCard
-                  orderId={order.id}
-                  orderCustomerId={null}
-                  label="Pay all remaining together"
-                  dueCents={due}
-                  tipTargets={tipTargetsFor(null)}
-                  paymentMethods={allowedPaymentMethods}
-                  locked={paymentPolicy.locked}
-                  defaultMethodId={defaultPayMethod}
-                />
-              </>
+            {multiCustomer && payMode === 'split' ? (
+              customers
+                .slice()
+                .sort((a, b) => a.seq_no - b.seq_no)
+                .filter((c) => c.subtotal_cents - c.paid_cents > 0)
+                .map((c) => (
+                  <CustomerPaymentCard
+                    key={c.id}
+                    orderId={order.id}
+                    orderCustomerId={c.id}
+                    label={`#${c.seq_no} · ${c.customer_name}`}
+                    dueCents={c.subtotal_cents - c.paid_cents}
+                    tipTargets={tipTargetsFor(c.id)}
+                    paymentMethods={allowedPaymentMethods}
+                    locked={paymentPolicy.locked}
+                    defaultMethodId={defaultPayMethod}
+                  />
+                ))
             ) : (
               <CustomerPaymentCard
                 orderId={order.id}
-                orderCustomerId={customers[0]?.id ?? null}
-                label="Payment"
+                orderCustomerId={multiCustomer ? null : customers[0]?.id ?? null}
+                label={multiCustomer ? 'Whole order' : 'Payment'}
                 dueCents={due}
-                tipTargets={tipTargetsFor(customers[0]?.id ?? null)}
+                tipTargets={tipTargetsFor(multiCustomer ? null : customers[0]?.id ?? null)}
                 paymentMethods={allowedPaymentMethods}
                 locked={paymentPolicy.locked}
                 defaultMethodId={defaultPayMethod}

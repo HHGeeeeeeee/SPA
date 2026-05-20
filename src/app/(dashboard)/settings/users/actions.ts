@@ -5,9 +5,20 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { currentSession, isAdmin } from '@/lib/auth';
 import type { Database } from '@/types/database';
 
 type StaffUserUpdate = Database['public']['Tables']['staff_users']['Update'];
+
+async function requireAdmin(): Promise<string | null> {
+  const s = await currentSession();
+  return isAdmin(s) ? null : 'Admin permission required';
+}
+
+const passwordSchema = z.object({
+  id: z.string().uuid(),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(72),
+});
 
 const schema = z.object({
   acumatica_user_id: z
@@ -48,6 +59,8 @@ async function syncBranches(staffUserId: string, branchIds: string[]) {
 }
 
 export async function createStaffUser(input: unknown): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, error: denied };
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
@@ -78,6 +91,8 @@ export async function createStaffUser(input: unknown): Promise<ActionResult> {
 }
 
 export async function updateStaffUser(input: unknown): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
@@ -102,6 +117,8 @@ export async function updateStaffUser(input: unknown): Promise<ActionResult> {
 }
 
 export async function setStaffUserActive(id: string, active: boolean): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, error: denied };
   const supabase = createServiceClient();
   const { error } = await supabase.from('staff_users').update({ active }).eq('id', id);
   if (error) return { ok: false, error: error.message };
@@ -109,7 +126,25 @@ export async function setStaffUserActive(id: string, active: boolean): Promise<A
   return { ok: true };
 }
 
+export async function setStaffUserPassword(input: unknown): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, error: denied };
+  const parsed = passwordSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid password' };
+  const hash = await bcrypt.hash(parsed.data.password, 10);
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from('staff_users')
+    .update({ password_hash: hash })
+    .eq('id', parsed.data.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/settings/users');
+  return { ok: true };
+}
+
 export async function setManagerPin(input: unknown): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, error: denied };
   const parsed = pinSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid PIN' };
   const hash = await bcrypt.hash(parsed.data.pin, 10);
@@ -129,6 +164,8 @@ export async function setManagerPin(input: unknown): Promise<ActionResult> {
 }
 
 export async function clearManagerPin(id: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, error: denied };
   const supabase = createServiceClient();
   const { error } = await supabase
     .from('staff_users')

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { MoreVertical, Pencil, Power, PowerOff, KeyRound, Trash2 } from 'lucide-react';
+import { MoreVertical, Pencil, Power, PowerOff, KeyRound, Trash2, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ import {
 } from '@/app/(dashboard)/settings/users/actions';
 import { UserFormDialog, type StaffUserItem } from './user-form-dialog';
 import { UserPinDialog } from './user-pin-dialog';
+import { UserPasswordDialog } from './user-password-dialog';
 
 interface Props {
   user: StaffUserItem & { has_pin: boolean };
@@ -39,6 +40,7 @@ export function UserRowActions({ user, branches }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [pinOpen, setPinOpen] = useState(false);
+  const [pwdOpen, setPwdOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   function toggleActive() {
@@ -72,6 +74,10 @@ export function UserRowActions({ user, branches }: Props) {
             <DropdownMenuItem onClick={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTimeout(() => setPwdOpen(true))}>
+              <Lock className="size-4" />
+              Set Password
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setTimeout(() => setPinOpen(true))}>
               <KeyRound className="size-4" />
@@ -115,6 +121,13 @@ export function UserRowActions({ user, branches }: Props) {
         username={user.acumatica_user_id}
         open={pinOpen}
         onOpenChange={setPinOpen}
+      />
+
+      <UserPasswordDialog
+        userId={user.id}
+        username={user.acumatica_user_id}
+        open={pwdOpen}
+        onOpenChange={setPwdOpen}
       />
 
       <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>

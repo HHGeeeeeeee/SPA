@@ -429,37 +429,31 @@ export function OrderWorkspace({
                     timeWindow(it.actual_start, it.actual_end, it.duration_minutes),
                   ].filter(Boolean) as string[];
                   return (
-                  <li key={it.id} className={`flex items-center justify-between py-2 text-sm gap-2 ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
-                    <div className="min-w-0">
-                      <div>
-                        <span className="font-semibold">{it.service_name}</span>
-                        <span className="ml-2 font-medium text-muted-foreground">
-                          {it.therapist_name ?? 'Unassigned'}
-                          {it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
-                        </span>
-                        {it.status === 'in_service' && (
-                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400">In service</span>
-                        )}
-                        {(it.status === 'service_completed' || it.status === 'feedback_done') && (
-                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-primary">Done</span>
-                        )}
-                        {it.status === 'interrupted' && (
-                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-destructive">Interrupted</span>
-                        )}
-                        {it.status === 'cancelled' && (
-                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Skipped</span>
-                        )}
-                        {it.feedback_score != null && (
-                          <span className="ml-2 text-[10px] font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
-                        )}
-                      </div>
-                      {detailParts.length > 0 && (
-                        <div className="text-xs font-medium text-muted-foreground mt-0.5 tabular">
-                          {detailParts.join(' · ')}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                  <li key={it.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                    <span className="font-semibold">{it.service_name}</span>
+                    <span className="font-medium text-muted-foreground">
+                      {it.therapist_name ?? 'Unassigned'}
+                      {it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
+                    </span>
+                    {it.status === 'in_service' && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400">In service</span>
+                    )}
+                    {(it.status === 'service_completed' || it.status === 'feedback_done') && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-primary">Done</span>
+                    )}
+                    {it.status === 'interrupted' && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-destructive">Interrupted</span>
+                    )}
+                    {it.status === 'cancelled' && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Skipped</span>
+                    )}
+                    {it.feedback_score != null && (
+                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
+                    )}
+                    {detailParts.length > 0 && (
+                      <span className="text-xs font-medium text-muted-foreground tabular">{detailParts.join(' · ')}</span>
+                    )}
+                    <div className="ml-auto flex items-center gap-2 shrink-0">
                       {canRunService && it.status === 'scheduled' && (
                         <>
                           <Button size="sm" variant="outline" onClick={() => doStartItem(it)} disabled={pending}>Start</Button>

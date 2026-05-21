@@ -459,46 +459,50 @@ export function OrderWorkspace({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="col-span-2 flex items-center justify-between">
-                      <Label className="text-xs font-semibold text-muted-foreground">Therapist &amp; Station</Label>
-                      <Button type="button" size="sm" variant="outline" onClick={autoAssign} disabled={pending}>
-                        <Wand2 className="size-3.5" /> Auto-assign
-                      </Button>
-                    </div>
-                    <div>
-                      <Label className="text-xs font-semibold">Therapist</Label>
-                      <Select items={empOptions} value={therapistId} onValueChange={(v) => setTherapistId(v ?? NONE)}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NONE}>Unassigned</SelectItem>
-                          <SelectGroup>
-                            <SelectLabel>At this branch</SelectLabel>
-                            {thisBranchOptions.length === 0 ? (
-                              <SelectItem value="__nobody__" disabled>{groupSel ? `No therapist here can do ${groupSel}` : 'No therapist rostered here'}</SelectItem>
-                            ) : (
-                              thisBranchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)
-                            )}
-                          </SelectGroup>
-                          {borrowOptions.length > 0 && (
-                            <>
-                              <SelectSeparator />
+                    <div className="col-span-2 rounded-lg border border-border bg-muted/30 p-3 flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs font-semibold text-muted-foreground">Therapist &amp; Station</Label>
+                        <Button type="button" size="sm" variant="outline" onClick={autoAssign} disabled={pending}>
+                          <Wand2 className="size-3.5" /> Auto-assign
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-xs font-semibold">Therapist</Label>
+                          <Select items={empOptions} value={therapistId} onValueChange={(v) => setTherapistId(v ?? NONE)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NONE}>Unassigned</SelectItem>
                               <SelectGroup>
-                                <SelectLabel>Borrow from other branch</SelectLabel>
-                                {borrowOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                                <SelectLabel>At this branch</SelectLabel>
+                                {thisBranchOptions.length === 0 ? (
+                                  <SelectItem value="__nobody__" disabled>{groupSel ? `No therapist here can do ${groupSel}` : 'No therapist rostered here'}</SelectItem>
+                                ) : (
+                                  thisBranchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)
+                                )}
                               </SelectGroup>
-                            </>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-xs font-semibold">Station</Label>
-                      <Select items={resOptions} value={resourceId} onValueChange={(v) => setResourceId(v ?? NONE)}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {resOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                              {borrowOptions.length > 0 && (
+                                <>
+                                  <SelectSeparator />
+                                  <SelectGroup>
+                                    <SelectLabel>Borrow from other branch</SelectLabel>
+                                    {borrowOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                                  </SelectGroup>
+                                </>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs font-semibold">Station</Label>
+                          <Select items={resOptions} value={resourceId} onValueChange={(v) => setResourceId(v ?? NONE)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {resOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
                     </div>
                     <div className={needsDiscountAmount ? '' : 'col-span-2'}>
                       <Label className="text-xs font-semibold">Discount</Label>

@@ -40,7 +40,7 @@ async function fetchData() {
       `)
       .order('code'),
     supabase.from('billing_destinations').select('id, code, name').eq('active', true).order('code'),
-    supabase.from('discount_classes').select('id, code, description').eq('active', true).order('code'),
+    supabase.from('discount_classes').select('id, code, description, discount_percent, discount_amount_cents').eq('active', true).order('code'),
   ]);
   if (cs.error) throw new Error(cs.error.message);
   if (bd.error) throw new Error(bd.error.message);

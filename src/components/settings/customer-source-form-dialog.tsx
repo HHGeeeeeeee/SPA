@@ -46,6 +46,8 @@ interface DiscountOption {
   id: string;
   code: string;
   description: string;
+  discount_percent: number;
+  discount_amount_cents: number;
 }
 
 interface Props {
@@ -84,9 +86,18 @@ export function CustomerSourceFormDialog({
     { value: NONE, label: 'None (customer self-pays)' },
     ...billingDestinations.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` })),
   ];
+  const discRate = (d: DiscountOption): string | null =>
+    d.discount_percent > 0
+      ? `${d.discount_percent}%`
+      : d.discount_amount_cents > 0
+        ? `₱${(d.discount_amount_cents / 100).toLocaleString()}`
+        : null;
   const discountOptions = [
     { value: NONE, label: 'None' },
-    ...discountClasses.map((d) => ({ value: d.id, label: `${d.code} — ${d.description}` })),
+    ...discountClasses.map((d) => {
+      const rate = discRate(d);
+      return { value: d.id, label: rate ? `${d.code} — ${rate} — ${d.description}` : `${d.code} — ${d.description}` };
+    }),
   ];
 
   function handleSubmit(e: React.FormEvent) {

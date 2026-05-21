@@ -32,7 +32,7 @@ import {
 interface Props {
   item: CustomerSourceItem & { active: boolean };
   billingDestinations: { id: string; code: string; name: string }[];
-  discountClasses: { id: string; code: string; description: string }[];
+  discountClasses: { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }[];
 }
 
 export function CustomerSourceRowActions({ item, billingDestinations, discountClasses }: Props) {

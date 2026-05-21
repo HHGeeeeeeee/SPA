@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Plus, Trash2, UserPlus, CreditCard, Wand2 } from 'lucide-react';
+import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -306,12 +306,12 @@ export function OrderWorkspace({
 
   return (
     <div className="flex flex-col gap-4">
-      <Tabs defaultValue="guests">
-        <TabsList variant="line">
-          <TabsTrigger value="guests">Guest List</TabsTrigger>
-          <TabsTrigger value="folio">Folio</TabsTrigger>
-          <TabsTrigger value="feedback">Feedback</TabsTrigger>
-          <TabsTrigger value="history">Change History</TabsTrigger>
+      <Tabs defaultValue="guests" className="w-full flex-col gap-4">
+        <TabsList className="w-fit">
+          <TabsTrigger value="guests"><Users /> Guest List</TabsTrigger>
+          <TabsTrigger value="folio"><Receipt /> Folio</TabsTrigger>
+          <TabsTrigger value="feedback"><Star /> Feedback</TabsTrigger>
+          <TabsTrigger value="history"><History /> Change History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="guests" className="flex flex-col gap-4">

@@ -171,7 +171,8 @@ async function recomputeTotals(orderId: string) {
   const { data: items } = await supabase
     .from('order_items')
     .select('list_price_cents, discount_amount_cents, final_amount_cents')
-    .eq('order_id', orderId);
+    .eq('order_id', orderId)
+    .neq('status', 'cancelled');
   const subtotal = (items ?? []).reduce((s, i) => s + i.list_price_cents, 0);
   const discount = (items ?? []).reduce((s, i) => s + i.discount_amount_cents, 0);
   const total = (items ?? []).reduce((s, i) => s + i.final_amount_cents, 0);
@@ -179,6 +180,23 @@ async function recomputeTotals(orderId: string) {
     .from('orders')
     .update({ subtotal_cents: subtotal, discount_cents: discount, total_cents: total })
     .eq('id', orderId);
+}
+
+// Complete an in-service order once no line is still scheduled or running.
+async function maybeAutoComplete(orderId: string) {
+  const supabase = createServiceClient();
+  const { data: remaining } = await supabase
+    .from('order_items')
+    .select('id')
+    .eq('order_id', orderId)
+    .in('status', ['scheduled', 'in_service'])
+    .limit(1);
+  if (remaining && remaining.length > 0) return;
+  const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single();
+  if (ord?.status === 'in_service') {
+    await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
+    await logStatus(orderId, 'in_service', 'completed', 'All services finished', null);
+  }
 }
 
 const addCustomerSchema = z.object({
@@ -423,22 +441,26 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   const { error } = await supabase.from('order_items').update(patch).eq('id', itemId);
   if (error) return { ok: false, error: error.message };
 
-  // When no service is still scheduled or running, complete the order
-  // automatically — the counterpart to auto-starting on the first line.
-  const { data: remaining } = await supabase
-    .from('order_items')
-    .select('id')
-    .eq('order_id', orderId)
-    .in('status', ['scheduled', 'in_service'])
-    .limit(1);
-  if (!remaining || remaining.length === 0) {
-    const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single();
-    if (ord?.status === 'in_service') {
-      await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
-      await logStatus(orderId, 'in_service', 'completed', 'All services finished', null);
-    }
-  }
+  // Finishing the last active service auto-completes the order.
+  await maybeAutoComplete(orderId);
 
+  revalidatePath(`/sales-orders/${orderId}`);
+  return { ok: true };
+}
+
+// Skip a not-yet-started service line (guest decides not to do it). It's marked
+// cancelled, drops out of the totals, and no longer blocks auto-completion.
+export async function skipOrderItem(itemId: string, orderId: string): Promise<ActionResult> {
+  const supabase = createServiceClient();
+  const { data: item } = await supabase.from('order_items').select('status').eq('id', itemId).single();
+  if (!item) return { ok: false, error: 'Service line not found' };
+  if (item.status !== 'scheduled') {
+    return { ok: false, error: 'Only a not-yet-started service can be skipped (use Interrupt once it has started)' };
+  }
+  const { error } = await supabase.from('order_items').update({ status: 'cancelled' }).eq('id', itemId);
+  if (error) return { ok: false, error: error.message };
+  await recomputeTotals(orderId);
+  await maybeAutoComplete(orderId);
   revalidatePath(`/sales-orders/${orderId}`);
   return { ok: true };
 }

@@ -174,7 +174,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const orderPayments = order.payments ?? [];
   const customers = (order.order_customers ?? []).map((c) => {
     const subtotal = orderItemsRaw
-      .filter((it) => it.order_customer_id === c.id)
+      .filter((it) => it.order_customer_id === c.id && it.status !== 'cancelled')
       .reduce((s, it) => s + it.final_amount_cents, 0);
     const paid = orderPayments
       .filter((p) => p.order_customer_id === c.id)

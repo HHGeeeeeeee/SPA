@@ -27,6 +27,7 @@ import {
   removeOrderItem,
   startOrderItem,
   finishOrderItem,
+  skipOrderItem,
   voidPayment,
 } from '@/app/(dashboard)/sales-orders/actions';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
@@ -272,6 +273,13 @@ export function OrderWorkspace({
     });
   }
 
+  function doSkipItem(id: string) {
+    startTransition(async () => {
+      const r = await skipOrderItem(id, order.id);
+      if (r.ok) toast.success('Service skipped'); else toast.error(r.error);
+    });
+  }
+
   function doRemoveCustomer(id: string) {
     startTransition(async () => {
       const r = await removeOrderCustomer(id, order.id);
@@ -400,7 +408,7 @@ export function OrderWorkspace({
                     timeWindow(it.actual_start, it.actual_end, it.duration_minutes),
                   ].filter(Boolean) as string[];
                   return (
-                  <li key={it.id} className="flex items-center justify-between py-2 text-sm gap-2">
+                  <li key={it.id} className={`flex items-center justify-between py-2 text-sm gap-2 ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
                     <div className="min-w-0">
                       <div>
                         <span className="font-semibold">{it.service_name}</span>
@@ -414,6 +422,9 @@ export function OrderWorkspace({
                         {it.status === 'interrupted' && (
                           <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-destructive">Interrupted</span>
                         )}
+                        {it.status === 'cancelled' && (
+                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Skipped</span>
+                        )}
                         {it.feedback_score != null && (
                           <span className="ml-2 text-[10px] font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
                         )}
@@ -426,7 +437,10 @@ export function OrderWorkspace({
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {canRunService && it.status === 'scheduled' && (
-                        <Button size="sm" variant="outline" onClick={() => doStartItem(it.id)} disabled={pending}>Start</Button>
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => doStartItem(it.id)} disabled={pending}>Start</Button>
+                          <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => doSkipItem(it.id)} disabled={pending}>Skip</Button>
+                        </>
                       )}
                       {canRunService && it.status === 'in_service' && (
                         <>
@@ -437,12 +451,16 @@ export function OrderWorkspace({
                       {['service_completed', 'feedback_done'].includes(it.status) && it.feedback_score == null && (
                         <Button size="sm" variant="outline" onClick={() => setFeedbackItem(it)} disabled={pending}>Feedback</Button>
                       )}
-                      <span className="font-bold tabular">
-                        {it.discount_amount_cents > 0 && (
-                          <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>
-                        )}
-                        {peso(it.final_amount_cents)}
-                      </span>
+                      {it.status === 'cancelled' ? (
+                        <span className="font-medium tabular line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>
+                      ) : (
+                        <span className="font-bold tabular">
+                          {it.discount_amount_cents > 0 && (
+                            <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>
+                          )}
+                          {peso(it.final_amount_cents)}
+                        </span>
+                      )}
                       {order.editable && (
                         <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending}>
                           <Trash2 className="size-3.5 text-destructive" />

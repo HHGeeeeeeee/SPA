@@ -80,7 +80,9 @@ export function CustomerPaymentCard({
     label: `${c.card_no}${c.customer_name ? ` · ${c.customer_name}` : ''} · ₱${(c.balance_cents / 100).toLocaleString('en-PH')}`,
   }));
   const tipTotalPesos = tipTargets.reduce((s, t) => s + (Number(tips[t.orderItemId]) || 0), 0);
-  const chargeTotalCents = Math.round((Number(amount) || 0) * 100) + Math.round(tipTotalPesos * 100);
+  const amountCents = Math.round((Number(amount) || 0) * 100);
+  const tipCents = Math.round(tipTotalPesos * 100);
+  const chargeTotalCents = amountCents + tipCents;
 
   function record() {
     const amt = Number(amount);
@@ -165,7 +167,14 @@ export function CustomerPaymentCard({
       </div>
       {showTips && (
         <p className="text-sm font-bold tabular text-right border-t border-border/60 pt-1.5">
-          Charge {peso(chargeTotalCents)}
+          {showCard ? (
+            <>
+              Card {peso(amountCents)}
+              {tipCents > 0 && <span className="text-primary"> · PAYMAYA {peso(tipCents)}</span>}
+            </>
+          ) : (
+            <>PAYMAYA {peso(chargeTotalCents)}</>
+          )}
         </p>
       )}
       {showCard && (

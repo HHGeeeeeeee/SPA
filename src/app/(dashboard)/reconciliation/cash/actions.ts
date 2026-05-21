@@ -19,26 +19,46 @@ function nextDate(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Which shifts a branch runs (ordered by start). Default: single FullDay. */
+/** Which shifts a branch runs (ordered by start). Resolution order:
+ *  branch-specific override → global default → single FullDay. */
 export async function getBranchShifts(branchId: string): Promise<ShiftLabel[]> {
   const supabase = createServiceClient();
-  const { data } = await supabase.from('settings').select('value').eq('key', SETTING_KEY).eq('branch_id', branchId).maybeSingle();
-  const raw = data?.value?.split(',').map((s) => s.trim()).filter(Boolean) as ShiftLabel[] | undefined;
+  const { data: rows } = await supabase
+    .from('settings').select('value, branch_id').eq('key', SETTING_KEY)
+    .or(`branch_id.eq.${branchId},branch_id.is.null`);
+  const value = (rows ?? []).find((r) => r.branch_id === branchId)?.value
+    ?? (rows ?? []).find((r) => r.branch_id === null)?.value;
+  const raw = value?.split(',').map((s) => s.trim()).filter(Boolean) as ShiftLabel[] | undefined;
   const valid = (raw ?? []).filter((s) => SHIFT_LABELS.includes(s));
   const shifts = valid.length ? valid : (['FullDay'] as ShiftLabel[]);
   return shifts.sort((a, b) => WINDOW[a][0] - WINDOW[b][0]);
 }
 
-export async function setBranchShifts(branchId: string, shifts: string[]): Promise<ActionResult> {
+/** Save the cash-recon shifts. branchId=null sets the global default for every
+ *  branch; a branchId writes an override for just that branch. */
+export async function setCashShifts(input: { shifts: string[]; branchId: string | null }): Promise<ActionResult> {
   if (!isAdmin(await currentSession())) return { ok: false, error: 'Admin permission required' };
-  const valid = shifts.filter((s): s is ShiftLabel => (SHIFT_LABELS as readonly string[]).includes(s));
+  const valid = input.shifts.filter((s): s is ShiftLabel => (SHIFT_LABELS as readonly string[]).includes(s));
   if (valid.length === 0) return { ok: false, error: 'Pick at least one shift' };
   const supabase = createServiceClient();
-  const { error } = await supabase.from('settings').upsert(
-    { key: SETTING_KEY, branch_id: branchId, scope: 'branch', value: valid.join(','), value_type: 'string', description: 'Cash reconciliation shifts for this branch' },
-    { onConflict: 'key,branch_id' },
-  );
-  if (error) return { ok: false, error: error.message };
+  const value = valid.join(',');
+
+  if (input.branchId) {
+    const { error } = await supabase.from('settings').upsert(
+      { key: SETTING_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'string', description: 'Cash reconciliation shifts (branch override)' },
+      { onConflict: 'key,branch_id' },
+    );
+    if (error) return { ok: false, error: error.message };
+  } else {
+    // Global row has branch_id IS NULL; Postgres treats NULLs as distinct so
+    // onConflict can't dedupe it — update the existing one or insert a new one.
+    const { data: existing } = await supabase.from('settings').select('id').eq('key', SETTING_KEY).is('branch_id', null).maybeSingle();
+    const payload = { value, scope: 'global', value_type: 'string', description: 'Cash reconciliation shifts (all branches)' };
+    const { error } = existing
+      ? await supabase.from('settings').update(payload).eq('id', existing.id)
+      : await supabase.from('settings').insert({ key: SETTING_KEY, branch_id: null, ...payload });
+    if (error) return { ok: false, error: error.message };
+  }
   revalidatePath('/reconciliation/cash');
   return { ok: true };
 }

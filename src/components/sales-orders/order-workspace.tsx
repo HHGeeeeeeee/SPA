@@ -200,6 +200,7 @@ export function OrderWorkspace({
   const [confirmFinish, setConfirmFinish] = useState<OrderItem | null>(null);
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
+  const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
   const canRunService = ['open', 'in_service'].includes(order.status);
 
   function doAddCustomer() {
@@ -660,10 +661,11 @@ export function OrderWorkspace({
         </TabsContent>
 
         <TabsContent value="folio" className="flex flex-col gap-4">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Total charges</p><p className="text-xl font-extrabold tabular mt-1">{peso(order.total_cents)}</p></CardContent></Card>
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Paid</p><p className="text-xl font-extrabold tabular mt-1">{peso(order.paid_cents)}</p></CardContent></Card>
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Outstanding</p><p className="text-xl font-extrabold tabular mt-1">{peso(due)}</p></CardContent></Card>
+            <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Tips (PAYMAYA)</p><p className="text-xl font-extrabold tabular mt-1 text-primary">{peso(totalTips)}</p></CardContent></Card>
           </div>
 
       {/* AR-billed orders are invoiced, not collected at the counter */}

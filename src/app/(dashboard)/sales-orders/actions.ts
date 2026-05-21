@@ -728,10 +728,11 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     .eq('id', d.payment_method_id)
     .single();
 
-  // Tips are only recorded on a PAYMAYA payment (cash tips never enter the system).
+  // Tips ride a non-cash payment (PAYMAYA, or a stored-value redemption where the
+  // tip itself is charged via PAYMAYA). Cash tips never enter the system.
   const tips = d.tips ?? [];
-  if (tips.length > 0 && method?.code !== 'paymaya') {
-    return { ok: false, error: 'Tips can only be recorded on a PAYMAYA payment' };
+  if (tips.length > 0 && !['paymaya', 'stored_value_card'].includes(method?.code ?? '')) {
+    return { ok: false, error: 'Tips can only be recorded on a PAYMAYA or stored-value payment' };
   }
 
   // Stored-value redemption: deduct the card balance and ledger the consume.

@@ -72,8 +72,8 @@ export function CustomerPaymentCard({
   const payOptions = paymentMethods.map((p) => ({ value: p.id, label: p.display_name }));
   const paymayaId = paymentMethods.find((p) => p.code === 'paymaya')?.id ?? null;
   const svcId = paymentMethods.find((p) => p.code === 'stored_value_card')?.id ?? null;
-  const showTips = !!paymayaId && method === paymayaId && tipTargets.length > 0;
   const showCard = !!svcId && method === svcId;
+  const showTips = ((!!paymayaId && method === paymayaId) || showCard) && tipTargets.length > 0;
   const refRequired = !!paymayaId && method === paymayaId;
   const cardOptions = storedValueCards.map((c) => ({
     value: c.id,

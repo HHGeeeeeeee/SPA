@@ -116,6 +116,18 @@ function hm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
 }
 
+// Time window for a service line: actual once finished, else the projected end
+// (start + duration) while it's running. Nothing before it's started.
+function timeWindow(actualStart: string | null, actualEnd: string | null, durationMin: number | null): string | null {
+  if (!actualStart) return null;
+  if (actualEnd) return `${hm(actualStart)}–${hm(actualEnd)}`;
+  if (durationMin) {
+    const end = new Date(new Date(actualStart).getTime() + durationMin * 60000).toISOString();
+    return `${hm(actualStart)}–~${hm(end)}`;
+  }
+  return hm(actualStart);
+}
+
 export function OrderWorkspace({
   order,
   customers,
@@ -385,7 +397,7 @@ export function OrderWorkspace({
                   const detailParts = [
                     it.duration_minutes ? `${it.duration_minutes} min` : null,
                     it.station_name,
-                    it.actual_start ? `${hm(it.actual_start)}${it.actual_end ? `–${hm(it.actual_end)}` : ''}` : null,
+                    timeWindow(it.actual_start, it.actual_end, it.duration_minutes),
                   ].filter(Boolean) as string[];
                   return (
                   <li key={it.id} className="flex items-center justify-between py-2 text-sm gap-2">

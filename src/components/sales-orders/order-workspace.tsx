@@ -117,6 +117,7 @@ interface Props {
   storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   capabilityByEmployee: Record<string, string[]>;
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
+  canManage: boolean;
 }
 
 const NONE = '__none__';
@@ -160,6 +161,7 @@ export function OrderWorkspace({
   storedValueCards,
   paymentPolicy,
   capabilityByEmployee,
+  canManage,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -754,9 +756,11 @@ export function OrderWorkspace({
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-bold tabular">{peso(p.amount_cents)}</span>
-                      <Button size="icon-sm" variant="ghost" onClick={() => doVoidPayment(p.id)} disabled={pending} title="Remove payment">
-                        <Trash2 className="size-3.5 text-destructive" />
-                      </Button>
+                      {(order.status !== 'paid' || canManage) && (
+                        <Button size="icon-sm" variant="ghost" onClick={() => doVoidPayment(p.id)} disabled={pending} title="Remove payment">
+                          <Trash2 className="size-3.5 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}

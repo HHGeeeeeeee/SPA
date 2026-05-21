@@ -824,6 +824,10 @@ export async function voidPayment(paymentId: string, orderId: string): Promise<A
   if (['closed', 'void'].includes(order.status)) {
     return { ok: false, error: 'Order is locked — reopen is not possible' };
   }
+  // Once the order is fully paid, removing a payment needs manager authority.
+  if (order.status === 'paid' && !isManager(await currentSession())) {
+    return { ok: false, error: 'Manager permission required to remove a payment from a paid order' };
+  }
 
   const { data: settled } = await supabase
     .from('tips')

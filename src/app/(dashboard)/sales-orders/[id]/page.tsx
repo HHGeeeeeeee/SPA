@@ -335,6 +335,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         storedValueCards={storedValueCards}
         capabilityByEmployee={capabilityByEmployee}
         paymentPolicy={paymentPolicy}
+        canManage={canManage}
       />
     </div>
   );

@@ -441,6 +441,38 @@ export async function startOrderItem(
   return { ok: true };
 }
 
+// One-click batch: start the first scheduled service for each guest who isn't
+// already mid-service (one per guest, so a multi-service guest only starts
+// their first line). Reuses startOrderItem so all the busy/booking checks and
+// the order auto-advance apply.
+export async function startAllServices(orderId: string): Promise<ActionResult<{ started: number; skipped: number }>> {
+  const supabase = createServiceClient();
+  const { data: items } = await supabase
+    .from('order_items')
+    .select('id, order_customer_id, status, created_at')
+    .eq('order_id', orderId)
+    .order('created_at', { ascending: true });
+  if (!items || items.length === 0) return { ok: false, error: 'No services to start' };
+
+  const busyCustomers = new Set(items.filter((i) => i.status === 'in_service').map((i) => i.order_customer_id));
+  const picked: string[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    if (it.status !== 'scheduled' || busyCustomers.has(it.order_customer_id) || seen.has(it.order_customer_id)) continue;
+    seen.add(it.order_customer_id);
+    picked.push(it.id);
+  }
+  if (picked.length === 0) return { ok: false, error: 'No services are ready to start' };
+
+  let started = 0;
+  for (const id of picked) {
+    const r = await startOrderItem(id, orderId, false);
+    if (r.ok) started += 1;
+  }
+  revalidatePath(`/sales-orders/${orderId}`);
+  return { ok: true, data: { started, skipped: picked.length - started } };
+}
+
 export async function finishOrderItem(itemId: string, orderId: string): Promise<ActionResult> {
   const supabase = createServiceClient();
   const now = new Date().toISOString();

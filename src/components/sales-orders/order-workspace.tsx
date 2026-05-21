@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History } from 'lucide-react';
+import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History, Play } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,7 @@ import {
   addOrderItem,
   removeOrderItem,
   startOrderItem,
+  startAllServices,
   finishOrderItem,
   skipOrderItem,
   voidPayment,
@@ -279,6 +280,16 @@ export function OrderWorkspace({
     });
   }
 
+  function doStartAll() {
+    startTransition(async () => {
+      const r = await startAllServices(order.id);
+      if (r.ok) {
+        const n = r.data?.started ?? 0;
+        toast.success(n > 0 ? `Started ${n} service${n === 1 ? '' : 's'}` : 'Nothing to start');
+      } else toast.error(r.error);
+    });
+  }
+
   function doStartItem(it: OrderItem) {
     // Same guest already mid-service → confirm before running them in parallel.
     const concurrent = items.some(
@@ -397,6 +408,11 @@ export function OrderWorkspace({
         <div className="flex items-center gap-2">
           <h3 className="text-xl font-bold">Guests</h3>
           <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{customers.length} pax</span>
+          {canRunService && items.some((i) => i.status === 'scheduled') && (
+            <Button size="sm" variant="outline" onClick={doStartAll} disabled={pending}>
+              <Play className="size-4" /> Start all
+            </Button>
+          )}
         </div>
         {order.editable && (
           <div className="flex flex-wrap items-end gap-2">

@@ -408,11 +408,6 @@ export function OrderWorkspace({
         <div className="flex items-center gap-2">
           <h3 className="text-xl font-bold">Guests</h3>
           <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{customers.length} pax</span>
-          {canRunService && items.some((i) => i.status === 'scheduled') && (
-            <Button size="sm" variant="outline" onClick={doStartAll} disabled={pending}>
-              <Play className="size-4" /> Start all
-            </Button>
-          )}
         </div>
         {order.editable && (
           <div className="flex flex-wrap items-end gap-2">
@@ -428,6 +423,11 @@ export function OrderWorkspace({
               <UserPlus className="size-4" /> Add Customer
             </Button>
           </div>
+        )}
+        {canRunService && items.some((i) => i.status === 'scheduled') && (
+          <Button size="sm" variant="outline" className="ml-auto" onClick={doStartAll} disabled={pending}>
+            <Play className="size-4" /> Start all
+          </Button>
         )}
       </div>
 
@@ -458,11 +458,12 @@ export function OrderWorkspace({
             </CardHeader>
             <CardContent>
               {itemsByCustomer(c.id).length > 0 && (
-                <div className="grid grid-cols-[11rem_10rem_6rem_1fr_auto] items-center gap-x-3 border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                <div className="grid grid-cols-[11rem_10rem_6rem_15rem_10rem_1fr] items-center gap-x-3 border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                   <span>Service</span>
                   <span>Therapist</span>
                   <span>Status</span>
                   <span>Duration · Station</span>
+                  <span>Action</span>
                   <span className="justify-self-end">Amount</span>
                 </div>
               )}
@@ -480,7 +481,7 @@ export function OrderWorkspace({
                     : it.status === 'cancelled' ? { t: 'Skipped', c: 'text-muted-foreground' }
                     : null;
                   return (
-                  <li key={it.id} className={`grid grid-cols-[11rem_10rem_6rem_1fr_auto] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                  <li key={it.id} className={`grid grid-cols-[11rem_10rem_6rem_15rem_10rem_1fr] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
                     <span className="font-semibold truncate">{it.service_name}</span>
                     <span className="font-medium text-muted-foreground truncate">
                       {it.therapist_name ?? 'Unassigned'}
@@ -495,7 +496,7 @@ export function OrderWorkspace({
                         <span className="ml-2 font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
                       )}
                     </span>
-                    <div className="flex items-center gap-2 justify-self-end">
+                    <div className="flex items-center gap-2">
                       {canRunService && it.status === 'scheduled' && (
                         <>
                           <Button size="sm" variant="outline" onClick={() => doStartItem(it)} disabled={pending}>Start</Button>
@@ -511,6 +512,8 @@ export function OrderWorkspace({
                       {['service_completed', 'feedback_done'].includes(it.status) && it.feedback_score == null && (
                         <Button size="sm" variant="outline" onClick={() => setFeedbackItem(it)} disabled={pending}>Feedback</Button>
                       )}
+                    </div>
+                    <div className="flex items-center gap-2 justify-self-end">
                       {it.status === 'cancelled' ? (
                         <span className="font-medium tabular line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>
                       ) : (

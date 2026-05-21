@@ -330,15 +330,15 @@ export function OrderWorkspace({
 
         <TabsContent value="guests" className="flex flex-col gap-4">
       {/* section header: pax count + add customer */}
-      <div className="flex flex-wrap items-end gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-bold">Guests</h3>
+          <h3 className="text-xl font-bold">Guests</h3>
           <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{customers.length} pax</span>
         </div>
         {order.editable && (
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-col gap-1">
-              <Label className="text-xs font-semibold">Customer name</Label>
+              <Label className="text-xs font-semibold">Name</Label>
               <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Walk-in guest" className="w-44" />
             </div>
             <div className="flex flex-col gap-1">

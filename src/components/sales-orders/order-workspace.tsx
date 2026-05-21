@@ -496,9 +496,6 @@ export function OrderWorkspace({
                     </span>
                     <span className="text-xs font-medium text-muted-foreground tabular truncate">
                       {detailParts.join(' · ')}
-                      {it.feedback_score != null && (
-                        <span className="ml-2 font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
-                      )}
                     </span>
                     <div className="flex items-center gap-2">
                       {canRunService && it.status === 'scheduled' && (

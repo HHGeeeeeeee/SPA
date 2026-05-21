@@ -7,6 +7,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
+import { OrderStatusActions } from '@/components/sales-orders/order-status-actions';
 import { ReportIncidentDialog } from '@/components/incidents/report-incident-dialog';
 
 export const dynamic = 'force-dynamic';
@@ -259,11 +260,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         <Link href="/sales-orders" className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
           <ChevronLeft className="size-3" /> Sales Orders
         </Link>
-        <div className="flex items-center gap-3 mt-1">
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
           <h2 className="text-3xl font-bold tracking-tight font-mono">{order.order_no}</h2>
           <Badge variant={STATUS_VARIANT[order.status] ?? 'secondary'} className="font-bold capitalize">
             {order.status.replace('_', ' ')}
           </Badge>
+          <OrderStatusActions orderId={order.id} status={order.status} canManage={canManage} itemCount={items.length} />
           <div className="ml-auto">
             <ReportIncidentDialog orderId={order.id} defaultCustomerName={customers[0]?.customer_name ?? ''} />
           </div>
@@ -330,7 +332,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         storedValueCards={storedValueCards}
         capabilityByEmployee={capabilityByEmployee}
         paymentPolicy={paymentPolicy}
-        canManage={canManage}
       />
     </div>
   );

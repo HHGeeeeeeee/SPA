@@ -27,14 +27,9 @@ import {
   removeOrderItem,
   startOrderItem,
   finishOrderItem,
-  setOrderStatus,
   voidPayment,
-  voidOrder,
-  reopenOrder,
-  requestOrderAdjustment,
 } from '@/app/(dashboard)/sales-orders/actions';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
-import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
 
@@ -107,7 +102,6 @@ interface Props {
   storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   capabilityByEmployee: Record<string, string[]>;
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
-  canManage: boolean;
 }
 
 const NONE = '__none__';
@@ -137,7 +131,6 @@ export function OrderWorkspace({
   storedValueCards,
   paymentPolicy,
   capabilityByEmployee,
-  canManage,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -166,9 +159,6 @@ export function OrderWorkspace({
     ?? allowedPaymentMethods[0]?.id
     ?? '';
   const [payMode, setPayMode] = useState<'split' | 'together'>('split');
-  const [voidOpen, setVoidOpen] = useState(false);
-  const [reopenOpen, setReopenOpen] = useState(false);
-  const [adjustOpen, setAdjustOpen] = useState(false);
   const [feedbackItem, setFeedbackItem] = useState<OrderItem | null>(null);
   const [interruptItem, setInterruptItem] = useState<OrderItem | null>(null);
 
@@ -269,42 +259,10 @@ export function OrderWorkspace({
     });
   }
 
-  function doStatus(next: string) {
-    startTransition(async () => {
-      const r = await setOrderStatus(order.id, next);
-      if (r.ok) toast.success(`Order ${next.replace('_', ' ')}`);
-      else toast.error(r.error);
-    });
-  }
-
   function doVoidPayment(paymentId: string) {
     startTransition(async () => {
       const r = await voidPayment(paymentId, order.id);
       if (r.ok) toast.success('Payment removed');
-      else toast.error(r.error);
-    });
-  }
-
-  function doVoid(reason: string) {
-    startTransition(async () => {
-      const r = await voidOrder(order.id, reason);
-      if (r.ok) { toast.success('Order voided'); setVoidOpen(false); }
-      else toast.error(r.error);
-    });
-  }
-
-  function doReopen(reason: string) {
-    startTransition(async () => {
-      const r = await reopenOrder(order.id, reason);
-      if (r.ok) { toast.success('Order reopened'); setReopenOpen(false); }
-      else toast.error(r.error);
-    });
-  }
-
-  function doAdjust(reason: string) {
-    startTransition(async () => {
-      const r = await requestOrderAdjustment(order.id, reason);
-      if (r.ok) { toast.success('Adjustment requested'); setAdjustOpen(false); }
       else toast.error(r.error);
     });
   }
@@ -348,40 +306,6 @@ export function OrderWorkspace({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* status actions */}
-      <Card>
-        <CardContent className="py-3 flex flex-wrap items-center gap-2">
-          <span className="text-sm font-bold capitalize mr-2">Status: {order.status.replace('_', ' ')}</span>
-          {order.status === 'draft' && (
-            <Button size="sm" onClick={() => doStatus('open')} disabled={pending || items.length === 0}>Open Order</Button>
-          )}
-          {order.status === 'open' && (
-            <Button size="sm" onClick={() => doStatus('in_service')} disabled={pending}>Start Service</Button>
-          )}
-          {order.status === 'in_service' && (
-            <Button size="sm" onClick={() => doStatus('completed')} disabled={pending}>Complete</Button>
-          )}
-          {order.status === 'paid' && (
-            <span className="text-xs font-medium text-muted-foreground">Paid — closes at daily Revenue Confirm</span>
-          )}
-          {order.status === 'completed' && canManage && (
-            <Button size="sm" variant="outline" onClick={() => setReopenOpen(true)} disabled={pending}>
-              Reopen
-            </Button>
-          )}
-          {order.status === 'closed' && canManage && (
-            <Button size="sm" variant="outline" onClick={() => setAdjustOpen(true)} disabled={pending}>
-              Request Adjustment
-            </Button>
-          )}
-          {!['closed', 'void'].includes(order.status) && canManage && (
-            <Button size="sm" variant="ghost" className="text-destructive ml-auto" onClick={() => setVoidOpen(true)} disabled={pending}>
-              Void
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
       <Tabs defaultValue="guests">
         <TabsList variant="line">
           <TabsTrigger value="guests">Guest List</TabsTrigger>
@@ -391,41 +315,53 @@ export function OrderWorkspace({
         </TabsList>
 
         <TabsContent value="guests" className="flex flex-col gap-4">
-      {/* add customer */}
-      {order.editable && (
-        <Card className="border-dashed">
-          <CardContent className="py-3 flex flex-wrap items-end gap-2">
+      {/* section header: pax count + add customer */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold">Guests</h3>
+          <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{customers.length} pax</span>
+        </div>
+        {order.editable && (
+          <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Customer name</Label>
-              <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Walk-in guest" className="w-48" />
+              <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Walk-in guest" className="w-44" />
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Phone</Label>
-              <Input value={custPhone} onChange={(e) => setCustPhone(e.target.value)} placeholder="optional" className="w-40" />
+              <Input value={custPhone} onChange={(e) => setCustPhone(e.target.value)} placeholder="optional" className="w-36" />
             </div>
             <Button size="sm" onClick={doAddCustomer} disabled={pending}>
               <UserPlus className="size-4" /> Add Customer
             </Button>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+      </div>
 
       {/* customers + items */}
       {customers.length === 0 ? (
-        <p className="text-sm font-medium text-muted-foreground px-1">No customers yet — add the first above.</p>
+        <Card className="border-dashed bg-muted/30">
+          <CardContent className="py-8 text-center text-sm font-semibold text-muted-foreground">
+            No guests yet — add the first using the form above.
+          </CardContent>
+        </Card>
       ) : (
         customers.sort((a, b) => a.seq_no - b.seq_no).map((c) => (
           <Card key={c.id}>
-            <CardHeader className="pb-2 flex-row items-center justify-between">
-              <CardTitle className="text-sm font-bold">
-                #{c.seq_no} · {c.customer_name}
-                {c.customer_phone && <span className="ml-2 font-medium text-muted-foreground">{c.customer_phone}</span>}
+            <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
+                {c.customer_name}
+                {c.customer_phone && <span className="font-medium text-muted-foreground">{c.customer_phone}</span>}
               </CardTitle>
-              {order.editable && (
-                <Button size="icon-sm" variant="ghost" onClick={() => doRemoveCustomer(c.id)} disabled={pending}>
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-sm font-bold tabular">{peso(c.subtotal_cents)}</span>
+                {order.editable && (
+                  <Button size="icon-sm" variant="ghost" onClick={() => doRemoveCustomer(c.id)} disabled={pending}>
+                    <Trash2 className="size-4 text-destructive" />
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               <ul className="flex flex-col divide-y divide-border">
@@ -751,34 +687,6 @@ export function OrderWorkspace({
         </TabsContent>
       </Tabs>
 
-      <ReasonDialog
-        open={voidOpen}
-        onOpenChange={setVoidOpen}
-        title="Void this order?"
-        description="The order is cancelled and locked. Past activity is kept."
-        confirmLabel="Void order"
-        destructive
-        pending={pending}
-        onConfirm={doVoid}
-      />
-      <ReasonDialog
-        open={reopenOpen}
-        onOpenChange={setReopenOpen}
-        title="Reopen this order?"
-        description="Moves the order back to Open so it can be edited. Logged for audit."
-        confirmLabel="Reopen"
-        pending={pending}
-        onConfirm={doReopen}
-      />
-      <ReasonDialog
-        open={adjustOpen}
-        onOpenChange={setAdjustOpen}
-        title="Request adjustment?"
-        description="Closed orders are corrected via an adjustment (reversal journal posts in the ERP phase)."
-        confirmLabel="Request adjustment"
-        pending={pending}
-        onConfirm={doAdjust}
-      />
       {feedbackItem && (
         <FeedbackDialog
           orderId={order.id}

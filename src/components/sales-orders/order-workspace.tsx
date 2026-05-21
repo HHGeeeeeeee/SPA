@@ -439,7 +439,7 @@ export function OrderWorkspace({
 
               {order.editable && (
                 activeCustomer === c.id ? (
-                  <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-border p-3">
+                  <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-border p-3">
                     <div>
                       <Label className="text-xs font-semibold">Service</Label>
                       <Select
@@ -467,15 +467,30 @@ export function OrderWorkspace({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="col-span-2 -mx-3 px-3 py-3 bg-muted/40 border-y border-border flex flex-col gap-2">
+                    <div>
+                      <Label className="text-xs font-semibold">Discount</Label>
+                      <Select items={discOptions} value={discountId} onValueChange={(v) => v && setDiscountId(v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {needsDiscountAmount && (
+                      <div>
+                        <Label className="text-xs font-semibold">{selectedDiscountCode} amount (₱) *</Label>
+                        <Input type="number" min="0" step="0.01" value={discountOverride} onChange={(e) => setDiscountOverride(e.target.value)} placeholder="manager-set" />
+                      </div>
+                    )}
+                    <div className="col-span-3 -mx-3 px-3 py-3 bg-muted/40 border-y border-border flex flex-col gap-2">
                       <div className="flex items-center gap-2">
                         <Label className="text-xs font-semibold text-muted-foreground">Therapist &amp; Station</Label>
                         <Button type="button" size="sm" variant="outline" onClick={autoAssign} disabled={pending}>
                           <Wand2 className="size-3.5" /> Auto-assign
                         </Button>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="col-span-2">
                           <Label className="text-xs font-semibold">Therapist</Label>
                           <Select items={empOptions} value={therapistId} onValueChange={(v) => setTherapistId(v ?? NONE)}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -512,22 +527,7 @@ export function OrderWorkspace({
                         </div>
                       </div>
                     </div>
-                    <div className={needsDiscountAmount ? '' : 'col-span-2'}>
-                      <Label className="text-xs font-semibold">Discount</Label>
-                      <Select items={discOptions} value={discountId} onValueChange={(v) => v && setDiscountId(v)}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {needsDiscountAmount && (
-                      <div>
-                        <Label className="text-xs font-semibold">{selectedDiscountCode} amount (₱) *</Label>
-                        <Input type="number" min="0" step="0.01" value={discountOverride} onChange={(e) => setDiscountOverride(e.target.value)} placeholder="manager-set" />
-                      </div>
-                    )}
-                    <div className="col-span-2 flex gap-2 justify-end">
+                    <div className="col-span-3 flex gap-2 justify-end">
                       <Button size="sm" variant="ghost" onClick={() => setActiveCustomer(null)} disabled={pending}>Cancel</Button>
                       <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
                     </div>

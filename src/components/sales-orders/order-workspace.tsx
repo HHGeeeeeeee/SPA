@@ -405,7 +405,7 @@ export function OrderWorkspace({
       ) : (
         customers.sort((a, b) => a.seq_no - b.seq_no).map((c) => (
           <Card key={c.id}>
-            <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
               <CardTitle className="text-sm font-bold flex items-center gap-2">
                 <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
                 {c.customer_name}
@@ -428,32 +428,29 @@ export function OrderWorkspace({
                     it.station_name,
                     timeWindow(it.actual_start, it.actual_end, it.duration_minutes),
                   ].filter(Boolean) as string[];
+                  const statusTag =
+                    it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
+                    : (it.status === 'service_completed' || it.status === 'feedback_done') ? { t: 'Done', c: 'text-primary' }
+                    : it.status === 'interrupted' ? { t: 'Interrupted', c: 'text-destructive' }
+                    : it.status === 'cancelled' ? { t: 'Skipped', c: 'text-muted-foreground' }
+                    : null;
                   return (
-                  <li key={it.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
-                    <span className="font-semibold">{it.service_name}</span>
-                    <span className="font-medium text-muted-foreground">
+                  <li key={it.id} className={`grid grid-cols-[11rem_10rem_6rem_1fr_auto] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                    <span className="font-semibold truncate">{it.service_name}</span>
+                    <span className="font-medium text-muted-foreground truncate">
                       {it.therapist_name ?? 'Unassigned'}
                       {it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
                     </span>
-                    {it.status === 'in_service' && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400">In service</span>
-                    )}
-                    {(it.status === 'service_completed' || it.status === 'feedback_done') && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-primary">Done</span>
-                    )}
-                    {it.status === 'interrupted' && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-destructive">Interrupted</span>
-                    )}
-                    {it.status === 'cancelled' && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Skipped</span>
-                    )}
-                    {it.feedback_score != null && (
-                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
-                    )}
-                    {detailParts.length > 0 && (
-                      <span className="text-xs font-medium text-muted-foreground tabular">{detailParts.join(' · ')}</span>
-                    )}
-                    <div className="ml-auto flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] font-bold uppercase tracking-wide truncate">
+                      {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
+                    </span>
+                    <span className="text-xs font-medium text-muted-foreground tabular truncate">
+                      {detailParts.join(' · ')}
+                      {it.feedback_score != null && (
+                        <span className="ml-2 font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-2 justify-self-end">
                       {canRunService && it.status === 'scheduled' && (
                         <>
                           <Button size="sm" variant="outline" onClick={() => doStartItem(it)} disabled={pending}>Start</Button>

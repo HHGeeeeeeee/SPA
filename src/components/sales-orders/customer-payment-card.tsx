@@ -74,6 +74,7 @@ export function CustomerPaymentCard({
   const svcId = paymentMethods.find((p) => p.code === 'stored_value_card')?.id ?? null;
   const showTips = !!paymayaId && method === paymayaId && tipTargets.length > 0;
   const showCard = !!svcId && method === svcId;
+  const refRequired = !!paymayaId && method === paymayaId;
   const cardOptions = storedValueCards.map((c) => ({
     value: c.id,
     label: `${c.card_no}${c.customer_name ? ` · ${c.customer_name}` : ''} · ₱${(c.balance_cents / 100).toLocaleString('en-PH')}`,
@@ -86,6 +87,7 @@ export function CustomerPaymentCard({
     if (!method) return toast.error('Pick a payment method');
     if (!amt || amt <= 0) return toast.error('Enter an amount');
     if (showCard && !cardId) return toast.error('Select a stored value card');
+    if (refRequired && !ref.trim()) return toast.error('Reference is required for PAYMAYA');
     const tipRows = showTips
       ? tipTargets
           .map((t) => ({ order_item_id: t.orderItemId, therapist_id: t.therapistId, amount: Number(tips[t.orderItemId] || 0) }))
@@ -135,35 +137,35 @@ export function CustomerPaymentCard({
           <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-28" />
         </div>
         <div className="flex flex-col gap-1">
-          <Label className="text-xs font-semibold">Reference</Label>
+          <Label className="text-xs font-semibold">Reference {refRequired && <span className="text-destructive">*</span>}</Label>
           <Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="auth / ref" className="w-32" />
         </div>
         <Button size="sm" onClick={record} disabled={pending}>Record</Button>
-        {showTips && (
-          <div className="rounded-md bg-muted/40 p-2 flex flex-col gap-1.5">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tip (PAYMAYA)</p>
-            {tipTargets.map((t) => (
-              <div key={t.orderItemId} className="flex items-center gap-2">
-                <span className="text-xs font-semibold whitespace-nowrap">
-                  {t.therapistName} <span className="font-medium text-muted-foreground">· {t.serviceName}</span>
-                </span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={tips[t.orderItemId] ?? ''}
-                  onChange={(e) => setTip(t.orderItemId, e.target.value)}
-                  placeholder="0.00"
-                  className="w-24 ml-auto"
-                />
-              </div>
-            ))}
-            <p className="text-[11px] font-bold tabular text-right border-t border-border/60 pt-1">
-              Charge {peso(chargeTotalCents)}
-            </p>
-          </div>
-        )}
       </div>
+      {showTips && (
+        <div className="border-t border-border pt-2 flex flex-col gap-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tip (PAYMAYA)</p>
+          {tipTargets.map((t) => (
+            <div key={t.orderItemId} className="flex items-center gap-2">
+              <span className="text-xs font-semibold whitespace-nowrap">
+                {t.therapistName} <span className="font-medium text-muted-foreground">· {t.serviceName}</span>
+              </span>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={tips[t.orderItemId] ?? ''}
+                onChange={(e) => setTip(t.orderItemId, e.target.value)}
+                placeholder="0.00"
+                className="w-24 ml-auto"
+              />
+            </div>
+          ))}
+          <p className="text-sm font-bold tabular text-right border-t border-border/60 pt-1.5">
+            Charge {peso(chargeTotalCents)}
+          </p>
+        </div>
+      )}
       {showCard && (
         <div className="flex flex-col gap-1">
           <Label className="text-xs font-semibold">Stored value card</Label>

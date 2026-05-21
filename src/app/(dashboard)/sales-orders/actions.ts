@@ -579,7 +579,7 @@ export async function submitFeedback(input: unknown): Promise<ActionResult> {
     email: d.email ? d.email : null,
     comment: d.comment || null,
     language: 'en',
-    status: 'submitted',
+    status: 'filled',
     filled_via: 'tablet',
     filled_at: new Date().toISOString(),
   });

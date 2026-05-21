@@ -58,17 +58,24 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       shiftStartMin: null, shiftEndMin: null, services: byStation.get(s.id) ?? [],
     }));
   } else {
-    const { data: shifts } = await supabase
-      .from('employee_shifts')
-      .select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )')
-      .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED);
+    const [shiftsRes, resRes] = await Promise.all([
+      supabase
+        .from('employee_shifts')
+        .select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )')
+        .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
+      supabase.from('resources').select('id, resource_name').eq('branch_id', branchId),
+    ]);
+    const shifts = shiftsRes.data;
+    const resName = new Map((resRes.data ?? []).map((r) => [r.id, r.resource_name]));
     const byTherapist = new Map<string, { name: string; startMin: number; endMin: number; ongoing: boolean }[]>();
     for (const it of dayItems) {
       if (!it.therapist_id) continue;
       const startMin = tsToMin(it.actual_start!);
       const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
+      const svc = one(it.service)?.name ?? 'Service';
+      const bed = it.resource_id ? resName.get(it.resource_id) : null;
       const arr = byTherapist.get(it.therapist_id) ?? [];
-      arr.push({ name: one(it.service)?.name ?? 'Service', startMin, endMin, ongoing: !it.actual_end });
+      arr.push({ name: bed ? `${svc} · ${bed}` : svc, startMin, endMin, ongoing: !it.actual_end });
       byTherapist.set(it.therapist_id, arr);
     }
     rows = (shifts ?? []).map((s) => {

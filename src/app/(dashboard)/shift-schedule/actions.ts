@@ -15,7 +15,6 @@ const schema = z.object({
   shift_start: z.string().optional().nullable(),
   shift_end: z.string().optional().nullable(),
   leave_type: z.enum(['sick', 'vacation', 'personal', 'unpaid']).optional().nullable(),
-  resource_id: z.string().uuid().optional().nullable(),
   note: z.string().max(200).optional().nullable(),
 });
 
@@ -40,19 +39,6 @@ export async function setShift(input: unknown): Promise<ActionResult> {
 
   const supabase = createServiceClient();
 
-  // A station can only be assigned to a timed shift, and must belong to the branch.
-  let resourceId: string | null = null;
-  if (timed && d.resource_id) {
-    const { data: res } = await supabase
-      .from('resources')
-      .select('id')
-      .eq('id', d.resource_id)
-      .eq('branch_id', d.branch_id)
-      .maybeSingle();
-    if (!res) return { ok: false, error: 'Selected station does not belong to this branch' };
-    resourceId = d.resource_id;
-  }
-
   await supabase
     .from('employee_shifts')
     .delete()
@@ -68,7 +54,6 @@ export async function setShift(input: unknown): Promise<ActionResult> {
     shift_start: timed ? d.shift_start : null,
     shift_end: timed ? d.shift_end : null,
     leave_type: d.shift_type === 'leave' ? d.leave_type : null,
-    resource_id: resourceId,
     note: d.note || null,
   });
   if (error) return { ok: false, error: error.message };

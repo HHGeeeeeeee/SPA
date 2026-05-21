@@ -29,12 +29,6 @@ export interface ShiftData {
   shift_start: string | null;
   shift_end: string | null;
   leave_type: string | null;
-  resource_id: string | null;
-}
-
-interface StationOption {
-  id: string;
-  name: string;
 }
 
 interface Props {
@@ -43,7 +37,6 @@ interface Props {
   branchId: string;
   date: string; // YYYY-MM-DD
   shift: ShiftData | null;
-  stations: StationOption[];
 }
 
 const TYPES = [
@@ -60,7 +53,6 @@ const LEAVE = [
   { value: 'unpaid', label: 'Unpaid' },
 ];
 const TIMED = ['regular', 'cross_branch', 'on_call'];
-const NO_STATION = '__none__';
 
 function hhmm(t: string | null): string {
   return t ? t.slice(0, 5) : '';
@@ -74,7 +66,7 @@ const TYPE_STYLE: Record<string, string> = {
   leave: 'bg-destructive/15 text-destructive',
 };
 
-export function ShiftCell({ employeeId, employeeName, branchId, date, shift, stations }: Props) {
+export function ShiftCell({ employeeId, employeeName, branchId, date, shift }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -82,11 +74,8 @@ export function ShiftCell({ employeeId, employeeName, branchId, date, shift, sta
   const [start, setStart] = useState(hhmm(shift?.shift_start ?? null) || '10:00');
   const [end, setEnd] = useState(hhmm(shift?.shift_end ?? null) || '20:00');
   const [leaveType, setLeaveType] = useState(shift?.leave_type ?? 'vacation');
-  const [resourceId, setResourceId] = useState(shift?.resource_id ?? NO_STATION);
 
   const isTimed = TIMED.includes(type);
-  const stationOptions = [{ value: NO_STATION, label: 'Unassigned (floating)' }, ...stations.map((s) => ({ value: s.id, label: s.name }))];
-  const assignedStationName = shift?.resource_id ? stations.find((s) => s.id === shift.resource_id)?.name ?? null : null;
 
   function save() {
     startTransition(async () => {
@@ -98,7 +87,6 @@ export function ShiftCell({ employeeId, employeeName, branchId, date, shift, sta
         shift_start: isTimed ? start : null,
         shift_end: isTimed ? end : null,
         leave_type: type === 'leave' ? leaveType : null,
-        resource_id: isTimed && resourceId !== NO_STATION ? resourceId : null,
       });
       if (r.ok) { toast.success('Shift saved'); setOpen(false); }
       else toast.error(r.error);
@@ -132,7 +120,6 @@ export function ShiftCell({ employeeId, employeeName, branchId, date, shift, sta
       >
         {label ?? '+'}
         {shift?.shift_type === 'cross_branch' && <span className="block text-[10px] font-semibold opacity-80">cross</span>}
-        {assignedStationName && <span className="block text-[10px] font-semibold opacity-80 truncate">{assignedStationName}</span>}
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -161,17 +148,6 @@ export function ShiftCell({ employeeId, employeeName, branchId, date, shift, sta
                   <Label htmlFor="sh-end" className="font-semibold">End</Label>
                   <Input id="sh-end" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
                 </div>
-              </div>
-            )}
-            {isTimed && stations.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <Label className="font-semibold">Station / Bed</Label>
-                <Select items={stationOptions} value={resourceId} onValueChange={(v) => v && setResourceId(v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {stationOptions.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
               </div>
             )}
             {type === 'leave' && (

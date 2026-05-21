@@ -2,7 +2,6 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
-import { StationShiftCell, type StationAssignment } from '@/components/shift-schedule/station-shift-cell';
 import { DayTimeline, type DayRow } from '@/components/shift-schedule/day-timeline';
 
 export const dynamic = 'force-dynamic';
@@ -100,8 +99,6 @@ interface ShiftRow {
   shift_start: string | null;
   shift_end: string | null;
   leave_type: string | null;
-  resource_id: string | null;
-  employees: { name: string; employee_code: string } | { name: string; employee_code: string }[] | null;
 }
 
 function thisMonday(): string {
@@ -139,23 +136,20 @@ async function fetchData(branchParam?: string, weekParam?: string) {
 
   let employees: { id: string; employee_code: string; name: string }[] = [];
   let shifts: ShiftRow[] = [];
-  let stations: { id: string; name: string }[] = [];
   if (branchId) {
-    const [emp, sh, res] = await Promise.all([
+    const [emp, sh] = await Promise.all([
       supabase.from('employees').select('id, employee_code, name').eq('home_branch_id', branchId).eq('status', 'active').order('employee_code'),
       supabase.from('employee_shifts')
-        .select('employee_id, shift_date, shift_type, shift_start, shift_end, leave_type, resource_id, employees:employee_id ( name, employee_code )')
+        .select('employee_id, shift_date, shift_type, shift_start, shift_end, leave_type')
         .eq('branch_id', branchId)
         .gte('shift_date', days[0].date)
         .lte('shift_date', days[6].date),
-      supabase.from('resources').select('id, resource_name').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
     ]);
     employees = emp.data ?? [];
     shifts = (sh.data ?? []) as ShiftRow[];
-    stations = (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name }));
   }
 
-  return { branches: list, branchId, monday, days, employees, shifts, stations };
+  return { branches: list, branchId, monday, days, employees, shifts };
 }
 
 export default async function ShiftSchedulePage({
@@ -165,32 +159,20 @@ export default async function ShiftSchedulePage({
 }) {
   const sp = await searchParams;
   const view: ShiftView = sp.view === 'station' ? 'station' : 'employee';
-  const scale: ShiftScale = sp.scale === 'day' ? 'day' : 'week';
+  // The roster only plans working hours; beds are assigned dynamically when a
+  // service starts. So the Station subject is a live, per-day occupancy snapshot
+  // (sourced from actual orders) and is never a weekly pre-assignment grid.
+  const scale: ShiftScale = view === 'station' ? 'day' : sp.scale === 'day' ? 'day' : 'week';
   const day = sp.day || todayISO();
-  const { branches, branchId, monday, days, employees, shifts, stations } = await fetchData(sp.branch, sp.week);
+  const { branches, branchId, monday, days, employees, shifts } = await fetchData(sp.branch, sp.week);
   const dayData = scale === 'day' && branchId ? await fetchDayData(view, branchId, day) : null;
 
   const shiftAt = (empId: string, date: string): ShiftData | null => {
     const s = shifts.find((x) => x.employee_id === empId && x.shift_date === date);
     return s
-      ? { shift_type: s.shift_type, shift_start: s.shift_start, shift_end: s.shift_end, leave_type: s.leave_type, resource_id: s.resource_id }
+      ? { shift_type: s.shift_type, shift_start: s.shift_start, shift_end: s.shift_end, leave_type: s.leave_type }
       : null;
   };
-
-  const assignmentsAt = (stationId: string, date: string): StationAssignment[] =>
-    shifts
-      .filter((s) => s.resource_id === stationId && s.shift_date === date && TIMED.includes(s.shift_type))
-      .map((s) => {
-        const emp = one(s.employees);
-        return {
-          employeeId: s.employee_id,
-          employeeName: emp?.name ?? '—',
-          employeeCode: emp?.employee_code ?? '',
-          shiftType: s.shift_type,
-          shiftStart: s.shift_start,
-          shiftEnd: s.shift_end,
-        };
-      });
 
   return (
     <div className="flex flex-col gap-6">
@@ -199,8 +181,8 @@ export default async function ShiftSchedulePage({
           <h2 className="text-3xl font-bold tracking-tight">Shift Schedule</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
             {scale === 'day'
-              ? `${day} · hourly · ${view === 'station' ? 'bed occupancy' : 'therapist hours & services'}`
-              : `Week of ${monday} · ${view === 'station' ? 'stations × days · click a cell to assign a therapist' : 'home-branch therapists · click a cell to set a shift'}`}
+              ? `${day} · hourly · ${view === 'station' ? 'live bed occupancy (from orders)' : 'therapist hours & services'}`
+              : `Week of ${monday} · home-branch therapists · click a cell to set a shift`}
           </p>
         </div>
         {branchId && <ShiftControls branches={branches} branchId={branchId} weekStart={monday} day={day} view={view} scale={scale} />}
@@ -212,62 +194,18 @@ export default async function ShiftSchedulePage({
         </Card>
       ) : scale === 'day' ? (
         <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} />
-      ) : view === 'employee' ? (
-        employees.length === 0 ? (
-          <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
-            No active employees with this branch as their home branch.
-          </Card>
-        ) : (
-          <Card className="p-0 overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-bold text-sm p-3 w-48 sticky left-0 bg-card">Therapist</th>
-                  {days.map((d) => (
-                    <th key={d.date} className="text-center font-bold text-xs p-2 min-w-[88px]">
-                      <div>{d.dow}</div>
-                      <div className="font-medium text-muted-foreground tabular">{d.label}</div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {employees.map((e) => (
-                  <tr key={e.id} className="border-b border-border last:border-0">
-                    <td className="p-3 sticky left-0 bg-card">
-                      <div className="font-semibold text-sm">{e.name}</div>
-                      <div className="font-mono font-bold text-xs text-muted-foreground">{e.employee_code}</div>
-                    </td>
-                    {days.map((d) => (
-                      <td key={d.date} className="p-1 align-middle">
-                        <ShiftCell
-                          employeeId={e.id}
-                          employeeName={e.name}
-                          branchId={branchId}
-                          date={d.date}
-                          shift={shiftAt(e.id, d.date)}
-                          stations={stations}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        )
-      ) : stations.length === 0 ? (
+      ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
-          No active stations at this branch. Add beds / rooms in Settings → Service Stations.
+          No active employees with this branch as their home branch.
         </Card>
       ) : (
         <Card className="p-0 overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left font-bold text-sm p-3 w-48 sticky left-0 bg-card">Station</th>
+                <th className="text-left font-bold text-sm p-3 w-48 sticky left-0 bg-card">Therapist</th>
                 {days.map((d) => (
-                  <th key={d.date} className="text-center font-bold text-xs p-2 min-w-[104px]">
+                  <th key={d.date} className="text-center font-bold text-xs p-2 min-w-[88px]">
                     <div>{d.dow}</div>
                     <div className="font-medium text-muted-foreground tabular">{d.label}</div>
                   </th>
@@ -275,19 +213,20 @@ export default async function ShiftSchedulePage({
               </tr>
             </thead>
             <tbody>
-              {stations.map((st) => (
-                <tr key={st.id} className="border-b border-border last:border-0">
+              {employees.map((e) => (
+                <tr key={e.id} className="border-b border-border last:border-0">
                   <td className="p-3 sticky left-0 bg-card">
-                    <div className="font-semibold text-sm">{st.name}</div>
+                    <div className="font-semibold text-sm">{e.name}</div>
+                    <div className="font-mono font-bold text-xs text-muted-foreground">{e.employee_code}</div>
                   </td>
                   {days.map((d) => (
-                    <td key={d.date} className="p-1 align-top">
-                      <StationShiftCell
+                    <td key={d.date} className="p-1 align-middle">
+                      <ShiftCell
+                        employeeId={e.id}
+                        employeeName={e.name}
                         branchId={branchId}
                         date={d.date}
-                        station={st}
-                        assignments={assignmentsAt(st.id, d.date)}
-                        employees={employees}
+                        shift={shiftAt(e.id, d.date)}
                       />
                     </td>
                   ))}

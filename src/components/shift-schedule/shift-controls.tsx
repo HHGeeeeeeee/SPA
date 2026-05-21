@@ -58,25 +58,27 @@ export function ShiftControls({ branches, branchId, weekStart, day, view, scale 
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {/* subject: therapist vs station */}
+      {/* subject: therapist roster vs live bed occupancy */}
       <div className="inline-flex rounded-lg border border-border p-0.5">
-        <button type="button" onClick={() => go({ view: 'employee' })} className={tabBtn(view === 'employee')}>
+        <button type="button" onClick={() => go({ view: 'employee', scale: 'week' })} className={tabBtn(view === 'employee')}>
           <Users className="size-4" /> Therapist
         </button>
-        <button type="button" onClick={() => go({ view: 'station' })} className={tabBtn(view === 'station')}>
+        <button type="button" onClick={() => go({ view: 'station', scale: 'day' })} className={tabBtn(view === 'station')}>
           <BedDouble className="size-4" /> Station
         </button>
       </div>
 
-      {/* scale: week grid vs hourly day */}
-      <div className="inline-flex rounded-lg border border-border p-0.5">
-        <button type="button" onClick={() => go({ scale: 'week' })} className={tabBtn(scale === 'week')}>
-          <CalendarDays className="size-4" /> Week
-        </button>
-        <button type="button" onClick={() => go({ scale: 'day' })} className={tabBtn(scale === 'day')}>
-          <Clock className="size-4" /> Day
-        </button>
-      </div>
+      {/* scale: week grid vs hourly day — Station is always a live per-day snapshot */}
+      {view === 'employee' && (
+        <div className="inline-flex rounded-lg border border-border p-0.5">
+          <button type="button" onClick={() => go({ scale: 'week' })} className={tabBtn(scale === 'week')}>
+            <CalendarDays className="size-4" /> Week
+          </button>
+          <button type="button" onClick={() => go({ scale: 'day' })} className={tabBtn(scale === 'day')}>
+            <Clock className="size-4" /> Day
+          </button>
+        </div>
+      )}
 
       <Select items={branchOptions} value={branchId} onValueChange={(v) => v && go({ branch: v })}>
         <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>

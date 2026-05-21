@@ -103,6 +103,10 @@ export function CustomerSourceFormDialog({
     }),
   ];
 
+  const VARIABLE_DISCOUNT_CODES = ['DIS-91', 'DIS-99'];
+  const selectedDiscountCode = discountClasses.find((d) => d.id === discountId)?.code;
+  const isVariableDiscount = !!selectedDiscountCode && VARIABLE_DISCOUNT_CODES.includes(selectedDiscountCode);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload = {
@@ -195,7 +199,12 @@ export function CustomerSourceFormDialog({
               <Select
                 items={discountOptions}
                 value={discountId ?? NONE}
-                onValueChange={(v) => setDiscountId(v ?? NONE)}
+                onValueChange={(v) => {
+                  const nv = v ?? NONE;
+                  setDiscountId(nv);
+                  const code = discountClasses.find((d) => d.id === nv)?.code;
+                  if (code && VARIABLE_DISCOUNT_CODES.includes(code)) setDiscountLocked(false);
+                }}
               >
                 <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
                 <SelectContent>
@@ -213,11 +222,12 @@ export function CustomerSourceFormDialog({
               <div className="flex flex-col gap-0.5">
                 <Label className="font-semibold">Lock discount (group rate)</Label>
                 <p className="text-xs font-medium text-muted-foreground">
-                  On = every guest gets the default discount, no per-item changes (hotels / groups).
-                  Off = the default is just a starting point and can be changed per guest (walk-in).
+                  {isVariableDiscount
+                    ? 'A manual/variable discount (DIS-91/DIS-99) needs a per-item amount, so it can’t be a locked group rate. Pick a fixed-rate discount to enable Lock.'
+                    : 'On = every guest gets the default discount, no per-item changes (hotels / groups). Off = the default is just a starting point and can be changed per guest (walk-in).'}
                 </p>
               </div>
-              <Switch checked={discountLocked} onCheckedChange={setDiscountLocked} />
+              <Switch checked={discountLocked && !isVariableDiscount} onCheckedChange={setDiscountLocked} disabled={isVariableDiscount} />
             </div>
           </div>
 

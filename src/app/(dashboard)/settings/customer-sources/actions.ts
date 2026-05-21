@@ -20,9 +20,28 @@ const updateSchema = schema.partial({ code: true }).extend({ id: z.string().uuid
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+// A locked (group) source must use a fixed-rate discount. Manual/variable
+// discounts (DIS-91/DIS-99) need a per-item amount, which contradicts a single
+// locked rate — so reject that combination.
+const VARIABLE_DISCOUNT_CODES = ['DIS-91', 'DIS-99'];
+async function variableLockError(
+  locked: boolean | undefined,
+  defaultDiscountId: string | null | undefined,
+): Promise<string | null> {
+  if (!locked || !defaultDiscountId) return null;
+  const supabase = createServiceClient();
+  const { data } = await supabase.from('discount_classes').select('code').eq('id', defaultDiscountId).maybeSingle();
+  if (data && VARIABLE_DISCOUNT_CODES.includes(data.code)) {
+    return `${data.code} is a manual/variable discount and can't be a locked group rate. Pick a fixed-rate discount, or turn off Lock.`;
+  }
+  return null;
+}
+
 export async function createCustomerSource(input: unknown): Promise<ActionResult> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const lockErr = await variableLockError(parsed.data.discount_locked, parsed.data.default_discount_class_id);
+  if (lockErr) return { ok: false, error: lockErr };
   const supabase = createServiceClient();
   const { error } = await supabase.from('customer_sources').insert({
     code: parsed.data.code,
@@ -44,6 +63,8 @@ export async function updateCustomerSource(input: unknown): Promise<ActionResult
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
+  const lockErr = await variableLockError(d.discount_locked, d.default_discount_class_id);
+  if (lockErr) return { ok: false, error: lockErr };
   const patch: SourceUpdate = {};
   if (d.name !== undefined) patch.name = d.name;
   if (d.default_billing_to_id !== undefined)

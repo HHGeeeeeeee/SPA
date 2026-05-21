@@ -23,8 +23,8 @@ export const dynamic = 'force-dynamic';
 
 function formatDiscount(d: { description: string; discount_percent: number; discount_amount_cents: number } | null): string | null {
   if (!d) return null;
-  if (d.discount_percent > 0) return `${d.description} · -${d.discount_percent}%`;
-  if (d.discount_amount_cents > 0) return `${d.description} · -₱${(d.discount_amount_cents / 100).toLocaleString()}`;
+  if (d.discount_percent > 0) return `${d.description} - ${d.discount_percent}%`;
+  if (d.discount_amount_cents > 0) return `${d.description} - ₱${(d.discount_amount_cents / 100).toLocaleString()}`;
   return d.description;
 }
 
@@ -129,7 +129,7 @@ export default async function CustomerSourcesPage() {
                     </TableCell>
                     <TableCell className="font-medium">
                       {formatDiscount(disc) ? (
-                        <span className="font-bold tabular">{formatDiscount(disc)}</span>
+                        <Badge variant="secondary" className="font-bold">{formatDiscount(disc)}</Badge>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}

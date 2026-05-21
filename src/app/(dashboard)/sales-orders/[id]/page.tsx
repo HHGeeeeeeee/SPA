@@ -65,7 +65,7 @@ async function fetchData(id: string) {
       .order('duration_minutes'),
     supabase.from('employees').select('id, employee_code, name, home_branch_id, home_branch:branches ( code )').eq('status', 'active').order('employee_code'),
     supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
-    supabase.from('discount_classes').select('id, code, description').eq('active', true).order('code'),
+    supabase.from('discount_classes').select('id, code, description, discount_percent, discount_amount_cents').eq('active', true).order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
     // Therapists with a working shift at this branch on the service date.
     supabase

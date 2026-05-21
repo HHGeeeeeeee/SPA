@@ -77,7 +77,7 @@ interface OrderCustomer {
 interface Opt { id: string; code: string; name: string }
 interface BorrowOpt { id: string; code: string; name: string; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
-interface DiscountOpt { id: string; code: string; description: string }
+interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
 interface PaymentRecord {
   id: string;
@@ -357,7 +357,16 @@ export function OrderWorkspace({
     { value: NONE, label: 'None', disabled: false },
     ...resources.map((r) => ({ value: r.id, label: `${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`, disabled: busyRes.has(r.id) })),
   ];
-  const discOptions = discountClasses.map((d) => ({ value: d.id, label: `${d.code} — ${d.description}` }));
+  const discRate = (d: DiscountOpt): string | null =>
+    d.discount_percent > 0
+      ? `${d.discount_percent}%`
+      : d.discount_amount_cents > 0
+        ? `₱${(d.discount_amount_cents / 100).toLocaleString()}`
+        : null;
+  const discOptions = discountClasses.map((d) => {
+    const rate = discRate(d);
+    return { value: d.id, label: rate ? `${d.code} — ${rate} — ${d.description}` : `${d.code} — ${d.description}` };
+  });
 
   const itemsByCustomer = (cid: string) => items.filter((i) => i.order_customer_id === cid);
   const multiCustomer = customers.length > 1;

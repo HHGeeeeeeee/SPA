@@ -194,6 +194,7 @@ export function OrderWorkspace({
   const [feedbackItem, setFeedbackItem] = useState<OrderItem | null>(null);
   const [interruptItem, setInterruptItem] = useState<OrderItem | null>(null);
   const [concurrentItem, setConcurrentItem] = useState<OrderItem | null>(null);
+  const [confirmFinish, setConfirmFinish] = useState<OrderItem | null>(null);
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const canRunService = ['open', 'in_service'].includes(order.status);
@@ -287,11 +288,21 @@ export function OrderWorkspace({
     startItemNow(it.id, false);
   }
 
-  function doFinishItem(id: string) {
+  function finishItemNow(id: string) {
     startTransition(async () => {
       const r = await finishOrderItem(id, order.id);
       if (r.ok) toast.success('Service finished'); else toast.error(r.error);
     });
+  }
+
+  function doFinishItem(it: OrderItem) {
+    // Warn if finishing before the booked duration has elapsed — a 60/90-min
+    // service (plus prep) shouldn't realistically finish sooner.
+    if (it.actual_start && it.duration_minutes) {
+      const elapsedMin = (Date.now() - new Date(it.actual_start).getTime()) / 60000;
+      if (elapsedMin < it.duration_minutes) { setConfirmFinish(it); return; }
+    }
+    finishItemNow(it.id);
   }
 
   function doSkipItem(id: string) {
@@ -459,7 +470,7 @@ export function OrderWorkspace({
                       )}
                       {canRunService && it.status === 'in_service' && (
                         <>
-                          <Button size="sm" onClick={() => doFinishItem(it.id)} disabled={pending}>Finish</Button>
+                          <Button size="sm" onClick={() => doFinishItem(it)} disabled={pending}>Finish</Button>
                           <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</Button>
                         </>
                       )}
@@ -791,6 +802,31 @@ export function OrderWorkspace({
               onClick={() => { if (concurrentItem) startItemNow(concurrentItem.id, true); setConcurrentItem(null); }}
             >
               Start in parallel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmFinish} onOpenChange={(o) => { if (!o) setConfirmFinish(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Finish early?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{confirmFinish?.service_name}</strong> has run only{' '}
+              <strong>
+                {confirmFinish?.actual_start
+                  ? Math.max(0, Math.floor((Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000))
+                  : 0} min
+              </strong>{' '}
+              of its <strong>{confirmFinish?.duration_minutes} min</strong> booking. Finish it now anyway?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep running</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (confirmFinish) finishItemNow(confirmFinish.id); setConfirmFinish(null); }}
+            >
+              Finish anyway
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -753,7 +753,7 @@ export function OrderWorkspace({
                   .filter((c) => c.subtotal_cents - c.paid_cents > 0)
                   .map((c) => (
                     <CustomerPaymentCard
-                      key={c.id}
+                      key={`${c.id}-${c.subtotal_cents - c.paid_cents}`}
                       orderId={order.id}
                       orderCustomerId={c.id}
                       label={`#${c.seq_no} · ${c.customer_name}`}
@@ -767,6 +767,7 @@ export function OrderWorkspace({
                   ))
               ) : (
                 <CustomerPaymentCard
+                  key={`whole-${due}`}
                   orderId={order.id}
                   orderCustomerId={multiCustomer ? null : customers[0]?.id ?? null}
                   label={multiCustomer ? 'Whole order' : 'Payment'}

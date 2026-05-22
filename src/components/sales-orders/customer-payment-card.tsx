@@ -136,7 +136,9 @@ export function CustomerPaymentCard({
         </div>
         <div className="flex flex-col gap-1">
           <Label className="text-xs font-semibold">Amount (₱)</Label>
-          <Input type="number" min="0" step="0.01" value={amount} readOnly className="w-28 bg-muted/50 text-right" />
+          {/* Editable so a bill can be split across methods (e.g. cash part +
+              PAYMAYA part). Defaults to the full due; tips stay separate. */}
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-28 text-right" />
         </div>
         <div className="flex flex-col gap-1">
           <Label className="text-xs font-semibold">Reference {refRequired && <span className="text-destructive">*</span>}</Label>

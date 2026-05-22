@@ -84,11 +84,15 @@ export function NewOrderDialog({ branches, sources, billingDestinations, trigger
 
   const initialBranchId = branches[0]?.id ?? '';
   const initialUnits = branches.find((b) => b.id === initialBranchId)?.businessUnits ?? [];
+  // Walk-in is the default order type → default the source to WALK-IN and let its
+  // billing (SELF) flow through. Self-pay is the SELF destination, not null.
+  const walkInSource = sources.find((s) => s.code === 'WALK-IN') ?? null;
+  const selfBillingId = billingDestinations.find((b) => b.code === 'SELF')?.id ?? '';
 
   const [branchId, setBranchId] = useState(initialBranchId);
   const [businessUnitId, setBusinessUnitId] = useState(initialUnits[0]?.id ?? '');
-  const [sourceId, setSourceId] = useState(NONE);
-  const [billingId, setBillingId] = useState(NONE);
+  const [sourceId, setSourceId] = useState(walkInSource?.id ?? NONE);
+  const [billingId, setBillingId] = useState(walkInSource?.default_billing_to_id ?? selfBillingId);
   const [orderType, setOrderType] = useState('walk_in');
   const [serviceDate, setServiceDate] = useState(todayPHT());
   const [note, setNote] = useState('');
@@ -109,17 +113,19 @@ export function NewOrderDialog({ branches, sources, billingDestinations, trigger
     { value: NONE, label: 'None' },
     ...sources.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` })),
   ];
-  const billingOptions = [
-    { value: NONE, label: 'None (customer self-pays)' },
-    ...billingDestinations.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` })),
-  ];
+  const billingOptions = billingDestinations.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
 
   function pickSource(v: string) {
     setSourceId(v);
     const src = sources.find((s) => s.id === v);
-    // Billing is locked to the source's destination; clearing the source
-    // (None) unlocks manual billing again.
-    setBillingId(src?.default_billing_to_id ?? NONE);
+    // Billing follows the source; with no source, self-pay (SELF) is the default.
+    setBillingId(src?.default_billing_to_id ?? selfBillingId);
+  }
+
+  // Walk-in orders default to the WALK-IN source (billing then locks to SELF).
+  function pickOrderType(v: string) {
+    setOrderType(v);
+    if (v === 'walk_in' && walkInSource) pickSource(walkInSource.id);
   }
 
   const selectedSource = sources.find((s) => s.id === sourceId);
@@ -135,7 +141,7 @@ export function NewOrderDialog({ branches, sources, billingDestinations, trigger
         branch_id: branchId,
         business_unit_id: businessUnitId || null,
         source_id: sourceId === NONE ? null : sourceId,
-        billing_to_id: billingId === NONE ? null : billingId,
+        billing_to_id: billingId && billingId !== NONE ? billingId : null,
         order_type: orderType,
         service_date: serviceDate,
         note: note || null,
@@ -195,7 +201,7 @@ export function NewOrderDialog({ branches, sources, billingDestinations, trigger
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Order Type *</Label>
-              <Select items={ORDER_TYPES} value={orderType} onValueChange={(v) => v && setOrderType(v)}>
+              <Select items={ORDER_TYPES} value={orderType} onValueChange={(v) => v && pickOrderType(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {ORDER_TYPES.map((opt) => (

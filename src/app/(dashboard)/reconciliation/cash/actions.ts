@@ -14,9 +14,14 @@ function minuteOfDayPHT(iso: string): number {
   return Number(p.find((x) => x.type === 'hour')?.value ?? 0) * 60 + Number(p.find((x) => x.type === 'minute')?.value ?? 0);
 }
 function nextDate(date: string): string {
-  const d = new Date(`${date}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
+  // Pure-UTC arithmetic so the result is independent of the server's local
+  // timezone. Parsing "YYYY-MM-DDT00:00:00" as local time then calling
+  // toISOString() shifts the day back by the UTC offset (e.g. in PHT, +1 day
+  // lands on the same date again), which collapses the query window to empty.
+  const [y, m, d] = date.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
 }
 
 /** Which shifts a branch runs (ordered by start). Resolution order:

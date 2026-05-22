@@ -180,19 +180,8 @@ export function ServiceCategoryFormDialog({
               </p>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="sc-revenue" className="font-semibold">Revenue Account (optional)</Label>
-              <Input
-                id="sc-revenue"
-                value={revenueAccount ?? ''}
-                onChange={(e) => setRevenueAccount(e.target.value)}
-                placeholder="40140"
-                maxLength={20}
-              />
-              <p className="text-xs font-medium text-muted-foreground">
-                Override ERP revenue account for this category (leave empty to use system default).
-              </p>
-            </div>
+            {/* Revenue Account hidden for now (ERP posting deferred). State +
+                payload kept so existing values are preserved on edit. */}
 
             <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
               <div>

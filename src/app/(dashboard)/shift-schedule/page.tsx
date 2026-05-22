@@ -33,7 +33,7 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   const supabase = createServiceClient();
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, actual_start, actual_end, duration_minutes, service:service_items ( name ), therapist:employees!order_items_therapist_id_fkey ( name, employee_code ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
+    .select('therapist_id, resource_id, actual_start, actual_end, duration_minutes, service:service_items ( name, prep_before_minutes ), therapist:employees!order_items_therapist_id_fkey ( name, employee_code ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
     .not('actual_start', 'is', null);
   const dayItems = (itemData ?? []).filter((it) => {
     const ord = one(it.order);
@@ -48,7 +48,7 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
     for (const it of dayItems) {
       if (!it.resource_id) continue;
       const startMin = tsToMin(it.actual_start!);
-      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
+      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60) + (one(it.service)?.prep_before_minutes ?? 0));
       const arr = byStation.get(it.resource_id) ?? [];
       arr.push({ name: one(it.therapist)?.name ?? one(it.service)?.name ?? 'Service', startMin, endMin, ongoing: !it.actual_end });
       byStation.set(it.resource_id, arr);
@@ -74,7 +74,7 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       const th = one(it.therapist);
       empMeta.set(it.therapist_id, { name: th?.name ?? '—', code: th?.employee_code ?? '' });
       const startMin = tsToMin(it.actual_start!);
-      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
+      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60) + (one(it.service)?.prep_before_minutes ?? 0));
       const svc = one(it.service)?.name ?? 'Service';
       const bed = it.resource_id ? resName.get(it.resource_id) : null;
       const arr = byTherapist.get(it.therapist_id) ?? [];

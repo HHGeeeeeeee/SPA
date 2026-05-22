@@ -59,6 +59,7 @@ interface OrderItem {
   resource_id: string | null;
   station_name: string | null;
   duration_minutes: number | null;
+  prep_minutes: number;
   actual_start: string | null;
   actual_end: string | null;
   list_price_cents: number;
@@ -131,12 +132,14 @@ function hm(ts: string | null): string {
 }
 
 // Time window for a service line: actual once finished, else the projected end
-// (start + duration) while it's running. Nothing before it's started.
-function timeWindow(actualStart: string | null, actualEnd: string | null, durationMin: number | null): string | null {
+// while it's running. The bed is occupied for prep + service, so the projected
+// end folds prep in. Nothing before it's started.
+function timeWindow(actualStart: string | null, actualEnd: string | null, durationMin: number | null, prepMin: number): string | null {
   if (!actualStart) return null;
   if (actualEnd) return `${hm(actualStart)}–${hm(actualEnd)}`;
-  if (durationMin) {
-    const end = new Date(new Date(actualStart).getTime() + durationMin * 60000).toISOString();
+  const occ = (durationMin ?? 0) + (prepMin ?? 0);
+  if (occ > 0) {
+    const end = new Date(new Date(actualStart).getTime() + occ * 60000).toISOString();
     return `${hm(actualStart)}–~${hm(end)}`;
   }
   return hm(actualStart);
@@ -479,7 +482,7 @@ export function OrderWorkspace({
                   const detailParts = [
                     it.duration_minutes ? `${it.duration_minutes} min` : null,
                     it.station_name,
-                    timeWindow(it.actual_start, it.actual_end, it.duration_minutes),
+                    timeWindow(it.actual_start, it.actual_end, it.duration_minutes, it.prep_minutes),
                   ].filter(Boolean) as string[];
                   const statusTag =
                     it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }

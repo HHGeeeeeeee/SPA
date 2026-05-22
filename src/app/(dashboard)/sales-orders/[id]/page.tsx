@@ -45,7 +45,7 @@ async function fetchData(id: string) {
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
         therapist_id, resource_id, duration_minutes, actual_start, actual_end,
-        service:service_items ( name ),
+        service:service_items ( name, prep_before_minutes ),
         therapist:employees ( name, home_branch:branches!employees_home_branch_id_fkey ( code ) ),
         resource:resources ( resource_name )
       )
@@ -215,6 +215,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       resource_id: it.resource_id,
       station_name: resource?.resource_name ?? null,
       duration_minutes: it.duration_minutes,
+      prep_minutes: svc?.prep_before_minutes ?? 0,
       actual_start: it.actual_start,
       actual_end: it.actual_end,
       list_price_cents: it.list_price_cents,

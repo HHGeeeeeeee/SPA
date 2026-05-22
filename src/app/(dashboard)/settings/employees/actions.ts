@@ -20,6 +20,9 @@ const baseSchema = z.object({
   position_id: z.string().uuid().optional().nullable(),
   status: z.enum(['active', 'inactive', 'on_leave']).default('active'),
   service_groups: z.array(z.string().min(1).max(80)).optional(),
+  // Per-branch commission-class overrides (branch where this therapist has a
+  // different class than their default). Branches not listed use the default.
+  branch_class_overrides: z.array(z.object({ branch_id: z.string().uuid(), commission_class_id: z.string().uuid() })).optional(),
 });
 
 const updateSchema = baseSchema.partial({ employee_code: true }).extend({
@@ -39,6 +42,19 @@ async function syncServiceGroups(employeeId: string, groups: string[] | undefine
   const ins = await supabase
     .from('employee_service_groups')
     .insert(unique.map((service_group) => ({ employee_id: employeeId, service_group })));
+  return ins.error;
+}
+
+// Replace an employee's per-branch class overrides (delete then insert).
+async function syncBranchClasses(employeeId: string, overrides: { branch_id: string; commission_class_id: string }[] | undefined) {
+  if (!overrides) return null;
+  const supabase = createServiceClient();
+  const del = await supabase.from('employee_branch_commission_class').delete().eq('employee_id', employeeId);
+  if (del.error) return del.error;
+  if (overrides.length === 0) return null;
+  const ins = await supabase.from('employee_branch_commission_class').insert(
+    overrides.map((o) => ({ employee_id: employeeId, branch_id: o.branch_id, commission_class_id: o.commission_class_id })),
+  );
   return ins.error;
 }
 
@@ -89,6 +105,8 @@ export async function createEmployee(input: unknown): Promise<ActionResult> {
     if (!error && data) {
       const sgErr = await syncServiceGroups(data.id, parsed.data.service_groups);
       if (sgErr) return { ok: false, error: sgErr.message };
+      const bcErr = await syncBranchClasses(data.id, parsed.data.branch_class_overrides);
+      if (bcErr) return { ok: false, error: bcErr.message };
       revalidatePath('/settings/employees');
       return { ok: true };
     }
@@ -124,6 +142,8 @@ export async function updateEmployee(input: unknown): Promise<ActionResult> {
   }
   const sgErr = await syncServiceGroups(d.id, d.service_groups);
   if (sgErr) return { ok: false, error: sgErr.message };
+  const bcErr = await syncBranchClasses(d.id, d.branch_class_overrides);
+  if (bcErr) return { ok: false, error: bcErr.message };
   revalidatePath('/settings/employees');
   return { ok: true };
 }

@@ -37,6 +37,7 @@ export interface EmployeeItem {
   position_id: string | null;
   status: 'active' | 'inactive' | 'on_leave';
   service_groups?: string[];
+  branch_class_overrides?: { branch_id: string; commission_class_id: string }[];
 }
 
 interface BranchOption {
@@ -99,6 +100,13 @@ export function EmployeeFormDialog({
   const [status, setStatus] = useState<EmployeeItem['status']>(employee?.status ?? 'active');
   const [groups, setGroups] = useState<string[]>(employee?.service_groups ?? []);
   const toggleGroup = (g: string) => setGroups((p) => (p.includes(g) ? p.filter((x) => x !== g) : [...p, g]));
+  // Per-branch class overrides: branchId → classId, or DEF = use the default class.
+  const DEF = '__default__';
+  const [overrides, setOverrides] = useState<Record<string, string>>(
+    Object.fromEntries((employee?.branch_class_overrides ?? []).map((o) => [o.branch_id, o.commission_class_id])),
+  );
+  const setOverride = (branchId: string, classId: string) =>
+    setOverrides((p) => ({ ...p, [branchId]: classId }));
 
   const isEdit = mode === 'edit';
   // Code is system-assigned per home branch. Edit shows the immutable code;
@@ -133,6 +141,9 @@ export function EmployeeFormDialog({
       position_id: positionId === NONE ? null : positionId,
       status,
       service_groups: groups,
+      branch_class_overrides: Object.entries(overrides)
+        .filter(([, classId]) => classId && classId !== DEF)
+        .map(([branch_id, commission_class_id]) => ({ branch_id, commission_class_id })),
     };
     startTransition(async () => {
       const r = isEdit
@@ -285,6 +296,33 @@ export function EmployeeFormDialog({
                 </div>
                 <p className="text-[11px] font-medium text-muted-foreground">
                   Only selected services let this therapist be assigned/auto-assigned to that service.
+                </p>
+              </div>
+            )}
+
+            {branches.length > 0 && (
+              <div className="flex flex-col gap-2 col-span-2">
+                <Label className="font-semibold">Per-branch class override</Label>
+                <div className="flex flex-col gap-2 rounded-lg border border-border p-2">
+                  {branches.map((b) => (
+                    <div key={b.id} className="grid grid-cols-[1fr_1.4fr] items-center gap-2">
+                      <span className="text-sm font-semibold">{b.code} <span className="font-medium text-muted-foreground">{b.name}</span></span>
+                      <Select
+                        items={[{ value: DEF, label: 'Use default' }, ...classes.map((c) => ({ value: c.id, label: `${c.class_code} — ${c.name}` }))]}
+                        value={overrides[b.id] ?? DEF}
+                        onValueChange={(v) => setOverride(b.id, v ?? DEF)}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={DEF}>Use default</SelectItem>
+                          {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.class_code} — {c.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  Leave as “Use default” unless this therapist&apos;s commission class differs at that branch.
                 </p>
               </div>
             )}

@@ -20,7 +20,7 @@ import { Switch } from '@/components/ui/switch';
 
 import { createCommissionPolicy, updateCommissionPolicy } from '@/app/(dashboard)/settings/commission-policies/actions';
 
-export interface PolicyBand { up_to_minutes: number | null; rate_multiplier: number }
+export interface PolicyBand { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number }
 export interface CommissionPolicyItem {
   id: string;
   code: string;
@@ -38,7 +38,7 @@ interface Props {
   onOpenChange?: (open: boolean) => void;
 }
 
-interface BandInput { up: string; pct: string }
+interface BandInput { from: string; up: string; pct: string }
 
 export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, open: controlledOpen, onOpenChange: controlledOnOpenChange }: Props) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -52,23 +52,28 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
   const [warmupEnabled, setWarmupEnabled] = useState(item?.warmup_enabled ?? true);
   const [occurrence, setOccurrence] = useState(String(item?.warmup_occurrence ?? 1));
   const [bands, setBands] = useState<BandInput[]>(
-    (item?.bands ?? [{ up_to_minutes: 90, rate_multiplier: 0 }, { up_to_minutes: null, rate_multiplier: 0.5 }]).map((b) => ({
+    (item?.bands ?? [
+      { min_minutes: null, up_to_minutes: 90, commission_rate: 0 },
+      { min_minutes: 120, up_to_minutes: 120, commission_rate: 0.5 },
+    ]).map((b) => ({
+      from: b.min_minutes == null ? '' : String(b.min_minutes),
       up: b.up_to_minutes == null ? '' : String(b.up_to_minutes),
-      pct: String(Math.round(b.rate_multiplier * 100)),
+      pct: String(Math.round(b.commission_rate * 100)),
     })),
   );
 
   function setBand(i: number, key: keyof BandInput, v: string) {
     setBands((prev) => prev.map((b, idx) => (idx === i ? { ...b, [key]: v } : b)));
   }
-  function addBand() { setBands((prev) => [...prev, { up: '', pct: '100' }]); }
+  function addBand() { setBands((prev) => [...prev, { from: '', up: '', pct: '0' }]); }
   function removeBand(i: number) { setBands((prev) => prev.filter((_, idx) => idx !== i)); }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const bandPayload = bands.map((b) => ({
+      min_minutes: b.from.trim() === '' ? null : Number(b.from),
       up_to_minutes: b.up.trim() === '' ? null : Number(b.up),
-      rate_multiplier: Math.max(0, Math.min(1, (Number(b.pct) || 0) / 100)),
+      commission_rate: Math.max(0, Math.min(1, (Number(b.pct) || 0) / 100)),
     }));
     const payload = { code, name, warmup_enabled: warmupEnabled, warmup_occurrence: Number(occurrence) || 1, bands: bandPayload };
     startTransition(async () => {
@@ -89,7 +94,7 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
           <DialogHeader>
             <DialogTitle className="font-bold">{isEdit ? `Edit Policy: ${item?.code}` : 'New Commission Policy'}</DialogTitle>
             <DialogDescription className="font-medium">
-              First-session warm-up rule. commission = gross × class% × this multiplier.
+              First-session warm-up rule — a flat commission rate for the day&apos;s first session (overrides the class %). Other sessions use the class %.
             </DialogDescription>
           </DialogHeader>
 
@@ -126,12 +131,13 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
                 <div className="flex flex-col gap-2">
                   <Label className="font-semibold">Duration bands</Label>
                   <div className="flex flex-col gap-2 rounded-lg border border-border p-2">
-                    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-1">
-                      <span>Up to (min)</span><span>Of class rate (%)</span><span />
+                    <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-1">
+                      <span>From (min)</span><span>To (min)</span><span>Rate (%)</span><span />
                     </div>
                     {bands.map((b, i) => (
-                      <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-                        <Input type="number" min="1" value={b.up} onChange={(e) => setBand(i, 'up', e.target.value)} placeholder="no limit" />
+                      <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                        <Input type="number" min="1" value={b.from} onChange={(e) => setBand(i, 'from', e.target.value)} placeholder="any" />
+                        <Input type="number" min="1" value={b.up} onChange={(e) => setBand(i, 'up', e.target.value)} placeholder="any" />
                         <Input type="number" min="0" max="100" value={b.pct} onChange={(e) => setBand(i, 'pct', e.target.value)} placeholder="0–100" />
                         <Button type="button" size="icon-sm" variant="ghost" onClick={() => removeBand(i)}><Trash2 className="size-4 text-destructive" /></Button>
                       </div>
@@ -139,7 +145,7 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
                     <Button type="button" size="sm" variant="outline" onClick={addBand} className="self-start"><Plus className="size-3.5" /> Add band</Button>
                   </div>
                   <p className="text-xs font-medium text-muted-foreground">
-                    First match by ascending minutes. Leave &ldquo;Up to&rdquo; blank = catch-all (longest). e.g. ≤90 → 0%, blank → 50%.
+                    Match by duration range (From–To inclusive; blank = open). The first session earns this flat rate — not × class. e.g. To 90 → 0%, From 120 To 120 → 50%.
                   </p>
                 </div>
               </>

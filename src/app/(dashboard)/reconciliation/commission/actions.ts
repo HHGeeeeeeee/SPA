@@ -76,22 +76,27 @@ async function computeCommission(branchId: string, from: string, to: string): Pr
 
   let warmupEnabled = false;
   let warmupOccurrence = 1;
-  let bands: { up_to_minutes: number | null; rate_multiplier: number }[] = [];
+  let bands: { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number }[] = [];
   const policyId = br.data?.commission_policy_id ?? null;
   if (policyId) {
     const [p, b] = await Promise.all([
       supabase.from('commission_policies').select('warmup_enabled, warmup_occurrence').eq('id', policyId).maybeSingle(),
-      supabase.from('commission_policy_bands').select('up_to_minutes, rate_multiplier').eq('policy_id', policyId).order('sort_order'),
+      supabase.from('commission_policy_bands').select('min_minutes, up_to_minutes, commission_rate').eq('policy_id', policyId).order('up_to_minutes', { nullsFirst: false }),
     ]);
     warmupEnabled = p.data?.warmup_enabled ?? false;
     warmupOccurrence = p.data?.warmup_occurrence ?? 1;
     bands = b.data ?? [];
   }
-  const warmupMultiplier = (durationMin: number): number => {
+  // Absolute commission rate for a warm-up session of this duration (the warm-up
+  // is a special flat rate, NOT a multiplier of the class rate). Range match by
+  // min_minutes..up_to_minutes; null = no matching band → fall back to class.
+  const warmupRate = (durationMin: number): number | null => {
     for (const band of bands) {
-      if (band.up_to_minutes == null || durationMin <= band.up_to_minutes) return Number(band.rate_multiplier);
+      const minOk = band.min_minutes == null || durationMin >= band.min_minutes;
+      const maxOk = band.up_to_minutes == null || durationMin <= band.up_to_minutes;
+      if (minOk && maxOk) return Number(band.commission_rate);
     }
-    return 1;
+    return null;
   };
 
   // Group per therapist + calendar day, order by actual_start to set occurrence.
@@ -110,9 +115,10 @@ async function computeCommission(branchId: string, from: string, to: string): Pr
     for (let idx = 0; idx < rows.length; idx++) {
       const r = rows[idx];
       const occurrence = idx + 1;
-      const rate = resolveRate(r.it.therapist_id as string);
-      const mult = warmupEnabled && occurrence === warmupOccurrence ? warmupMultiplier(r.it.duration_minutes ?? 0) : 1;
-      const effRate = rate * mult;
+      const classRate = resolveRate(r.it.therapist_id as string);
+      // Warm-up session uses the band's absolute rate; otherwise the class rate.
+      const warm = warmupEnabled && occurrence === warmupOccurrence ? warmupRate(r.it.duration_minutes ?? 0) : null;
+      const effRate = warm != null ? warm : classRate;
       const commission = Math.round(r.it.list_price_cents * effRate);
       // Store the computed commission on the line.
       await supabase.from('order_items').update({

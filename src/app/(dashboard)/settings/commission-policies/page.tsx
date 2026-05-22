@@ -23,7 +23,7 @@ async function fetchData() {
   const [polRes, brRes] = await Promise.all([
     supabase
       .from('commission_policies')
-      .select('id, code, name, warmup_enabled, warmup_occurrence, active, commission_policy_bands ( up_to_minutes, rate_multiplier, sort_order )')
+      .select('id, code, name, warmup_enabled, warmup_occurrence, active, commission_policy_bands ( min_minutes, up_to_minutes, commission_rate, sort_order )')
       .order('code'),
     supabase.from('branches').select('code, commission_policy_id').eq('active', true),
   ]);
@@ -37,10 +37,16 @@ async function fetchData() {
   return { policies: polRes.data ?? [], branchesByPolicy };
 }
 
-function bandsSummary(bands: { up_to_minutes: number | null; rate_multiplier: number; sort_order: number }[]): string {
+function bandsSummary(bands: { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number; sort_order: number }[]): string {
+  const range = (b: { min_minutes: number | null; up_to_minutes: number | null }) => {
+    if (b.min_minutes != null && b.up_to_minutes != null) return b.min_minutes === b.up_to_minutes ? `${b.up_to_minutes}m` : `${b.min_minutes}–${b.up_to_minutes}m`;
+    if (b.up_to_minutes != null) return `≤${b.up_to_minutes}m`;
+    if (b.min_minutes != null) return `≥${b.min_minutes}m`;
+    return 'any';
+  };
   return [...bands]
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((b) => `${b.up_to_minutes == null ? '>last' : `≤${b.up_to_minutes}m`} → ${Math.round(b.rate_multiplier * 100)}%`)
+    .map((b) => `${range(b)} → ${Math.round(b.commission_rate * 100)}%`)
     .join(' · ');
 }
 
@@ -82,7 +88,7 @@ export default async function CommissionPoliciesPage() {
                 const bands = p.commission_policy_bands ?? [];
                 const item: CommissionPolicyItem = {
                   id: p.id, code: p.code, name: p.name, warmup_enabled: p.warmup_enabled, warmup_occurrence: p.warmup_occurrence,
-                  bands: bands.map((b) => ({ up_to_minutes: b.up_to_minutes, rate_multiplier: b.rate_multiplier })),
+                  bands: bands.map((b) => ({ min_minutes: b.min_minutes, up_to_minutes: b.up_to_minutes, commission_rate: b.commission_rate })),
                 };
                 const usedBy = branchesByPolicy.get(p.id) ?? [];
                 return (

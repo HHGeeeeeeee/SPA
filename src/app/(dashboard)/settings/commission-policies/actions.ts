@@ -9,8 +9,9 @@ import type { Database } from '@/types/database';
 type PolicyUpdate = Database['public']['Tables']['commission_policies']['Update'];
 
 const bandSchema = z.object({
+  min_minutes: z.number().int().positive().nullable(),
   up_to_minutes: z.number().int().positive().nullable(),
-  rate_multiplier: z.number().min(0).max(1),
+  commission_rate: z.number().min(0).max(1),
 });
 const schema = z.object({
   code: z.string().min(1).max(40),
@@ -23,8 +24,8 @@ const updateSchema = schema.partial({ code: true }).extend({ id: z.string().uuid
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-// Replace a policy's duration bands, ordered by ceiling (NULL catch-all last).
-async function syncBands(policyId: string, bands: { up_to_minutes: number | null; rate_multiplier: number }[]) {
+// Replace a policy's duration bands, ordered by ceiling (NULL open-end last).
+async function syncBands(policyId: string, bands: { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number }[]) {
   const supabase = createServiceClient();
   await supabase.from('commission_policy_bands').delete().eq('policy_id', policyId);
   if (bands.length === 0) return null;
@@ -34,7 +35,7 @@ async function syncBands(policyId: string, bands: { up_to_minutes: number | null
     return a.up_to_minutes - b.up_to_minutes;
   });
   const { error } = await supabase.from('commission_policy_bands').insert(
-    sorted.map((b, i) => ({ policy_id: policyId, up_to_minutes: b.up_to_minutes, rate_multiplier: b.rate_multiplier, sort_order: i })),
+    sorted.map((b, i) => ({ policy_id: policyId, min_minutes: b.min_minutes, up_to_minutes: b.up_to_minutes, commission_rate: b.commission_rate, sort_order: i })),
   );
   return error;
 }

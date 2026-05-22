@@ -41,6 +41,7 @@ async function fetchData() {
       .select(`
         id, order_no, status, order_type, service_date, total_cents, paid_cents,
         branch:branches!orders_branch_id_fkey ( code ),
+        billing:billing_destinations!orders_billing_to_id_fkey ( code ),
         order_customers ( id ),
         payments ( amount_cents, method:payment_methods ( code ), tips ( amount_cents ) )
       `)
@@ -113,9 +114,10 @@ export default async function SalesOrdersPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="font-bold">Order No</TableHead>
+              <TableHead className="w-56 font-bold">Order No</TableHead>
               <TableHead className="w-20 font-bold">Branch</TableHead>
               <TableHead className="w-28 font-bold">Type</TableHead>
+              <TableHead className="w-24 font-bold">Billing To</TableHead>
               <TableHead className="w-16 font-bold">PAX</TableHead>
               <TableHead className="w-32 font-bold">Service Date</TableHead>
               <TableHead className="w-28 font-bold text-right">Cash</TableHead>
@@ -128,7 +130,7 @@ export default async function SalesOrdersPage() {
           <TableBody>
             {orders.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center py-16">
+                <TableCell colSpan={11} className="text-center py-16">
                   <Receipt className="size-8 mx-auto text-muted-foreground/50" />
                   <p className="text-sm font-semibold text-muted-foreground mt-3">
                     No sales orders yet. Click &ldquo;New Order&rdquo; to create the first draft.
@@ -138,6 +140,7 @@ export default async function SalesOrdersPage() {
             ) : (
               orders.map((o) => {
                 const branch = Array.isArray(o.branch) ? o.branch[0] : o.branch;
+                const billing = Array.isArray(o.billing) ? o.billing[0] : o.billing;
                 const pax = o.order_customers?.length ?? 0;
                 const pays = o.payments ?? [];
                 const sumByCode = (code: string) =>
@@ -156,6 +159,7 @@ export default async function SalesOrdersPage() {
                     <TableCell className="font-medium text-muted-foreground text-xs">
                       {o.order_type}
                     </TableCell>
+                    <TableCell className="font-mono font-bold text-xs">{billing?.code ?? '—'}</TableCell>
                     <TableCell className="font-bold tabular">{pax}</TableCell>
                     <TableCell className="font-medium tabular">{o.service_date}</TableCell>
                     <TableCell className="font-medium tabular text-right">{cashCents > 0 ? peso(cashCents) : <span className="text-muted-foreground">—</span>}</TableCell>

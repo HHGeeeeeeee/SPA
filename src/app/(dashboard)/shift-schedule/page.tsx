@@ -229,7 +229,7 @@ export default async function ShiftSchedulePage({
           Create a branch first.
         </Card>
       ) : scale === 'day' ? (
-        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} />
+        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel={view === 'station' ? 'Station' : 'Therapist'} />
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           No active employees with this branch as their home branch.

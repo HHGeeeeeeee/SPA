@@ -77,7 +77,7 @@ export default async function ReservationsPage() {
   const upcoming = reservations.filter((r) => ['reserved', 'confirmed'].includes(r.status)).length;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 max-w-6xl">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Reservations</h2>

@@ -26,13 +26,14 @@ import {
 
 import { createReservation } from '@/app/(dashboard)/reservations/actions';
 
-interface Opt { id: string; code: string; name: string }
 interface SourceOpt { id: string; code: string; name: string; phone_required: boolean }
+interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
+interface CategoryOpt { id: string; code: string; name: string; businessUnitIds: string[] }
 
 interface Props {
-  branches: Opt[];
+  branches: BranchOpt[];
   sources: SourceOpt[];
-  serviceCategories: Opt[];
+  serviceCategories: CategoryOpt[];
   trigger: React.ReactNode;
 }
 
@@ -62,7 +63,20 @@ export function NewReservationDialog({ branches, sources, serviceCategories, tri
 
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
   const sourceOptions = sources.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
-  const categoryOptions = serviceCategories.map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }));
+  // Only the service types offered at the chosen branch (category's business
+  // units overlap the branch's business units).
+  const selectedBranch = branches.find((b) => b.id === branchId) ?? null;
+  const branchUnits = selectedBranch?.businessUnitIds ?? [];
+  const availableCategories = serviceCategories.filter((c) => c.businessUnitIds.some((u) => branchUnits.includes(u)));
+  const categoryOptions = availableCategories.map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }));
+
+  // Switching branch may invalidate the picked service type.
+  function pickBranch(v: string) {
+    setBranchId(v);
+    const units = branches.find((b) => b.id === v)?.businessUnitIds ?? [];
+    const stillValid = serviceCategories.some((c) => c.id === serviceCategoryId && c.businessUnitIds.some((u) => units.includes(u)));
+    if (!stillValid) setServiceCategoryId('');
+  }
 
   // Phone is required unless the chosen source handles contact itself (hotels / ENGO).
   const selectedSource = sources.find((s) => s.id === sourceId) ?? null;
@@ -109,7 +123,7 @@ export function NewReservationDialog({ branches, sources, serviceCategories, tri
           <div className="grid grid-cols-2 gap-4 py-4">
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Branch *</Label>
-              <Select items={branchOptions} value={branchId} onValueChange={(v) => v && setBranchId(v)}>
+              <Select items={branchOptions} value={branchId} onValueChange={(v) => v && pickBranch(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
               </Select>
@@ -123,8 +137,8 @@ export function NewReservationDialog({ branches, sources, serviceCategories, tri
             </div>
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Service Type *</Label>
-              <Select items={categoryOptions} value={serviceCategoryId} onValueChange={(v) => v && setServiceCategoryId(v)}>
-                <SelectTrigger><SelectValue placeholder="Massage / Nail / …" /></SelectTrigger>
+              <Select items={categoryOptions} value={serviceCategoryId} onValueChange={(v) => v && setServiceCategoryId(v)} disabled={categoryOptions.length === 0}>
+                <SelectTrigger><SelectValue placeholder={categoryOptions.length ? 'Massage / Nail / …' : 'No service types at this branch'} /></SelectTrigger>
                 <SelectContent>{categoryOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>

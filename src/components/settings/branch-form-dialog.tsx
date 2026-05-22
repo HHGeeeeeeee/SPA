@@ -15,12 +15,13 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 import { createBranch, updateBranch } from '@/app/(dashboard)/settings/branches/actions';
 
 interface BranchFormDialogProps {
   mode?: 'create' | 'edit';
-  branch?: { id: string; code: string; name: string; business_unit_ids: string[] };
+  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled?: boolean };
   businessUnits: { id: string; code: string; name: string }[];
   trigger?: React.ReactNode;
   open?: boolean;
@@ -41,6 +42,7 @@ export function BranchFormDialog({
   const [code, setCode] = useState(branch?.code ?? '');
   const [name, setName] = useState(branch?.name ?? '');
   const [unitIds, setUnitIds] = useState<string[]>(branch?.business_unit_ids ?? []);
+  const [reservationEnabled, setReservationEnabled] = useState(branch?.reservation_enabled ?? true);
   const [pending, startTransition] = useTransition();
 
   const isEdit = mode === 'edit';
@@ -59,8 +61,8 @@ export function BranchFormDialog({
     }
     startTransition(async () => {
       const result = isEdit
-        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds })
-        : await createBranch({ code, name, business_unit_ids: unitIds });
+        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled })
+        : await createBranch({ code, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled });
       if (result.ok) {
         toast.success(isEdit ? 'Branch updated' : 'Branch created');
         setOpen(false);
@@ -156,6 +158,16 @@ export function BranchFormDialog({
                 Which business lines operate at this branch. A single location can host
                 more than one (e.g. SPA + Gym).
               </p>
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+              <div>
+                <Label className="font-semibold cursor-pointer">Accepts reservations</Label>
+                <p className="text-xs font-medium text-muted-foreground">
+                  When off, this branch is hidden from the New Reservation picker.
+                </p>
+              </div>
+              <Switch checked={reservationEnabled} onCheckedChange={setReservationEnabled} />
             </div>
           </div>
 

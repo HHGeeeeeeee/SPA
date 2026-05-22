@@ -47,15 +47,23 @@ async function fetchData() {
       .is('deleted_at', null)
       .order('desired_service_start', { ascending: false })
       .limit(200),
-    supabase.from('branches').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('branches').select('id, code, name, branch_business_units ( business_unit_id )').eq('active', true).eq('reservation_enabled', true).order('code'),
     supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
-    supabase.from('service_categories').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('service_categories').select('id, code, name, service_category_business_units ( business_unit_id )').eq('active', true).order('code'),
   ]);
   if (resv.error) throw new Error(resv.error.message);
   if (br.error) throw new Error(br.error.message);
   if (src.error) throw new Error(src.error.message);
   if (cat.error) throw new Error(cat.error.message);
-  return { reservations: resv.data ?? [], branches: br.data ?? [], sources: src.data ?? [], serviceCategories: cat.data ?? [] };
+  const branches = (br.data ?? []).map((b) => ({
+    id: b.id, code: b.code, name: b.name,
+    businessUnitIds: (b.branch_business_units ?? []).map((x) => x.business_unit_id),
+  }));
+  const serviceCategories = (cat.data ?? []).map((c) => ({
+    id: c.id, code: c.code, name: c.name,
+    businessUnitIds: (c.service_category_business_units ?? []).map((x) => x.business_unit_id),
+  }));
+  return { reservations: resv.data ?? [], branches, sources: src.data ?? [], serviceCategories };
 }
 
 function one<T>(v: T | T[] | null): T | null {

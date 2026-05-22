@@ -9,6 +9,7 @@ const branchSchema = z.object({
   code: z.string().min(1).max(20).regex(/^[A-Z0-9_-]+$/, 'Uppercase letters, digits, - and _ only'),
   name: z.string().min(1).max(120),
   business_unit_ids: z.array(z.string().uuid()).min(1, 'Pick at least one business unit'),
+  reservation_enabled: z.boolean().optional(),
 });
 
 const updateSchema = branchSchema.partial({ code: true }).extend({
@@ -41,7 +42,7 @@ export async function createBranch(input: unknown): Promise<ActionResult> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from('branches')
-    .insert({ code: parsed.data.code, name: parsed.data.name, active: true })
+    .insert({ code: parsed.data.code, name: parsed.data.name, active: true, reservation_enabled: parsed.data.reservation_enabled ?? true })
     .select('id')
     .single();
   if (error || !data) {
@@ -64,8 +65,9 @@ export async function updateBranch(input: unknown): Promise<ActionResult> {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   }
   const supabase = createServiceClient();
-  const patch: { name?: string } = {};
+  const patch: { name?: string; reservation_enabled?: boolean } = {};
   if (parsed.data.name) patch.name = parsed.data.name;
+  if (parsed.data.reservation_enabled !== undefined) patch.reservation_enabled = parsed.data.reservation_enabled;
   if (Object.keys(patch).length > 0) {
     const { error } = await supabase.from('branches').update(patch).eq('id', parsed.data.id);
     if (error) return { ok: false, error: error.message };

@@ -27,7 +27,7 @@ import { setBranchActive } from '@/app/(dashboard)/settings/branches/actions';
 import { BranchFormDialog } from './branch-form-dialog';
 
 interface Props {
-  branch: { id: string; code: string; name: string; business_unit_ids: string[]; active: boolean };
+  branch: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled: boolean; active: boolean };
   businessUnits: { id: string; code: string; name: string }[];
 }
 
@@ -84,7 +84,7 @@ export function BranchRowActions({ branch, businessUnits }: Props) {
 
       <BranchFormDialog
         mode="edit"
-        branch={{ id: branch.id, code: branch.code, name: branch.name, business_unit_ids: branch.business_unit_ids }}
+        branch={{ id: branch.id, code: branch.code, name: branch.name, business_unit_ids: branch.business_unit_ids, reservation_enabled: branch.reservation_enabled }}
         businessUnits={businessUnits}
         open={editOpen}
         onOpenChange={setEditOpen}

@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select';
 
 import { createServiceItem, updateServiceItem } from '@/app/(dashboard)/settings/service-items/actions';
+import { RESOURCE_TYPES } from '@/lib/resource-types';
 
 export interface ServiceItemRecord {
   id: string;
@@ -65,14 +66,6 @@ interface Props {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
-
-const RESOURCE_TYPES = [
-  { value: 'massage_bed', label: 'Massage Bed' },
-  { value: 'rest_room', label: 'Rest Room' },
-  { value: 'hair_chair', label: 'Hair Chair' },
-  { value: 'nail_table', label: 'Nail Table' },
-  { value: 'steam_room', label: 'Steam Room' },
-];
 
 const NONE = '__none__';
 

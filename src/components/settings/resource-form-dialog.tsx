@@ -24,8 +24,9 @@ import {
 } from '@/components/ui/select';
 
 import { createResource, updateResource } from '@/app/(dashboard)/settings/resources/actions';
+import { RESOURCE_TYPES, type ResourceType } from '@/lib/resource-types';
 
-export type ResourceType = 'massage_bed' | 'rest_room' | 'hair_chair' | 'nail_table' | 'steam_room';
+export type { ResourceType };
 
 export interface ResourceItem {
   id: string;
@@ -59,13 +60,6 @@ interface Props {
   onOpenChange?: (open: boolean) => void;
 }
 
-const RESOURCE_TYPES: { value: ResourceType; label: string }[] = [
-  { value: 'massage_bed', label: 'Massage Bed' },
-  { value: 'rest_room', label: 'Rest Room' },
-  { value: 'hair_chair', label: 'Hair Chair' },
-  { value: 'nail_table', label: 'Nail Table' },
-  { value: 'steam_room', label: 'Steam Room' },
-];
 
 export function ResourceFormDialog({
   mode = 'create',

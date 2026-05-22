@@ -29,6 +29,7 @@ import {
   updateReservation,
   getReservationAvailability,
 } from '@/app/(dashboard)/reservations/actions';
+import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
 interface SourceOpt { id: string; code: string; name: string; phone_required: boolean }
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
@@ -64,13 +65,7 @@ const LOCATION_TYPES = [
   { value: 'on_site', label: 'On-site (branch)' },
   { value: 'external_hotel', label: 'External (hotel room)' },
 ];
-const RT_LABEL: Record<string, string> = {
-  massage_bed: 'Beds',
-  hair_chair: 'Hair chairs',
-  nail_station: 'Nail stations',
-  rest_room: 'Rest rooms',
-};
-const rtLabel = (rt: string) => RT_LABEL[rt] ?? rt;
+const rtLabel = (rt: string) => RESOURCE_TYPE_LABEL[rt] ?? rt;
 
 // ISO timestamp → "YYYY-MM-DDTHH:mm" in local (browser) time for datetime-local.
 function toLocalInput(iso: string): string {

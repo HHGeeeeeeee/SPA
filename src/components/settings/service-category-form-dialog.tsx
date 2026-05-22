@@ -28,6 +28,7 @@ import {
   createServiceCategory,
   updateServiceCategory,
 } from '@/app/(dashboard)/settings/service-categories/actions';
+import { RESOURCE_TYPES } from '@/lib/resource-types';
 
 export interface CategoryItem {
   id: string;
@@ -40,14 +41,6 @@ export interface CategoryItem {
   required_resource_type: string | null;
 }
 
-// Standard resource types a category can consume. Drives reservation bed/station
-// capacity planning.
-const RESOURCE_TYPES = [
-  { value: 'massage_bed', label: 'Massage bed' },
-  { value: 'hair_chair', label: 'Hair chair' },
-  { value: 'nail_station', label: 'Nail station' },
-  { value: 'rest_room', label: 'Rest room' },
-];
 const RT_NONE = '__none__';
 
 interface BusinessUnitOption {

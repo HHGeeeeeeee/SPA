@@ -85,6 +85,63 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
+const updateSchema = z.object({
+  id: z.string().uuid(),
+  branch_id: z.string().uuid(),
+  source_id: z.string().uuid(),
+  service_category_id: z.string().uuid(),
+  guest_name: z.string().min(1).max(120),
+  guest_phone: z.string().max(40).optional().nullable(),
+  pax: z.coerce.number().int().min(1).max(50),
+  gender_preference: z.string().max(20).optional().nullable(),
+  desired_service_start: z.string().min(1),
+  desired_service_end: z.string().min(1),
+  service_location_type: z.enum(['on_site', 'external_hotel']),
+  note: z.string().max(500).optional().nullable(),
+});
+
+export async function updateReservation(input: unknown): Promise<ActionResult> {
+  const parsed = updateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  if (new Date(d.desired_service_end) <= new Date(d.desired_service_start)) {
+    return { ok: false, error: 'End time must be after start time' };
+  }
+  const supabase = createServiceClient();
+  const { data: existing } = await supabase.from('reservations').select('status').eq('id', d.id).maybeSingle();
+  if (!existing) return { ok: false, error: 'Reservation not found' };
+  if (['converted', 'cancelled', 'no_show'].includes(existing.status)) {
+    return { ok: false, error: `A ${existing.status.replace('_', ' ')} reservation can't be edited` };
+  }
+  // Source decides billing + the contact-phone policy (same as on create).
+  const { data: source } = await supabase
+    .from('customer_sources')
+    .select('phone_required, default_billing_to_id')
+    .eq('id', d.source_id)
+    .maybeSingle();
+  if (!source) return { ok: false, error: 'Customer source not found' };
+  if (source.phone_required && !d.guest_phone?.trim()) {
+    return { ok: false, error: 'A guest phone is required for this source' };
+  }
+  const { error } = await supabase.from('reservations').update({
+    branch_id: d.branch_id,
+    source_id: d.source_id,
+    service_category_id: d.service_category_id,
+    billing_to_id: source.default_billing_to_id ?? null,
+    guest_name: d.guest_name,
+    guest_phone: d.guest_phone || null,
+    pax: d.pax,
+    gender_preference: d.gender_preference || null,
+    desired_service_start: d.desired_service_start,
+    desired_service_end: d.desired_service_end,
+    service_location_type: d.service_location_type,
+    note: d.note || null,
+  }).eq('id', d.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/reservations');
+  return { ok: true };
+}
+
 export async function setReservationStatus(
   id: string,
   status: 'reserved' | 'confirmed' | 'cancelled' | 'no_show',

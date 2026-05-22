@@ -40,6 +40,7 @@ async function fetchData() {
       .select(`
         id, reservation_no, guest_name, guest_phone, pax, status,
         desired_service_start, desired_service_end,
+        branch_id, source_id, service_category_id, gender_preference, service_location_type, note,
         branch:branches ( code ),
         source:customer_sources ( code ),
         category:service_categories ( code, name )
@@ -146,7 +147,26 @@ export default async function ReservationsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <ReservationRowActions reservation={{ id: r.id, status: r.status }} />
+                      <ReservationRowActions
+                        reservation={{
+                          id: r.id,
+                          status: r.status,
+                          branch_id: r.branch_id,
+                          source_id: r.source_id,
+                          service_category_id: r.service_category_id,
+                          guest_name: r.guest_name,
+                          guest_phone: r.guest_phone,
+                          pax: r.pax,
+                          gender_preference: r.gender_preference,
+                          service_location_type: r.service_location_type,
+                          note: r.note,
+                          desired_service_start: r.desired_service_start,
+                          desired_service_end: r.desired_service_end,
+                        }}
+                        branches={branches}
+                        sources={sources}
+                        serviceCategories={serviceCategories}
+                      />
                     </TableCell>
                   </TableRow>
                 );

@@ -1,8 +1,8 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { MoreVertical, Check, X, CalendarX, ArrowRightCircle } from 'lucide-react';
+import { MoreVertical, Check, X, CalendarX, ArrowRightCircle, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -18,14 +18,23 @@ import {
   setReservationStatus,
   convertReservationToOrder,
 } from '@/app/(dashboard)/reservations/actions';
+import { NewReservationDialog, type ReservationItem } from './new-reservation-dialog';
+
+interface SourceOpt { id: string; code: string; name: string; phone_required: boolean }
+interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
+interface CategoryOpt { id: string; code: string; name: string; businessUnitIds: string[] }
 
 interface Props {
-  reservation: { id: string; status: string };
+  reservation: ReservationItem & { status: string };
+  branches: BranchOpt[];
+  sources: SourceOpt[];
+  serviceCategories: CategoryOpt[];
 }
 
-export function ReservationRowActions({ reservation }: Props) {
+export function ReservationRowActions({ reservation, branches, sources, serviceCategories }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
   const { id, status } = reservation;
   const terminal = ['converted', 'cancelled', 'no_show'].includes(status);
 
@@ -57,6 +66,12 @@ export function ReservationRowActions({ reservation }: Props) {
         />
         <DropdownMenuContent align="end">
           {!terminal && (
+            <DropdownMenuItem onClick={() => setTimeout(() => setEditOpen(true))}>
+              <Pencil className="size-4" />
+              Edit
+            </DropdownMenuItem>
+          )}
+          {!terminal && (
             <DropdownMenuItem onClick={convert}>
               <ArrowRightCircle className="size-4" />
               Convert to Order
@@ -83,6 +98,18 @@ export function ReservationRowActions({ reservation }: Props) {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {!terminal && (
+        <NewReservationDialog
+          mode="edit"
+          reservation={reservation}
+          branches={branches}
+          sources={sources}
+          serviceCategories={serviceCategories}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+        />
+      )}
     </div>
   );
 }

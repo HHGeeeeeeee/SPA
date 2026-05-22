@@ -24,17 +24,36 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-import { createReservation } from '@/app/(dashboard)/reservations/actions';
+import { createReservation, updateReservation } from '@/app/(dashboard)/reservations/actions';
 
 interface SourceOpt { id: string; code: string; name: string; phone_required: boolean }
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
 interface CategoryOpt { id: string; code: string; name: string; businessUnitIds: string[] }
 
+export interface ReservationItem {
+  id: string;
+  branch_id: string;
+  source_id: string | null;
+  service_category_id: string | null;
+  guest_name: string;
+  guest_phone: string | null;
+  pax: number;
+  gender_preference: string | null;
+  service_location_type: string | null;
+  note: string | null;
+  desired_service_start: string;
+  desired_service_end: string;
+}
+
 interface Props {
   branches: BranchOpt[];
   sources: SourceOpt[];
   serviceCategories: CategoryOpt[];
-  trigger: React.ReactNode;
+  mode?: 'create' | 'edit';
+  reservation?: ReservationItem;
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const LOCATION_TYPES = [
@@ -42,24 +61,43 @@ const LOCATION_TYPES = [
   { value: 'external_hotel', label: 'External (hotel room)' },
 ];
 
-export function NewReservationDialog({ branches, sources, serviceCategories, trigger }: Props) {
-  const [open, setOpen] = useState(false);
+// ISO timestamp → "YYYY-MM-DDTHH:mm" in local (browser) time for datetime-local.
+function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function NewReservationDialog({
+  branches,
+  sources,
+  serviceCategories,
+  mode = 'create',
+  reservation,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+}: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = controlledOnOpenChange ?? setInternalOpen;
+  const isEdit = mode === 'edit';
   const [pending, startTransition] = useTransition();
 
   // Default to WALK-IN if present, else the first source.
   const defaultSourceId = sources.find((s) => s.code === 'WALK-IN')?.id ?? sources[0]?.id ?? '';
 
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
-  const [sourceId, setSourceId] = useState(defaultSourceId);
-  const [serviceCategoryId, setServiceCategoryId] = useState('');
-  const [guestName, setGuestName] = useState('');
-  const [guestPhone, setGuestPhone] = useState('');
-  const [pax, setPax] = useState('1');
-  const [genderPref, setGenderPref] = useState('__none__');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [locationType, setLocationType] = useState('on_site');
-  const [note, setNote] = useState('');
+  const [branchId, setBranchId] = useState(reservation?.branch_id ?? branches[0]?.id ?? '');
+  const [sourceId, setSourceId] = useState(reservation?.source_id ?? defaultSourceId);
+  const [serviceCategoryId, setServiceCategoryId] = useState(reservation?.service_category_id ?? '');
+  const [guestName, setGuestName] = useState(reservation?.guest_name ?? '');
+  const [guestPhone, setGuestPhone] = useState(reservation?.guest_phone ?? '');
+  const [pax, setPax] = useState(String(reservation?.pax ?? 1));
+  const [genderPref, setGenderPref] = useState(reservation?.gender_preference ?? '__none__');
+  const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : '');
+  const [end, setEnd] = useState(reservation ? toLocalInput(reservation.desired_service_end) : '');
+  const [locationType, setLocationType] = useState(reservation?.service_location_type ?? 'on_site');
+  const [note, setNote] = useState(reservation?.note ?? '');
 
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
   const sourceOptions = sources.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
@@ -88,35 +126,40 @@ export function NewReservationDialog({ branches, sources, serviceCategories, tri
     if (!serviceCategoryId) return toast.error('Pick a service type');
     if (!start || !end) return toast.error('Pick start and end time');
     if (phoneRequired && !guestPhone.trim()) return toast.error('Phone is required for this source');
+    const payload = {
+      branch_id: branchId,
+      source_id: sourceId,
+      service_category_id: serviceCategoryId,
+      guest_name: guestName,
+      guest_phone: guestPhone || null,
+      pax: Number(pax),
+      gender_preference: genderPref === '__none__' ? null : genderPref,
+      desired_service_start: new Date(start).toISOString(),
+      desired_service_end: new Date(end).toISOString(),
+      service_location_type: locationType,
+      note: note || null,
+    };
     startTransition(async () => {
-      const r = await createReservation({
-        branch_id: branchId,
-        source_id: sourceId,
-        service_category_id: serviceCategoryId,
-        guest_name: guestName,
-        guest_phone: guestPhone || null,
-        pax: Number(pax),
-        gender_preference: genderPref === '__none__' ? null : genderPref,
-        desired_service_start: new Date(start).toISOString(),
-        desired_service_end: new Date(end).toISOString(),
-        service_location_type: locationType,
-        note: note || null,
-      });
+      const r = isEdit
+        ? await updateReservation({ id: reservation!.id, ...payload })
+        : await createReservation(payload);
       if (r.ok) {
-        toast.success('Reservation created');
+        toast.success(isEdit ? 'Reservation updated' : 'Reservation created');
         setOpen(false);
-        setGuestName(''); setGuestPhone(''); setStart(''); setEnd(''); setNote(''); setServiceCategoryId('');
+        if (!isEdit) {
+          setGuestName(''); setGuestPhone(''); setStart(''); setEnd(''); setNote(''); setServiceCategoryId('');
+        }
       } else toast.error(r.error);
     });
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} />
+      {trigger ? <DialogTrigger nativeButton={false} render={trigger as React.ReactElement} /> : null}
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle className="font-bold">New Reservation</DialogTitle>
+            <DialogTitle className="font-bold">{isEdit ? 'Edit Reservation' : 'New Reservation'}</DialogTitle>
             <DialogDescription className="font-medium">Book a slot. Convert to an order at check-in.</DialogDescription>
           </DialogHeader>
 
@@ -190,7 +233,9 @@ export function NewReservationDialog({ branches, sources, serviceCategories, tri
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
-            <Button type="submit" disabled={pending || !branchId}>{pending ? 'Creating…' : 'Create reservation'}</Button>
+            <Button type="submit" disabled={pending || !branchId}>
+              {pending ? 'Saving…' : isEdit ? 'Save changes' : 'Create reservation'}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

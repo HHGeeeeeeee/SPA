@@ -54,12 +54,23 @@ async function fetchData() {
         .reduce((s, o) => s + o.total_cents, 0) ?? 0
     : 0;
 
+  // Status of the daily auto-cancel job (so staff can confirm it's running).
+  const cronRes = await supabase.rpc('cron_cancel_status');
+  const cron = (cronRes.data as { schedule: string; active: boolean; last_start: string | null; last_status: string | null }[] | null)?.[0] ?? null;
+
   return {
     today, bookings, pax, revenue, discount,
     inService: inService.count ?? 0,
     tipsOpen, svcLiability, arOutstanding,
     closedCount: (arOrders.data ?? []).length,
+    cron,
   };
+}
+
+function fmtDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(iso));
 }
 
 export default async function DashboardPage() {
@@ -115,6 +126,31 @@ export default async function DashboardPage() {
             </Link>
           ))}
         </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-[0.12em] mb-2">System</h3>
+        <Card className="md:max-w-md">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">No-show Auto-cancel</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1">
+            {!d.cron ? (
+              <div className="text-sm font-bold text-destructive">Not scheduled</div>
+            ) : (
+              <>
+                <div className="text-sm font-bold">
+                  {d.cron.last_start
+                    ? <>Last ran {fmtDateTime(d.cron.last_start)} · <span className={d.cron.last_status === 'succeeded' ? 'text-primary' : 'text-destructive'}>{d.cron.last_status}</span></>
+                    : 'Scheduled — has not run yet'}
+                </div>
+                <div className="text-xs font-semibold text-muted-foreground">
+                  Daily 00:05 PHT · {d.cron.active ? 'active' : 'paused'}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

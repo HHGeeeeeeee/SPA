@@ -164,7 +164,7 @@ export function DayTimeline({
               </div>
               <div className="relative flex-1 my-1" style={{ height: count * LANE_H }}>
                 {hours.map((h) => (
-                  <div key={h} className="absolute top-0 bottom-0 border-l border-border/40" style={{ left: `${pct(h * 60)}%` }} />
+                  <div key={h} className="absolute top-0 bottom-0 border-l border-border/60" style={{ left: `${pct(h * 60)}%` }} />
                 ))}
                 {reservations.map((s, i) => (
                   <ReservationConvertButton
@@ -209,7 +209,7 @@ export function DayTimeline({
               <div className="relative flex-1 my-1" style={{ height: count * LANE_H }}>
                 {/* hour gridlines */}
                 {hours.map((h) => (
-                  <div key={h} className="absolute top-0 bottom-0 border-l border-border/40" style={{ left: `${pct(h * 60)}%` }} />
+                  <div key={h} className="absolute top-0 bottom-0 border-l border-border/60" style={{ left: `${pct(h * 60)}%` }} />
                 ))}
                 {/* shift window (spans the whole row, behind the lanes) */}
                 {r.shiftStartMin != null && r.shiftEndMin != null && (

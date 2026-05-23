@@ -117,3 +117,18 @@ export async function setBranchActive(
   revalidatePath('/settings/branches');
   return { ok: true };
 }
+
+// Set/clear a branch's therapist sharing group (lightweight — used by the
+// Therapist Sharing management page). Branches sharing a non-empty label pool
+// their therapists for cross-branch borrowing.
+export async function setBranchShareGroup(id: string, group: string | null): Promise<ActionResult> {
+  if (!id) return { ok: false, error: 'Missing branch' };
+  const value = (group ?? '').trim().slice(0, 60) || null;
+  const supabase = createServiceClient();
+  const { error } = await supabase.from('branches').update({ therapist_share_group: value }).eq('id', id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/settings/therapist-groups');
+  revalidatePath('/settings/branches');
+  revalidatePath('/shift-schedule');
+  return { ok: true };
+}

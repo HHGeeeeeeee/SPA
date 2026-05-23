@@ -70,6 +70,7 @@ export const mainNavItems: NavItem[] = [
         items: [
           { label: 'Business Units', href: '/settings/business-units' },
           { label: 'Branches', href: '/settings/branches' },
+          { label: 'Therapist Sharing', href: '/settings/therapist-groups' },
           { label: 'Positions', href: '/settings/positions' },
           { label: 'Commission Classes', href: '/settings/commission-classes' },
           { label: 'Commission Policies', href: '/settings/commission-policies' },

@@ -175,7 +175,7 @@ export function UserFormDialog({
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Role *</Label>
-              <Select value={role} onValueChange={(v) => v && setRole(v as UserRole)}>
+              <Select items={[{ value: 'admin', label: 'Admin — full access' }, { value: 'manager', label: 'Manager — store ops + approvals' }, { value: 'staff', label: 'Staff — daily POS work' }, { value: 'external_booker', label: 'External Booker — Hotel front-desk reservation only' }]} value={role} onValueChange={(v) => v && setRole(v as UserRole)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">Admin — full access</SelectItem>

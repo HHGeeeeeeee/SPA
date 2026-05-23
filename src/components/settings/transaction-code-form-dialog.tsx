@@ -181,7 +181,7 @@ export function TransactionCodeFormDialog({
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Type *</Label>
-              <Select value={txType} onValueChange={(v) => v && setTxType(v as TxCodeItem['transaction_type'])}>
+              <Select items={[{ value: 'payment', label: 'Payment' }, { value: 'settle', label: 'Settle' }, { value: 'cost', label: 'Cost' }, { value: 'adjust', label: 'Adjust' }]} value={txType} onValueChange={(v) => v && setTxType(v as TxCodeItem['transaction_type'])}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="payment">Payment</SelectItem>

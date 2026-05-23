@@ -141,7 +141,7 @@ export function PaymentMethodFormDialog({
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Currency *</Label>
-              <Select value={currency} onValueChange={(v) => v && setCurrency(v)}>
+              <Select items={[{ value: 'PHP', label: 'PHP' }]} value={currency} onValueChange={(v) => v && setCurrency(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="PHP">PHP</SelectItem>
@@ -152,6 +152,7 @@ export function PaymentMethodFormDialog({
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Method Type *</Label>
               <Select
+                items={[{ value: 'one_time', label: 'One-time' }, { value: 'recurring', label: 'Recurring (future)' }, { value: 'stored_value', label: 'Stored Value' }, { value: 'prepaid_quota', label: 'Prepaid Quota (future)' }]}
                 value={methodType}
                 onValueChange={(v) => v && setMethodType(v as PaymentMethodItem['method_type'])}
               >

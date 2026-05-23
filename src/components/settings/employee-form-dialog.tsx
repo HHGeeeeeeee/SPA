@@ -194,7 +194,7 @@ export function EmployeeFormDialog({
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Gender</Label>
-              <Select value={gender ?? NONE} onValueChange={(v) => setGender(v ?? NONE)}>
+              <Select items={[{ value: NONE, label: '—' }, { value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }, { value: 'Other', label: 'Other' }]} value={gender ?? NONE} onValueChange={(v) => setGender(v ?? NONE)}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>—</SelectItem>
@@ -208,6 +208,7 @@ export function EmployeeFormDialog({
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Status *</Label>
               <Select
+                items={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'on_leave', label: 'On Leave' }]}
                 value={status}
                 onValueChange={(v) => v && setStatus(v as EmployeeItem['status'])}
               >

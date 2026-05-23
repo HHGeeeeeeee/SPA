@@ -141,7 +141,7 @@ export function SettingFormDialog({
             {!isEdit && (
               <div className="flex flex-col gap-2">
                 <Label className="font-semibold">Value Type *</Label>
-                <Select value={valueType} onValueChange={(v) => v && setValueType(v as SettingItem['value_type'])}>
+                <Select items={[{ value: 'string', label: 'String' }, { value: 'integer', label: 'Integer' }, { value: 'decimal', label: 'Decimal' }, { value: 'boolean', label: 'Boolean' }]} value={valueType} onValueChange={(v) => v && setValueType(v as SettingItem['value_type'])}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="string">String</SelectItem>
@@ -156,7 +156,7 @@ export function SettingFormDialog({
             <div className="flex flex-col gap-2">
               <Label htmlFor="set-value" className="font-semibold">Value *</Label>
               {valueType === 'boolean' ? (
-                <Select value={value} onValueChange={(v) => v && setValue(v)}>
+                <Select items={[{ value: 'true', label: 'true' }, { value: 'false', label: 'false' }]} value={value} onValueChange={(v) => v && setValue(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="true">true</SelectItem>
@@ -189,7 +189,7 @@ export function SettingFormDialog({
               <>
                 <div className="flex flex-col gap-2">
                   <Label className="font-semibold">Scope *</Label>
-                  <Select value={scope} onValueChange={(v) => v && setScope(v as SettingItem['scope'])}>
+                  <Select items={[{ value: 'global', label: 'Global' }, { value: 'branch', label: 'Per Branch' }]} value={scope} onValueChange={(v) => v && setScope(v as SettingItem['scope'])}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="global">Global</SelectItem>

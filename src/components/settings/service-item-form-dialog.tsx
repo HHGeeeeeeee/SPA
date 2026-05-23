@@ -258,6 +258,7 @@ export function ServiceItemFormDialog({
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Station Type</Label>
               <Select
+                items={[{ value: NONE, label: '— None —' }, ...RESOURCE_TYPES]}
                 value={resourceType ?? NONE}
                 onValueChange={(v) => setResourceType(v ?? NONE)}
               >
@@ -310,6 +311,7 @@ export function ServiceItemFormDialog({
             <div className="flex flex-col gap-2 col-span-2">
               <Label className="font-semibold">Pricing Model</Label>
               <Select
+                items={[{ value: 'per_session', label: 'Per Session' }, { value: 'membership_unlimited', label: 'Membership Unlimited (future)' }, { value: 'membership_quota', label: 'Membership Quota (future)' }, { value: 'subscription', label: 'Subscription (future)' }]}
                 value={pricingModel}
                 onValueChange={(v) => v && setPricingModel(v as ServiceItemRecord['pricing_model'])}
               >

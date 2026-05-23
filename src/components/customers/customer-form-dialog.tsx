@@ -131,7 +131,7 @@ export function CustomerFormDialog({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Gender</Label>
-              <Select value={gender ?? NONE} onValueChange={(v) => setGender(v ?? NONE)}>
+              <Select items={[{ value: NONE, label: '—' }, { value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }, { value: 'Other', label: 'Other' }]} value={gender ?? NONE} onValueChange={(v) => setGender(v ?? NONE)}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>—</SelectItem>

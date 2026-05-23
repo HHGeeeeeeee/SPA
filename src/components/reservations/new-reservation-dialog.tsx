@@ -452,7 +452,7 @@ export function NewReservationDialog({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Gender Preference</Label>
-              <Select value={genderPref} onValueChange={(v) => setGenderPref(v ?? '__none__')}>
+              <Select items={[{ value: '__none__', label: 'Any' }, { value: 'M', label: 'Male therapist' }, { value: 'F', label: 'Female therapist' }]} value={genderPref} onValueChange={(v) => setGenderPref(v ?? '__none__')}>
                 <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">Any</SelectItem>

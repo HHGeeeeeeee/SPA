@@ -312,19 +312,19 @@ export async function getFreeBeds(input: {
   start: string;
   end: string;
   exclude_id?: string | null;
-}): Promise<ActionResult<{ beds: { id: string; name: string; type: string; free: boolean }[] }>> {
+}): Promise<ActionResult<{ beds: { id: string; name: string; type: string; zone: string; free: boolean }[] }>> {
   if (!input.branch_id || !input.start || !input.end) return { ok: false, error: 'Missing input' };
   if (new Date(input.end) <= new Date(input.start)) return { ok: false, error: 'Bad window' };
   const supabase = createServiceClient();
   const { data: resources } = await supabase
     .from('resources')
-    .select('id, resource_name, resource_type')
+    .select('id, resource_name, resource_type, location_zone')
     .eq('branch_id', input.branch_id)
     .eq('status', 'active')
     .order('resource_name');
   const busy = await computeBusyResourceIds(input.branch_id, input.start, input.end, input.exclude_id);
   const beds = (resources ?? []).map((r) => ({
-    id: r.id, name: r.resource_name, type: r.resource_type, free: !busy.has(r.id),
+    id: r.id, name: r.resource_name, type: r.resource_type, zone: r.location_zone ?? '', free: !busy.has(r.id),
   }));
   return { ok: true, data: { beds } };
 }
@@ -360,10 +360,10 @@ async function resolvePinnedBeds(
 
 const bedNum = (name: string): number => { const m = name.match(/(\d+)/); return m ? Number(m[1]) : 9999; };
 
-// Auto-pick `pax` adjacent free beds for a "seat together" group. Uses the first
-// service-needed resource type that can fit them; prefers a consecutive-number
-// run, else any free beds of that type; returns [] if it can't fit (stays
-// unassigned, in the top lane).
+// Auto-pick `pax` "together" beds for a seat-together group. Adjacency =
+// same resource type + same zone + consecutive bed numbers. Degrades gracefully:
+// consecutive-in-a-zone → any free in one zone → any free of the type. Returns []
+// if it can't fit (stays unassigned, in the top lane).
 async function autoAssignAdjacentBeds(
   branchId: string,
   categoryIds: string[],
@@ -379,20 +379,31 @@ async function autoAssignAdjacentBeds(
   const types = [...new Set((cats ?? []).map((c) => c.required_resource_type).filter(Boolean) as string[])];
   if (types.length === 0) return [];
   const { data: resources } = await supabase
-    .from('resources').select('id, resource_name, resource_type')
+    .from('resources').select('id, resource_name, resource_type, location_zone')
     .eq('branch_id', branchId).eq('status', 'active').in('resource_type', types);
   const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
-  for (const t of types) {
-    const list = (resources ?? [])
-      .filter((r) => r.resource_type === t)
-      .sort((a, b) => bedNum(a.resource_name) - bedNum(b.resource_name))
-      .map((r) => ({ id: r.id, name: r.resource_name, free: !busy.has(r.id) }));
-    for (let i = 0; i + pax <= list.length; i++) {
-      const win = list.slice(i, i + pax);
-      const consecutive = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
-      if (consecutive && win.every((b) => b.free)) return win.map((b) => b.id);
+  const all = (resources ?? []).map((r) => ({ id: r.id, name: r.resource_name, type: r.resource_type, zone: r.location_zone ?? '', free: !busy.has(r.id) }));
+
+  // First free consecutive-number run within a single zone.
+  const consecutiveRun = (zoneBeds: typeof all): string[] | null => {
+    const sorted = [...zoneBeds].sort((a, b) => bedNum(a.name) - bedNum(b.name));
+    for (let i = 0; i + pax <= sorted.length; i++) {
+      const win = sorted.slice(i, i + pax);
+      const ok = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
+      if (ok && win.every((b) => b.free)) return win.map((b) => b.id);
     }
-    const anyFree = list.filter((b) => b.free).slice(0, pax);
+    return null;
+  };
+
+  for (const t of types) {
+    const ofType = all.filter((b) => b.type === t);
+    const zones = [...new Set(ofType.map((b) => b.zone))];
+    // 1) consecutive run inside one zone (true adjacency)
+    for (const z of zones) { const run = consecutiveRun(ofType.filter((b) => b.zone === z)); if (run) return run; }
+    // 2) any free beds within one zone (same area, may not be consecutive)
+    for (const z of zones) { const free = ofType.filter((b) => b.zone === z && b.free).slice(0, pax); if (free.length === pax) return free.map((b) => b.id); }
+    // 3) last resort: any free beds of the type, across zones
+    const anyFree = ofType.filter((b) => b.free).slice(0, pax);
     if (anyFree.length === pax) return anyFree.map((b) => b.id);
   }
   return [];

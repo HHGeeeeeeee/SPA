@@ -32,7 +32,7 @@ import {
 } from '@/app/(dashboard)/reservations/actions';
 import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
-interface FreeBed { id: string; name: string; type: string; free: boolean }
+interface FreeBed { id: string; name: string; type: string; zone: string; free: boolean }
 // Trailing number in "Bed #3" → 3, for natural sort + adjacency runs.
 function bedNum(name: string): number { const m = name.match(/(\d+)/); return m ? Number(m[1]) : 9999; }
 
@@ -204,9 +204,14 @@ export function NewReservationDialog({
   const missingResourceType = categoryIds.some((id) => !serviceCategories.find((c) => c.id === id)?.requiredResourceType);
 
   // Beds the picker offers = active resources of the types this reservation needs.
+  // Sorted by zone then number so same-zone beds cluster (adjacency reads naturally).
   const pinnableBeds = (beds ?? []).filter((b) => neededTypes.includes(b.type));
   const bedsByType = neededTypes
-    .map((rt) => ({ rt, list: pinnableBeds.filter((b) => b.type === rt).sort((a, b) => bedNum(a.name) - bedNum(b.name)) }))
+    .map((rt) => ({
+      rt,
+      list: pinnableBeds.filter((b) => b.type === rt)
+        .sort((a, b) => (a.zone === b.zone ? bedNum(a.name) - bedNum(b.name) : a.zone.localeCompare(b.zone))),
+    }))
     .filter((g) => g.list.length > 0);
   const isFreeOrMine = (b: FreeBed) => b.free || pinnedBeds.includes(b.id);
 
@@ -218,15 +223,27 @@ export function NewReservationDialog({
     });
   }
 
-  // Pick a run of `pax` consecutive free beds in a type group (couples/groups);
-  // falls back to the first free beds if no adjacent run exists.
+  // Pick `pax` "together" beds in a type group: a consecutive-number run inside a
+  // single zone first, then any free beds in one zone, then any free of the type.
   function pickAdjacent(list: FreeBed[]) {
     const n = paxNum;
+    const zones = [...new Set(list.map((b) => b.zone))];
+    const runInZone = (zoneBeds: FreeBed[]): string[] => {
+      const sorted = [...zoneBeds].sort((a, b) => bedNum(a.name) - bedNum(b.name));
+      for (let i = 0; i + n <= sorted.length; i++) {
+        const win = sorted.slice(i, i + n);
+        const ok = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
+        if (ok && win.every(isFreeOrMine)) return win.map((b) => b.id);
+      }
+      return [];
+    };
     let chosen: string[] = [];
-    for (let i = 0; i + n <= list.length; i++) {
-      const win = list.slice(i, i + n);
-      const consecutive = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
-      if (consecutive && win.every(isFreeOrMine)) { chosen = win.map((b) => b.id); break; }
+    for (const z of zones) { chosen = runInZone(list.filter((b) => b.zone === z)); if (chosen.length) break; }
+    if (chosen.length === 0) {
+      for (const z of zones) {
+        const free = list.filter((b) => b.zone === z && isFreeOrMine(b)).slice(0, n);
+        if (free.length === n) { chosen = free.map((b) => b.id); break; }
+      }
     }
     if (chosen.length === 0) chosen = list.filter(isFreeOrMine).slice(0, n).map((b) => b.id);
     if (chosen.length === 0) { toast.error('No free beds of this type for the window'); return; }
@@ -411,7 +428,7 @@ export function NewReservationDialog({
                                     type="button"
                                     disabled={disabled}
                                     onClick={() => toggleBed(b.id)}
-                                    title={disabled ? 'Taken for this window' : undefined}
+                                    title={disabled ? 'Taken for this window' : b.zone ? `Zone ${b.zone}` : undefined}
                                     className={
                                       picked
                                         ? 'rounded-md border border-violet-500 bg-violet-500/20 px-2 py-1 text-xs font-bold text-violet-700 dark:text-violet-200'

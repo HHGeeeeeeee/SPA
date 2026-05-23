@@ -54,6 +54,7 @@ export interface ReservationItem {
   desired_service_start: string;
   desired_service_end: string;
   resource_ids?: string[];
+  seat_together?: boolean;
 }
 
 interface Props {
@@ -109,8 +110,11 @@ export function NewReservationDialog({
   const [end, setEnd] = useState(reservation ? toLocalInput(reservation.desired_service_end) : '');
   const [locationType, setLocationType] = useState(reservation?.service_location_type ?? 'on_site');
   const [note, setNote] = useState(reservation?.note ?? '');
-  // Optional pinned beds (hybrid model) + the branch's free/busy snapshot.
+  // Booking-side intent (groups who want to sit together → system auto-assigns
+  // adjacent beds). Staff can override the actual beds via the picker below.
+  const [seatTogether, setSeatTogether] = useState(reservation?.seat_together ?? false);
   const [pinnedBeds, setPinnedBeds] = useState<string[]>(reservation?.resource_ids ?? []);
+  const [showBedPicker, setShowBedPicker] = useState((reservation?.resource_ids ?? []).length > 0);
   const [beds, setBeds] = useState<FreeBed[] | null>(null);
 
   // Capacity snapshot for the chosen branch + window (used per resource type).
@@ -247,6 +251,7 @@ export function NewReservationDialog({
       service_location_type: locationType,
       note: note || null,
       resource_ids: locationType === 'external_hotel' ? [] : pinnedBeds,
+      seat_together: locationType === 'external_hotel' ? false : seatTogether && paxNum > 1,
     };
     startTransition(async () => {
       const r = isEdit
@@ -256,7 +261,7 @@ export function NewReservationDialog({
         toast.success(isEdit ? 'Reservation updated' : 'Reservation created');
         setOpen(false);
         if (!isEdit) {
-          setGuestName(''); setGuestPhone(''); setStart(''); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]);
+          setGuestName(''); setGuestPhone(''); setStart(''); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]); setSeatTogether(false); setShowBedPicker(false);
         }
       } else toast.error(r.error);
     });
@@ -340,61 +345,92 @@ export function NewReservationDialog({
               </p>
             )}
 
-            {/* Optional bed pinning (hybrid). On-site only; in-room uses no bed. */}
-            {locationType === 'on_site' && bedsByType.length > 0 && (
+            {/* Beds: the booker only chooses "sit together" for a group — the
+                system auto-assigns adjacent beds. Staff can override the actual
+                beds via the optional picker. In-room (external) uses no bed. */}
+            {locationType === 'on_site' && (
               <div className="col-span-2 rounded-lg border border-border bg-muted/30 p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                    Assign bed(s) — optional
+                {paxNum > 1 ? (
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 cursor-pointer accent-primary"
+                      checked={seatTogether}
+                      onChange={(e) => setSeatTogether(e.target.checked)}
+                    />
+                    <span>
+                      <span className="text-sm font-semibold">Seat the group together</span>
+                      <span className="block text-xs font-medium text-muted-foreground">
+                        Reserve {paxNum} adjacent beds automatically. Otherwise a bed is assigned at check-in.
+                      </span>
+                    </span>
+                  </label>
+                ) : (
+                  <p className="text-xs font-medium text-muted-foreground">
+                    A bed is assigned automatically at check-in.
                   </p>
-                  <span className="text-xs font-bold tabular text-muted-foreground">{pinnedBeds.length} / {paxNum} pinned</span>
-                </div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Leave empty to assign a bed at check-in. Pin beds for couples/groups who want to be together.
-                </p>
-                <div className="flex flex-col gap-3">
-                  {bedsByType.map((g) => (
-                    <div key={g.rt}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-foreground">{rtLabel(g.rt)}</span>
-                        {paxNum > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => pickAdjacent(g.list)}
-                            className="text-xs font-bold text-primary hover:underline"
-                          >
-                            Pick {paxNum} adjacent free
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {g.list.map((b) => {
-                          const picked = pinnedBeds.includes(b.id);
-                          const disabled = !isFreeOrMine(b);
-                          return (
-                            <button
-                              key={b.id}
-                              type="button"
-                              disabled={disabled}
-                              onClick={() => toggleBed(b.id)}
-                              title={disabled ? 'Taken for this window' : undefined}
-                              className={
-                                picked
-                                  ? 'rounded-md border border-violet-500 bg-violet-500/20 px-2 py-1 text-xs font-bold text-violet-700 dark:text-violet-200'
-                                  : disabled
-                                    ? 'rounded-md border border-dashed border-border bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground/50 line-through cursor-not-allowed'
-                                    : 'rounded-md border border-input bg-card px-2 py-1 text-xs font-semibold hover:bg-accent'
-                              }
-                            >
-                              {b.name}
-                            </button>
-                          );
-                        })}
-                      </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowBedPicker((v) => !v)}
+                  className="mt-2 text-xs font-bold text-primary hover:underline"
+                >
+                  {showBedPicker ? 'Hide bed assignment ▲' : 'Adjust beds (staff) ▾'}
+                </button>
+
+                {showBedPicker && (
+                  <div className="mt-2 border-t border-border pt-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Assign specific beds</p>
+                      <span className="text-xs font-bold tabular text-muted-foreground">{pinnedBeds.length} / {paxNum} pinned</span>
                     </div>
-                  ))}
-                </div>
-                {beds === null && <p className="text-xs font-medium text-muted-foreground mt-1.5">Loading beds…</p>}
+                    {bedsByType.length === 0 ? (
+                      <p className="text-xs font-medium text-muted-foreground">Pick service type(s) and a time to list beds.</p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {bedsByType.map((g) => (
+                          <div key={g.rt}>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-bold text-foreground">{rtLabel(g.rt)}</span>
+                              {paxNum > 1 && (
+                                <button type="button" onClick={() => pickAdjacent(g.list)} className="text-xs font-bold text-primary hover:underline">
+                                  Pick {paxNum} adjacent free
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {g.list.map((b) => {
+                                const picked = pinnedBeds.includes(b.id);
+                                const disabled = !isFreeOrMine(b);
+                                return (
+                                  <button
+                                    key={b.id}
+                                    type="button"
+                                    disabled={disabled}
+                                    onClick={() => toggleBed(b.id)}
+                                    title={disabled ? 'Taken for this window' : undefined}
+                                    className={
+                                      picked
+                                        ? 'rounded-md border border-violet-500 bg-violet-500/20 px-2 py-1 text-xs font-bold text-violet-700 dark:text-violet-200'
+                                        : disabled
+                                          ? 'rounded-md border border-dashed border-border bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground/50 line-through cursor-not-allowed'
+                                          : 'rounded-md border border-input bg-card px-2 py-1 text-xs font-semibold hover:bg-accent'
+                                    }
+                                  >
+                                    {b.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {beds === null && <p className="text-xs font-medium text-muted-foreground mt-1.5">Loading beds…</p>}
+                    <p className="text-xs font-medium text-muted-foreground mt-2">Picking beds here overrides the automatic assignment.</p>
+                  </div>
+                )}
               </div>
             )}
 

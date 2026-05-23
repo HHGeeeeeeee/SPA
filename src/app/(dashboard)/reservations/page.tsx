@@ -40,7 +40,7 @@ async function fetchData() {
       .select(`
         id, reservation_no, guest_name, guest_phone, pax, status,
         desired_service_start, desired_service_end,
-        branch_id, source_id, gender_preference, service_location_type, note,
+        branch_id, source_id, gender_preference, service_location_type, note, seat_together,
         branch:branches ( code ),
         source:customer_sources ( code ),
         reservation_service_categories ( service_categories ( id, code, name ) ),
@@ -78,7 +78,7 @@ export default async function ReservationsPage() {
   const upcoming = reservations.filter((r) => ['reserved', 'confirmed'].includes(r.status)).length;
 
   return (
-    <div className="flex flex-col gap-6 max-w-6xl">
+    <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Reservations</h2>
@@ -103,13 +103,13 @@ export default async function ReservationsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="font-bold">Reservation No</TableHead>
-              <TableHead className="w-20 font-bold">Branch</TableHead>
-              <TableHead className="font-bold">Guest</TableHead>
-              <TableHead className="font-bold">Service</TableHead>
-              <TableHead className="font-bold">Source</TableHead>
+              <TableHead className="w-[190px] font-bold whitespace-nowrap">Reservation No</TableHead>
+              <TableHead className="w-16 font-bold">Branch</TableHead>
+              <TableHead className="w-44 font-bold">Guest</TableHead>
+              <TableHead className="min-w-[260px] font-bold">Service</TableHead>
+              <TableHead className="w-24 font-bold">Source</TableHead>
               <TableHead className="w-14 font-bold">PAX</TableHead>
-              <TableHead className="font-bold">Desired Time</TableHead>
+              <TableHead className="w-[200px] font-bold whitespace-nowrap">Desired Time</TableHead>
               <TableHead className="w-28 font-bold">Status</TableHead>
               <TableHead className="w-12" />
             </TableRow>
@@ -137,11 +137,11 @@ export default async function ReservationsPage() {
                   .filter(Boolean) as string[];
                 return (
                   <TableRow key={r.id}>
-                    <TableCell className="font-mono font-bold">{r.reservation_no}</TableCell>
+                    <TableCell className="font-mono font-bold whitespace-nowrap">{r.reservation_no}</TableCell>
                     <TableCell className="font-mono font-bold">{branch?.code ?? '—'}</TableCell>
                     <TableCell className="font-semibold">
-                      {r.guest_name}
-                      {r.guest_phone && <span className="ml-2 font-medium text-muted-foreground">{r.guest_phone}</span>}
+                      <div>{r.guest_name}</div>
+                      {r.guest_phone && <div className="font-medium text-muted-foreground text-xs tabular">{r.guest_phone}</div>}
                     </TableCell>
                     <TableCell className="font-medium">
                       {cats.length ? cats.map((c) => c.name).join(', ') : '—'}
@@ -153,7 +153,7 @@ export default async function ReservationsPage() {
                     </TableCell>
                     <TableCell className="font-mono font-semibold text-sm">{source?.code ?? '—'}</TableCell>
                     <TableCell className="font-bold tabular">{r.pax}</TableCell>
-                    <TableCell className="font-medium tabular text-sm">
+                    <TableCell className="font-medium tabular text-sm whitespace-nowrap">
                       {fmt(r.desired_service_start)} – {new Date(r.desired_service_end).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })}
                     </TableCell>
                     <TableCell>
@@ -178,6 +178,7 @@ export default async function ReservationsPage() {
                           desired_service_start: r.desired_service_start,
                           desired_service_end: r.desired_service_end,
                           resource_ids: pinnedIds,
+                          seat_together: r.seat_together,
                         }}
                         branches={branches}
                         sources={sources}

@@ -22,8 +22,10 @@ const schema = z.object({
   desired_service_end: z.string().min(1),
   service_location_type: z.enum(['on_site', 'external_hotel']).default('on_site'),
   note: z.string().max(500).optional().nullable(),
-  // Optional pinned beds (hybrid model). Empty = leave unassigned.
+  // Explicit staff bed override (hybrid). Empty = let the system decide.
   resource_ids: z.array(z.string().uuid()).optional().default([]),
+  // Group wants to sit together → auto-assign adjacent beds when no override.
+  seat_together: z.boolean().optional().default(false),
 });
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
@@ -76,8 +78,14 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
     return { ok: false, error: 'A guest phone is required for this source' };
   }
 
-  // Validate any pinned beds before creating the row.
-  const pinned = await resolvePinnedBeds(d.branch_id, d.resource_ids, d.pax, d.desired_service_start, d.desired_service_end, d.service_location_type, null);
+  // Resolve beds: explicit staff override, else auto-assign for a "together"
+  // group, else none.
+  const pinned = await resolveEffectiveBeds({
+    branchId: d.branch_id, resourceIds: d.resource_ids, seatTogether: d.seat_together,
+    categoryIds: d.service_category_ids, pax: d.pax,
+    start: d.desired_service_start, end: d.desired_service_end,
+    locationType: d.service_location_type, excludeReservationId: null,
+  });
   if (!pinned.ok) return { ok: false, error: pinned.error };
 
   const reservation_no = await nextReservationNo(branch.code, d.desired_service_start);
@@ -99,6 +107,7 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
     desired_service_end: d.desired_service_end,
     service_location_type: d.service_location_type,
     note: d.note || null,
+    seat_together: d.seat_together,
     status: 'reserved',
   }).select('id').single();
   if (error || !created) return { ok: false, error: error?.message ?? 'Insert failed' };
@@ -125,6 +134,7 @@ const updateSchema = z.object({
   service_location_type: z.enum(['on_site', 'external_hotel']),
   note: z.string().max(500).optional().nullable(),
   resource_ids: z.array(z.string().uuid()).optional().default([]),
+  seat_together: z.boolean().optional().default(false),
 });
 
 export async function updateReservation(input: unknown): Promise<ActionResult> {
@@ -150,7 +160,12 @@ export async function updateReservation(input: unknown): Promise<ActionResult> {
   if (source.phone_required && !d.guest_phone?.trim()) {
     return { ok: false, error: 'A guest phone is required for this source' };
   }
-  const pinned = await resolvePinnedBeds(d.branch_id, d.resource_ids, d.pax, d.desired_service_start, d.desired_service_end, d.service_location_type, d.id);
+  const pinned = await resolveEffectiveBeds({
+    branchId: d.branch_id, resourceIds: d.resource_ids, seatTogether: d.seat_together,
+    categoryIds: d.service_category_ids, pax: d.pax,
+    start: d.desired_service_start, end: d.desired_service_end,
+    locationType: d.service_location_type, excludeReservationId: d.id,
+  });
   if (!pinned.ok) return { ok: false, error: pinned.error };
   const { error } = await supabase.from('reservations').update({
     branch_id: d.branch_id,
@@ -165,6 +180,7 @@ export async function updateReservation(input: unknown): Promise<ActionResult> {
     desired_service_end: d.desired_service_end,
     service_location_type: d.service_location_type,
     note: d.note || null,
+    seat_together: d.seat_together,
   }).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   const linkErr = await syncReservationCategories(d.id, d.service_category_ids);
@@ -336,6 +352,70 @@ async function resolvePinnedBeds(
   const taken = resourceIds.filter((id) => busy.has(id)).map((id) => found.get(id));
   if (taken.length) return { ok: false, error: `Already taken for this window: ${taken.join(', ')}` };
   return { ok: true, ids: resourceIds };
+}
+
+const bedNum = (name: string): number => { const m = name.match(/(\d+)/); return m ? Number(m[1]) : 9999; };
+
+// Auto-pick `pax` adjacent free beds for a "seat together" group. Uses the first
+// service-needed resource type that can fit them; prefers a consecutive-number
+// run, else any free beds of that type; returns [] if it can't fit (stays
+// unassigned, in the top lane).
+async function autoAssignAdjacentBeds(
+  branchId: string,
+  categoryIds: string[],
+  pax: number,
+  start: string,
+  end: string,
+  excludeReservationId?: string | null,
+): Promise<string[]> {
+  if (pax < 1) return [];
+  const supabase = createServiceClient();
+  const { data: cats } = await supabase
+    .from('service_categories').select('required_resource_type').in('id', categoryIds);
+  const types = [...new Set((cats ?? []).map((c) => c.required_resource_type).filter(Boolean) as string[])];
+  if (types.length === 0) return [];
+  const { data: resources } = await supabase
+    .from('resources').select('id, resource_name, resource_type')
+    .eq('branch_id', branchId).eq('status', 'active').in('resource_type', types);
+  const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
+  for (const t of types) {
+    const list = (resources ?? [])
+      .filter((r) => r.resource_type === t)
+      .sort((a, b) => bedNum(a.resource_name) - bedNum(b.resource_name))
+      .map((r) => ({ id: r.id, name: r.resource_name, free: !busy.has(r.id) }));
+    for (let i = 0; i + pax <= list.length; i++) {
+      const win = list.slice(i, i + pax);
+      const consecutive = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
+      if (consecutive && win.every((b) => b.free)) return win.map((b) => b.id);
+    }
+    const anyFree = list.filter((b) => b.free).slice(0, pax);
+    if (anyFree.length === pax) return anyFree.map((b) => b.id);
+  }
+  return [];
+}
+
+// Decide the beds to pin: an explicit staff override wins; otherwise a "seat
+// together" group is auto-assigned adjacent beds; otherwise none (unassigned).
+async function resolveEffectiveBeds(args: {
+  branchId: string;
+  resourceIds: string[];
+  seatTogether: boolean;
+  categoryIds: string[];
+  pax: number;
+  start: string;
+  end: string;
+  locationType: string;
+  excludeReservationId?: string | null;
+}): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  if (args.locationType === 'external_hotel') return { ok: true, ids: [] };
+  if (args.resourceIds.length > 0) {
+    return resolvePinnedBeds(args.branchId, args.resourceIds, args.pax, args.start, args.end, args.locationType, args.excludeReservationId);
+  }
+  if (args.seatTogether && args.pax > 1) {
+    const ids = await autoAssignAdjacentBeds(args.branchId, args.categoryIds, args.pax, args.start, args.end, args.excludeReservationId);
+    return { ok: true, ids };
+  }
+  return { ok: true, ids: [] };
 }
 
 export async function setReservationStatus(

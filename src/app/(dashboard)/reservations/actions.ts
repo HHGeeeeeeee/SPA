@@ -306,10 +306,11 @@ async function computeBusyResourceIds(
   return busy;
 }
 
-// Earliest time `pax` stations of a type are free for `durationMin` — used by the
-// reservation form's "Next available" helper for walk-ins. Considers live order
-// occupancy (incl. cleanup) and confirmed reservation holds; steps through the
-// times beds free up today. Returns null start if it can't fit within ~24h.
+// Earliest time `pax` stations of a type AND `pax` therapists are both free for
+// `durationMin` — used by the reservation form's "Next available" walk-in helper.
+// Beds consider live order occupancy (incl. cleanup) + confirmed holds; therapists
+// must be on a working shift at the branch today and not mid-service. Returns null
+// start if it can't fit within ~24h.
 export async function nextAvailableSlot(input: {
   branch_id: string;
   resource_type: string;
@@ -318,6 +319,25 @@ export async function nextAvailableSlot(input: {
 }): Promise<ActionResult<{ start: string | null; availableNow: boolean }>> {
   if (!input.branch_id || !input.resource_type) return { ok: false, error: 'Missing input' };
   const supabase = createServiceClient();
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const phtDate = (ms: number) => {
+    const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ms));
+    return `${p.find((x) => x.type === 'year')!.value}-${p.find((x) => x.type === 'month')!.value}-${p.find((x) => x.type === 'day')!.value}`;
+  };
+  const phtMinOfDay = (ms: number) => {
+    const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(ms));
+    return Number(p.find((x) => x.type === 'hour')!.value) * 60 + Number(p.find((x) => x.type === 'minute')!.value);
+  };
+  const hhmmToMin = (t: string | null) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
+
+  const durMin = Math.max(15, input.durationMin);
+  const dur = durMin * 60_000;
+  const now = Date.now();
+  const today = phtDate(now);
+  const lookback = new Date(now - 12 * 3600 * 1000).toISOString();
+  const horizon = new Date(now + 24 * 3600 * 1000).toISOString();
+
+  // --- Beds of the needed type ---
   const { data: resources } = await supabase
     .from('resources').select('id')
     .eq('branch_id', input.branch_id).eq('status', 'active').eq('resource_type', input.resource_type);
@@ -325,13 +345,37 @@ export async function nextAvailableSlot(input: {
   if (typeIds.length === 0) return { ok: false, error: 'No stations of this type at this branch' };
   if (input.pax > typeIds.length) return { ok: true, data: { start: null, availableNow: false } };
 
-  const dur = Math.max(15, input.durationMin) * 60_000;
-  const now = Date.now();
-  const lookback = new Date(now - 12 * 3600 * 1000).toISOString();
-  const horizon = new Date(now + 24 * 3600 * 1000).toISOString();
+  // --- Therapist pool: on a working shift at this branch today (filtered to
+  // therapist positions when those exist), with their shift windows. ---
+  const { data: positions } = await supabase.from('positions').select('id, name');
+  const therapistPos = new Set((positions ?? []).filter((p) => /massage|therap/i.test(p.name ?? '')).map((p) => p.id));
+  const { data: shiftsToday } = await supabase
+    .from('employee_shifts').select('employee_id, shift_start, shift_end')
+    .eq('branch_id', input.branch_id).eq('shift_date', today).in('shift_type', ['regular', 'cross_branch', 'on_call']);
+  let pool = (shiftsToday ?? []).map((s) => ({ id: s.employee_id, startMin: hhmmToMin(s.shift_start), endMin: hhmmToMin(s.shift_end) }));
+  if (therapistPos.size > 0 && pool.length) {
+    const { data: emps } = await supabase.from('employees').select('id, position_id').in('id', pool.map((p) => p.id));
+    const posOf = new Map((emps ?? []).map((e) => [e.id, e.position_id]));
+    pool = pool.filter((p) => therapistPos.has(posOf.get(p.id) as string));
+  }
+  if (input.pax > pool.length) return { ok: true, data: { start: null, availableNow: false } };
 
-  // Change-points = times a bed of this type frees: live order ends (+cleanup)
-  // and confirmed reservation ends.
+  // Therapist occupancy today (busy while mid-service; no cleanup tail for people).
+  const { data: titems } = await supabase
+    .from('order_items')
+    .select('therapist_id, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( branch_id, service_date )')
+    .not('actual_start', 'is', null).in('therapist_id', pool.map((p) => p.id))
+    .gte('actual_start', lookback).lt('actual_start', horizon);
+  const thBusy: { th: string; s: number; e: number }[] = [];
+  for (const it of titems ?? []) {
+    const o = one(it.order);
+    if (o?.branch_id !== input.branch_id || o?.service_date !== today || !it.therapist_id) continue;
+    const s = Date.parse(it.actual_start as string);
+    thBusy.push({ th: it.therapist_id, s, e: it.actual_end ? Date.parse(it.actual_end) : s + (it.duration_minutes ?? 60) * 60_000 });
+  }
+
+  // --- Change-points: when a bed frees (order+cleanup / confirmed hold), when a
+  // therapist finishes, and when a therapist's shift starts. ---
   const ends: number[] = [];
   const { data: items } = await supabase
     .from('order_items')
@@ -353,12 +397,24 @@ export async function nextAvailableSlot(input: {
     const r = one(p.reservations);
     if (r?.branch_id === input.branch_id) ends.push(Date.parse(r.desired_service_end));
   }
+  for (const b of thBusy) ends.push(b.e);
+  for (const p of pool) {
+    if (p.startMin != null) ends.push(Date.parse(`${today}T${pad2(Math.floor(p.startMin / 60))}:${pad2(p.startMin % 60)}:00+08:00`));
+  }
 
-  const candidates = [now, ...ends.filter((t) => t > now)].sort((a, b) => a - b);
+  const candidates = [...new Set([now, ...ends.filter((t) => t > now)])].sort((a, b) => a - b);
   for (const t of candidates) {
     const busy = await computeBusyResourceIds(input.branch_id, new Date(t).toISOString(), new Date(t + dur).toISOString(), null);
-    const free = typeIds.filter((id) => !busy.has(id)).length;
-    if (free >= input.pax) return { ok: true, data: { start: new Date(t).toISOString(), availableNow: t <= now + 60_000 } };
+    const freeBeds = typeIds.filter((id) => !busy.has(id)).length;
+    if (freeBeds < input.pax) continue;
+    // A therapist is free if their shift covers [t, t+dur] and they're not busy.
+    const tMin = phtMinOfDay(t);
+    const tEndMin = tMin + durMin;
+    const freeTh = pool.filter((p) =>
+      p.startMin != null && p.endMin != null && p.startMin <= tMin && p.endMin >= tEndMin &&
+      !thBusy.some((b) => b.th === p.id && b.s < t + dur && t < b.e),
+    ).length;
+    if (freeTh >= input.pax) return { ok: true, data: { start: new Date(t).toISOString(), availableNow: t <= now + 60_000 } };
   }
   return { ok: true, data: { start: null, availableNow: false } };
 }

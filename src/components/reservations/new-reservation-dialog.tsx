@@ -262,7 +262,7 @@ export function NewReservationDialog({
     const r = await nextAvailableSlot({ branch_id: branchId, resource_type: neededTypes[0], pax: paxNum, durationMin: 60 });
     setFinding(false);
     if (!r.ok) return toast.error(r.error);
-    if (!r.data?.start) return toast.error('No slot fits within 24h (not enough stations for this party).');
+    if (!r.data?.start) return toast.error('No slot within 24h — not enough free beds + on-shift therapists for this party.');
     const startMs = Date.parse(r.data.start);
     setStart(toLocalInput(r.data.start));
     setEnd(toLocalInput(new Date(startMs + 60 * 60000).toISOString()));

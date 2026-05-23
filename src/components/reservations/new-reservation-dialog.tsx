@@ -424,8 +424,10 @@ export function NewReservationDialog({
               </div>
             )}
 
-            {/* Soft capacity check for the window — never blocks, just warns. */}
-            {capacityRows.length > 0 && (
+            {/* Soft capacity check for the window — never blocks, just warns.
+                Hidden in walk-in mode (no chosen window yet; the soonest-slot box
+                is the source of truth there). */}
+            {!walkIn && capacityRows.length > 0 && (
               <div className={`col-span-2 rounded-lg border p-3 text-sm ${hasOver ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-muted/30'}`}>
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
                   Capacity for this window · {paxNum} pax

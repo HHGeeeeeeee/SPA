@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { CashReconForm } from '@/components/reconciliation/cash-recon-form';
 import { CashShiftConfig } from '@/components/reconciliation/cash-shift-config';
+import { CashDatePicker } from '@/components/reconciliation/cash-date-picker';
 import { loadDayShifts, getBranchShifts } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -52,10 +53,9 @@ export default async function CashReconciliationPage({
             {b.code}
           </Link>
         ))}
-        <form className="ml-auto flex items-center gap-2">
-          {branchId && <input type="hidden" name="branch" value={branchId} />}
-          <input type="date" name="date" defaultValue={date} className="rounded-lg border border-input bg-transparent px-3 py-1.5 text-sm" />
-        </form>
+        <div className="ml-auto">
+          <CashDatePicker branchId={branchId} date={date} />
+        </div>
         {branchId && admin && <CashShiftConfig branchId={branchId} current={configured} />}
       </div>
 

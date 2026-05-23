@@ -217,17 +217,21 @@ function one<T>(v: T | T[] | null): T | null {
 async function fetchData(branchParam?: string, weekParam?: string) {
   const supabase = createServiceClient();
   const { data: branches } = await supabase
-    .from('branches').select('id, code, name').eq('active', true).order('code');
+    .from('branches').select('id, code, name, therapist_share_group').eq('active', true).order('code');
   const list = branches ?? [];
   const branchId = branchParam && list.some((b) => b.id === branchParam) ? branchParam : list[0]?.id;
   const monday = weekParam ?? thisMonday();
   const days = weekDays(monday);
 
-  let employees: { id: string; employee_code: string; name: string }[] = [];
+  let employees: { id: string; employee_code: string; name: string; home_branch_id: string | null }[] = [];
   let shifts: ShiftRow[] = [];
   if (branchId) {
+    // Roster the branch's own therapists + any from branches in the same sharing
+    // group (cross-branch borrowing).
+    const group = list.find((b) => b.id === branchId)?.therapist_share_group;
+    const homeBranchIds = group ? list.filter((b) => b.therapist_share_group === group).map((b) => b.id) : [branchId];
     const [emp, sh] = await Promise.all([
-      supabase.from('employees').select('id, employee_code, name').eq('home_branch_id', branchId).eq('status', 'active').order('employee_code'),
+      supabase.from('employees').select('id, employee_code, name, home_branch_id').in('home_branch_id', homeBranchIds).eq('status', 'active').order('employee_code'),
       supabase.from('employee_shifts')
         .select('employee_id, shift_date, shift_type, shift_start, shift_end, leave_type')
         .eq('branch_id', branchId)
@@ -287,7 +291,7 @@ export default async function ShiftSchedulePage({
         <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel={view === 'station' ? 'Station' : 'Therapist'} nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} reservations={dayData!.reservations} />
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
-          No active employees with this branch as their home branch.
+          No active therapists for this branch (or its sharing group).
         </Card>
       ) : (
         <Card className="p-0 overflow-x-auto">
@@ -307,7 +311,14 @@ export default async function ShiftSchedulePage({
               {employees.map((e) => (
                 <tr key={e.id} className="border-b border-border last:border-0">
                   <td className="p-3 sticky left-0 bg-card">
-                    <div className="font-semibold text-sm">{e.name}</div>
+                    <div className="font-semibold text-sm">
+                      {e.name}
+                      {e.home_branch_id !== branchId && (
+                        <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+                          from {branches.find((b) => b.id === e.home_branch_id)?.code ?? '?'}
+                        </span>
+                      )}
+                    </div>
                     <div className="font-mono font-bold text-xs text-muted-foreground">{e.employee_code}</div>
                   </td>
                   {days.map((d) => (

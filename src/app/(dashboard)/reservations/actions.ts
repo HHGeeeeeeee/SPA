@@ -320,7 +320,8 @@ export async function nextAvailableSlot(input: {
   pax: number;
   durationMin: number;
   gender?: string | null; // 'M' | 'F' — only count therapists of this gender
-  service_category_id?: string | null; // only count therapists who can perform it
+  service_category_id?: string | null; // count therapists who can do this category
+  service_group?: string | null; // narrower: a specific service group within it
 }): Promise<ActionResult<{ start: string | null; availableNow: boolean }>> {
   if (!input.branch_id || !input.resource_type) return { ok: false, error: 'Missing input' };
   const supabase = createServiceClient();
@@ -363,17 +364,19 @@ export async function nextAvailableSlot(input: {
     const { data: emps } = await supabase.from('employees').select('id, position_id, gender').in('id', poolIds);
     const meta = new Map((emps ?? []).map((e) => [e.id, e]));
 
-    // Capability: the service_groups within the chosen category, and each pool
-    // member's own skills (shared rule via canPerformAny).
+    // Capability: a specific service_group if given, else all groups within the
+    // chosen category. Match against each pool member's skills (canPerformAny).
     let groups = new Set<string>();
-    const capsByEmp = new Map<string, string[]>();
-    if (input.service_category_id) {
+    if (input.service_group) {
+      groups = new Set([input.service_group]);
+    } else if (input.service_category_id) {
       const { data: catItems } = await supabase.from('service_items').select('service_group').eq('service_category_id', input.service_category_id);
       groups = new Set((catItems ?? []).map((i) => i.service_group).filter(Boolean) as string[]);
-      if (groups.size > 0) {
-        const { data: caps } = await supabase.from('employee_service_groups').select('employee_id, service_group').in('employee_id', poolIds);
-        for (const c of caps ?? []) (capsByEmp.get(c.employee_id) ?? capsByEmp.set(c.employee_id, []).get(c.employee_id)!).push(c.service_group);
-      }
+    }
+    const capsByEmp = new Map<string, string[]>();
+    if (groups.size > 0) {
+      const { data: caps } = await supabase.from('employee_service_groups').select('employee_id, service_group').in('employee_id', poolIds);
+      for (const c of caps ?? []) (capsByEmp.get(c.employee_id) ?? capsByEmp.set(c.employee_id, []).get(c.employee_id)!).push(c.service_group);
     }
 
     pool = pool.filter((p) => {

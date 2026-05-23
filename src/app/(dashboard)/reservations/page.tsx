@@ -19,7 +19,7 @@ function one<T>(v: T | T[] | null): T | null {
 async function fetchData() {
   const supabase = createServiceClient();
   await cancelStaleReservations(); // sweep past-day no-shows → cancelled
-  const [resv, br, src, cat] = await Promise.all([
+  const [resv, br, src, cat, si] = await Promise.all([
     supabase
       .from('reservations')
       .select(`
@@ -37,6 +37,7 @@ async function fetchData() {
     supabase.from('branches').select('id, code, name, branch_business_units ( business_unit_id )').eq('active', true).eq('reservation_enabled', true).order('code'),
     supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
     supabase.from('service_categories').select('id, code, name, required_resource_type, service_category_business_units ( business_unit_id )').eq('active', true).order('code'),
+    supabase.from('service_items').select('id, name, service_group, service_category_id').eq('active', true).order('service_group'),
   ]);
   if (resv.error) throw new Error(resv.error.message);
   if (br.error) throw new Error(br.error.message);
@@ -51,6 +52,9 @@ async function fetchData() {
     businessUnitIds: (c.service_category_business_units ?? []).map((x) => x.business_unit_id),
     requiredResourceType: c.required_resource_type,
   }));
+  const serviceItems = (si.data ?? [])
+    .filter((s) => s.service_group)
+    .map((s) => ({ id: s.id, name: s.name, group: s.service_group as string, categoryId: s.service_category_id as string }));
 
   const graceMin = await getReservationGraceMinutes();
   const rows: ReservationRow[] = (resv.data ?? []).map((r) => {
@@ -96,11 +100,11 @@ async function fetchData() {
     };
   });
 
-  return { rows, branches, sources: src.data ?? [], serviceCategories };
+  return { rows, branches, sources: src.data ?? [], serviceCategories, serviceItems };
 }
 
 export default async function ReservationsPage() {
-  const { rows, branches, sources, serviceCategories } = await fetchData();
+  const { rows, branches, sources, serviceCategories, serviceItems } = await fetchData();
 
   return (
     <div className="flex flex-col gap-6">
@@ -116,6 +120,7 @@ export default async function ReservationsPage() {
             branches={branches}
             sources={sources}
             serviceCategories={serviceCategories}
+            serviceItems={serviceItems}
             walkIn
             trigger={
               <Button

@@ -59,6 +59,9 @@ function hhmm(min: number): string {
 
 // Vertical height (px) of one stacked lane within a resource row.
 const LANE_H = 56;
+// The Reservations lane caps at this many lanes tall; extra overlapping
+// reservations scroll within the lane instead of pushing the bed board down.
+const RES_MAX_LANES = 3;
 
 // Greedy interval partitioning: each block gets the first lane whose previous
 // block (incl. its cleanup tail) has already ended. Overlapping blocks land in
@@ -148,16 +151,19 @@ export function DayTimeline({
           </div>
         </div>
 
-        {/* Upcoming reservations — unassigned demand, stacked on its own lane */}
+        {/* Upcoming reservations — unassigned demand, stacked on its own lane.
+            Capped to RES_MAX_LANES tall; overflow scrolls inside the lane. */}
         {reservations.length > 0 && (() => {
           const { lanes, count } = assignLanes(reservations);
+          const scrolls = count > RES_MAX_LANES;
           return (
             <div className="flex border-b-2 border-violet-500/30 bg-violet-500/5">
               <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center">
                 <div className="font-semibold text-sm text-violet-700 dark:text-violet-300">Reservations</div>
-                <div className="font-bold text-xs text-muted-foreground">{reservations.length} upcoming</div>
+                <div className="font-bold text-xs text-muted-foreground">{reservations.length} upcoming{scrolls ? ' ↕' : ''}</div>
               </div>
-              <div className="relative flex-1 my-1" style={{ height: count * LANE_H }}>
+              <div className="flex-1 my-1 overflow-y-auto" style={{ height: Math.min(count, RES_MAX_LANES) * LANE_H }}>
+              <div className="relative" style={{ height: count * LANE_H }}>
                 {hours.map((h) => (
                   <div key={h} className="absolute top-0 bottom-0 border-l border-border/40" style={{ left: `${pct(h * 60)}%` }} />
                 ))}
@@ -185,6 +191,7 @@ export function DayTimeline({
                 {showNow && (
                   <div className="absolute top-0 bottom-0 z-10 w-px bg-red-500" style={{ left: `${pct(nowMin!)}%` }} />
                 )}
+              </div>
               </div>
             </div>
           );

@@ -114,7 +114,9 @@ export function NewReservationDialog({
   // adjacent beds). Staff can override the actual beds via the picker below.
   const [seatTogether, setSeatTogether] = useState(reservation?.seat_together ?? false);
   const [pinnedBeds, setPinnedBeds] = useState<string[]>(reservation?.resource_ids ?? []);
-  const [showBedPicker, setShowBedPicker] = useState((reservation?.resource_ids ?? []).length > 0);
+  // Beds stay hidden until staff explicitly opens the picker — opening a
+  // reservation never reveals bed numbers on its own.
+  const [showBedPicker, setShowBedPicker] = useState(false);
   const [beds, setBeds] = useState<FreeBed[] | null>(null);
 
   // Capacity snapshot for the chosen branch + window (used per resource type).

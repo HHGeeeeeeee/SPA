@@ -238,7 +238,8 @@ export default async function ShiftSchedulePage({
   searchParams: Promise<{ branch?: string; week?: string; view?: string; scale?: string; day?: string }>;
 }) {
   const sp = await searchParams;
-  const view: ShiftView = sp.view === 'station' ? 'station' : 'employee';
+  // Station (live bed occupancy) is the default subject; Therapist is opt-in.
+  const view: ShiftView = sp.view === 'employee' ? 'employee' : 'station';
   // The roster only plans working hours; beds are assigned dynamically when a
   // service starts. So the Station subject is a live, per-day occupancy snapshot
   // (sourced from actual orders) and is never a weekly pre-assignment grid.

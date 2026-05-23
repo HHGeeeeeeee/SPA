@@ -58,13 +58,13 @@ export function ShiftControls({ branches, branchId, weekStart, day, view, scale 
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {/* subject: therapist roster vs live bed occupancy */}
+      {/* subject: live bed occupancy (default) vs therapist roster */}
       <div className="inline-flex rounded-lg border border-border p-0.5">
-        <button type="button" onClick={() => go({ view: 'employee', scale: 'week' })} className={tabBtn(view === 'employee')}>
-          <Users className="size-4" /> Therapist
-        </button>
         <button type="button" onClick={() => go({ view: 'station', scale: 'day' })} className={tabBtn(view === 'station')}>
           <BedDouble className="size-4" /> Station
+        </button>
+        <button type="button" onClick={() => go({ view: 'employee', scale: 'week' })} className={tabBtn(view === 'employee')}>
+          <Users className="size-4" /> Therapist
         </button>
       </div>
 

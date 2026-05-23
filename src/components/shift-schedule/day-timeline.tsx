@@ -65,7 +65,7 @@ export function DayTimeline({
       <div style={{ minWidth: LABEL_W + trackMinWidth }}>
         {/* hour axis */}
         <div className="flex border-b border-border">
-          <div className="w-40 shrink-0 p-2 text-xs font-bold text-muted-foreground">{subjectLabel}</div>
+          <div className="w-40 shrink-0 p-2 flex items-center justify-center text-center text-xs font-bold text-muted-foreground">{subjectLabel}</div>
           <div className="relative flex-1 h-8">
             {hours.map((h) => (
               <div
@@ -84,7 +84,7 @@ export function DayTimeline({
         ) : (
           rows.map((r) => (
             <div key={r.id} className="flex border-b border-border last:border-0">
-              <div className="w-40 shrink-0 p-2">
+              <div className="w-40 shrink-0 p-2 text-center">
                 <div className="font-semibold text-sm">{r.name}</div>
                 <div className="font-mono font-bold text-xs text-muted-foreground">{r.code}</div>
               </div>
@@ -105,7 +105,7 @@ export function DayTimeline({
                 {r.services.map((s, i) => (
                   <div key={i} className="contents">
                     <div
-                      className={`absolute top-1 bottom-1 rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${s.ongoing ? 'bg-blue-500/70 text-white' : 'bg-primary/70 text-white'}`}
+                      className={`absolute top-1 bottom-1 rounded px-1.5 flex flex-col items-center justify-center text-center overflow-hidden text-[10px] leading-tight ${s.ongoing ? 'bg-blue-500/70 text-white' : 'bg-primary/70 text-white'}`}
                       style={{ left: `${pct(s.startMin)}%`, width: `${Math.max(2, pct(s.endMin) - pct(s.startMin))}%` }}
                       title={`${s.line1}${s.line2 ? ` · ${s.line2}` : ''} · ${hhmm(s.startMin)}–${hhmm(s.endMin)}`}
                     >

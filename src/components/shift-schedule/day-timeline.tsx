@@ -30,6 +30,27 @@ function hhmm(min: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+// Vertical height (px) of one stacked lane within a resource row.
+const LANE_H = 56;
+
+// Greedy interval partitioning: each block gets the first lane whose previous
+// block (incl. its cleanup tail) has already ended. Overlapping blocks land in
+// separate lanes so they stack instead of covering each other.
+function assignLanes(services: DayServiceBlock[]): { lanes: number[]; count: number } {
+  const order = services.map((_, i) => i).sort((a, b) => services[a].startMin - services[b].startMin);
+  const laneEnds: number[] = [];
+  const lanes = new Array(services.length).fill(0);
+  for (const i of order) {
+    const s = services[i];
+    const end = s.cleanupEndMin ?? s.endMin;
+    let placed = laneEnds.findIndex((e) => s.startMin >= e);
+    if (placed === -1) { placed = laneEnds.length; laneEnds.push(0); }
+    lanes[i] = placed;
+    laneEnds[placed] = end;
+  }
+  return { lanes, count: Math.max(1, laneEnds.length) };
+}
+
 const SHIFT_STYLE: Record<string, string> = {
   regular: 'bg-primary/15',
   cross_branch: 'bg-amber-500/15',
@@ -82,18 +103,20 @@ export function DayTimeline({
         {rows.length === 0 ? (
           <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No therapists scheduled this day.</div>
         ) : (
-          rows.map((r) => (
+          rows.map((r) => {
+            const { lanes, count } = assignLanes(r.services);
+            return (
             <div key={r.id} className="flex border-b border-border last:border-0">
-              <div className="w-40 shrink-0 p-2 text-center">
+              <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center">
                 <div className="font-semibold text-sm">{r.name}</div>
                 <div className="font-mono font-bold text-xs text-muted-foreground">{r.code}</div>
               </div>
-              <div className="relative flex-1 h-16 my-1">
+              <div className="relative flex-1 my-1" style={{ height: count * LANE_H }}>
                 {/* hour gridlines */}
                 {hours.map((h) => (
                   <div key={h} className="absolute top-0 bottom-0 border-l border-border/40" style={{ left: `${pct(h * 60)}%` }} />
                 ))}
-                {/* shift window */}
+                {/* shift window (spans the whole row, behind the lanes) */}
                 {r.shiftStartMin != null && r.shiftEndMin != null && (
                   <div
                     className={`absolute top-1 bottom-1 rounded-md ${SHIFT_STYLE[r.shiftType] ?? 'bg-muted'}`}
@@ -101,12 +124,12 @@ export function DayTimeline({
                     title={`${hhmm(r.shiftStartMin)}–${hhmm(r.shiftEndMin)}`}
                   />
                 )}
-                {/* service blocks (+ trailing cleanup block in a distinct colour) */}
+                {/* service blocks (+ trailing cleanup), stacked into lanes when overlapping */}
                 {r.services.map((s, i) => (
                   <div key={i} className="contents">
                     <div
-                      className={`absolute top-1 bottom-1 rounded px-1.5 flex flex-col items-center justify-center text-center overflow-hidden text-[10px] leading-tight ${s.ongoing ? 'bg-blue-500/70 text-white' : 'bg-primary/70 text-white'}`}
-                      style={{ left: `${pct(s.startMin)}%`, width: `${Math.max(2, pct(s.endMin) - pct(s.startMin))}%` }}
+                      className={`absolute rounded px-1.5 flex flex-col items-center justify-center text-center overflow-hidden text-[10px] leading-tight ${s.ongoing ? 'bg-blue-500/70 text-white' : 'bg-primary/70 text-white'}`}
+                      style={{ left: `${pct(s.startMin)}%`, width: `${Math.max(2, pct(s.endMin) - pct(s.startMin))}%`, top: lanes[i] * LANE_H + 3, height: LANE_H - 6 }}
                       title={`${s.line1}${s.line2 ? ` · ${s.line2}` : ''} · ${hhmm(s.startMin)}–${hhmm(s.endMin)}`}
                     >
                       <span className="truncate font-bold">{s.line1}</span>
@@ -120,6 +143,8 @@ export function DayTimeline({
                         itemId={s.itemId}
                         left={pct(s.endMin)}
                         width={Math.max(1.5, pct(s.cleanupEndMin) - pct(s.endMin))}
+                        top={lanes[i] * LANE_H + 3}
+                        height={LANE_H - 6}
                         label={`Cleanup ${hhmm(s.endMin)}–${hhmm(s.cleanupEndMin)}`}
                       />
                     )}
@@ -127,7 +152,8 @@ export function DayTimeline({
                 ))}
               </div>
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </Card>

@@ -104,17 +104,31 @@ export function ReservationsExplorer({
   );
   const activeCount = filtered.filter((r) => ACTIVE.includes(r.status)).length;
 
+  // Base UI's <SelectValue /> needs an items map to render labels in the
+  // trigger (otherwise it prints the raw value, e.g. "__all__").
+  const branchItems = [{ value: ALL, label: 'All' }, ...branches.map((b) => ({ value: b.code, label: b.code }))];
+  const statusItems = [
+    { value: ALL, label: 'All' },
+    { value: ACTIVE.join(','), label: 'Active (reserved + confirmed)' },
+    ...STATUS_OPTIONS.map((s) => ({ value: s, label: s.replace('_', ' ') })),
+  ];
+  const sourceItems = [{ value: ALL, label: 'All' }, ...sources.map((s) => ({ value: s.code, label: s.code }))];
+
   return (
     <div className="flex flex-col gap-4">
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Search</Label>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Guest, no, phone…" className="w-52" />
+            <Label className="text-xs font-semibold">Date From</Label>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs font-semibold">Date To</Label>
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs font-semibold">Branch</Label>
-            <Select value={branch} onValueChange={(v) => v && setBranch(v)}>
+            <Select items={branchItems} value={branch} onValueChange={(v) => v && setBranch(v)}>
               <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All</SelectItem>
@@ -124,7 +138,7 @@ export function ReservationsExplorer({
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs font-semibold">Status</Label>
-            <Select value={status} onValueChange={(v) => v && setStatus(v)}>
+            <Select items={statusItems} value={status} onValueChange={(v) => v && setStatus(v)}>
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All</SelectItem>
@@ -135,7 +149,7 @@ export function ReservationsExplorer({
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs font-semibold">Source</Label>
-            <Select value={source} onValueChange={(v) => v && setSource(v)}>
+            <Select items={sourceItems} value={source} onValueChange={(v) => v && setSource(v)}>
               <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All</SelectItem>
@@ -144,12 +158,8 @@ export function ReservationsExplorer({
             </Select>
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Date From</Label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Date To</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
+            <Label className="text-xs font-semibold">Search</Label>
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Guest, no, phone…" className="w-52" />
           </div>
           <p className="ml-auto text-sm font-semibold text-muted-foreground">
             {filtered.length} shown · {activeCount} active

@@ -24,6 +24,20 @@ export interface DayRow {
   services: DayServiceBlock[];
 }
 
+// A reservation is upcoming, unassigned demand — no bed and no therapist yet —
+// so it never lives in a bed/therapist row. It rides its own lane at the top of
+// the timeline, on the same time axis, so staff can eyeball it against free beds.
+export interface ReservationBlock {
+  id: string;
+  guest: string;
+  // Second line: service category + party size (e.g. "Massage · 2p").
+  line2?: string;
+  startMin: number;
+  endMin: number;
+  // External (in-room at a hotel) reservations don't consume a bed here.
+  external?: boolean;
+}
+
 function hhmm(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -36,12 +50,12 @@ const LANE_H = 56;
 // Greedy interval partitioning: each block gets the first lane whose previous
 // block (incl. its cleanup tail) has already ended. Overlapping blocks land in
 // separate lanes so they stack instead of covering each other.
-function assignLanes(services: DayServiceBlock[]): { lanes: number[]; count: number } {
-  const order = services.map((_, i) => i).sort((a, b) => services[a].startMin - services[b].startMin);
+function assignLanes(blocks: { startMin: number; endMin: number; cleanupEndMin?: number }[]): { lanes: number[]; count: number } {
+  const order = blocks.map((_, i) => i).sort((a, b) => blocks[a].startMin - blocks[b].startMin);
   const laneEnds: number[] = [];
-  const lanes = new Array(services.length).fill(0);
+  const lanes = new Array(blocks.length).fill(0);
   for (const i of order) {
-    const s = services[i];
+    const s = blocks[i];
     const end = s.cleanupEndMin ?? s.endMin;
     let placed = laneEnds.findIndex((e) => s.startMin >= e);
     if (placed === -1) { placed = laneEnds.length; laneEnds.push(0); }
@@ -63,12 +77,14 @@ export function DayTimeline({
   windowEndMin,
   subjectLabel,
   nowMin = null,
+  reservations = [],
 }: {
   rows: DayRow[];
   windowStartMin: number;
   windowEndMin: number;
   subjectLabel: string;
   nowMin?: number | null;
+  reservations?: ReservationBlock[];
 }) {
   const total = Math.max(60, windowEndMin - windowStartMin);
   const pct = (min: number) => ((min - windowStartMin) / total) * 100;
@@ -118,6 +134,39 @@ export function DayTimeline({
             )}
           </div>
         </div>
+
+        {/* Upcoming reservations — unassigned demand, stacked on its own lane */}
+        {reservations.length > 0 && (() => {
+          const { lanes, count } = assignLanes(reservations);
+          return (
+            <div className="flex border-b-2 border-violet-500/30 bg-violet-500/5">
+              <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center">
+                <div className="font-semibold text-sm text-violet-700 dark:text-violet-300">Reservations</div>
+                <div className="font-bold text-xs text-muted-foreground">{reservations.length} upcoming</div>
+              </div>
+              <div className="relative flex-1 my-1" style={{ height: count * LANE_H }}>
+                {hours.map((h) => (
+                  <div key={h} className="absolute top-0 bottom-0 border-l border-border/40" style={{ left: `${pct(h * 60)}%` }} />
+                ))}
+                {reservations.map((s, i) => (
+                  <div
+                    key={s.id}
+                    className="absolute rounded border border-dashed border-violet-500/70 bg-violet-500/20 px-1.5 flex flex-col items-center justify-center text-center overflow-hidden text-[10px] leading-tight text-violet-950 dark:text-violet-100"
+                    style={{ left: `${pct(s.startMin)}%`, width: `${Math.max(2, pct(s.endMin) - pct(s.startMin))}%`, top: lanes[i] * LANE_H + 3, height: LANE_H - 6 }}
+                    title={`${s.guest}${s.line2 ? ` · ${s.line2}` : ''}${s.external ? ' · in-room' : ''} · ${hhmm(s.startMin)}–${hhmm(s.endMin)}`}
+                  >
+                    <span className="truncate font-bold">{s.guest}{s.external && ' 🏨'}</span>
+                    {s.line2 && <span className="truncate font-semibold opacity-90">{s.line2}</span>}
+                    <span className="truncate font-semibold tabular-nums opacity-80">{hhmm(s.startMin)}–{hhmm(s.endMin)}</span>
+                  </div>
+                ))}
+                {showNow && (
+                  <div className="absolute top-0 bottom-0 z-10 w-px bg-red-500" style={{ left: `${pct(nowMin!)}%` }} />
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {rows.length === 0 ? (
           <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No therapists scheduled this day.</div>

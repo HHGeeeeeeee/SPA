@@ -2,7 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
-import { DayTimeline, type DayRow } from '@/components/shift-schedule/day-timeline';
+import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +29,7 @@ function tsToMin(iso: string): number {
 // Day (hourly) view for either subject. Therapist rows show each rostered
 // therapist's working window + their actual service blocks; Station rows show
 // each bed's occupancy from actual service times.
-async function fetchDayData(subject: ShiftView, branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number }> {
+async function fetchDayData(subject: ShiftView, branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number; reservations: ReservationBlock[] }> {
   const supabase = createServiceClient();
   const { data: itemData } = await supabase
     .from('order_items')
@@ -38,6 +38,30 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   const dayItems = (itemData ?? []).filter((it) => {
     const ord = one(it.order);
     return ord && ord.branch_id === branchId && ord.service_date === day && it.actual_start;
+  });
+
+  // Upcoming reservations (not yet converted to an order) for this branch/day.
+  // They carry no bed/therapist, so they render in their own top lane.
+  const { data: resvData } = await supabase
+    .from('reservations')
+    .select('id, guest_name, pax, desired_service_start, desired_service_end, service_location_type, customer_sources ( code ), reservation_service_categories ( service_categories ( name ) )')
+    .eq('branch_id', branchId)
+    .in('status', ['reserved', 'confirmed'])
+    .is('deleted_at', null)
+    .gte('desired_service_start', `${day}T00:00:00+08:00`)
+    .lte('desired_service_start', `${day}T23:59:59+08:00`)
+    .order('desired_service_start');
+  const reservations: ReservationBlock[] = (resvData ?? []).map((r) => {
+    const cats = (r.reservation_service_categories ?? []).map((l) => one(l.service_categories)?.name).filter(Boolean).join(' + ');
+    const src = one(r.customer_sources)?.code;
+    return {
+      id: r.id,
+      guest: r.guest_name ?? 'Guest',
+      line2: [cats || 'Service', src, r.pax > 1 ? `${r.pax}p` : null].filter(Boolean).join(' · '),
+      startMin: tsToMin(r.desired_service_start),
+      endMin: tsToMin(r.desired_service_end),
+      external: r.service_location_type === 'external_hotel',
+    };
   });
 
   let rows: DayRow[];
@@ -128,9 +152,10 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       if (s.cleanupEndMin != null) allMins.push(s.cleanupEndMin);
     }
   }
+  for (const r of reservations) allMins.push(r.startMin, r.endMin);
   const windowStartMin = allMins.length ? Math.min(540, Math.floor(Math.min(...allMins) / 60) * 60) : 540;
   const windowEndMin = allMins.length ? Math.max(1320, Math.ceil(Math.max(...allMins) / 60) * 60) : 1320;
-  return { rows, windowStartMin, windowEndMin };
+  return { rows, windowStartMin, windowEndMin, reservations };
 }
 
 interface ShiftRow {
@@ -234,7 +259,7 @@ export default async function ShiftSchedulePage({
           Create a branch first.
         </Card>
       ) : scale === 'day' ? (
-        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel={view === 'station' ? 'Station' : 'Therapist'} nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} />
+        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel={view === 'station' ? 'Station' : 'Therapist'} nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} reservations={dayData!.reservations} />
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           No active employees with this branch as their home branch.
@@ -286,6 +311,9 @@ export default async function ShiftSchedulePage({
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-destructive/15" /> Leave</span>
         {view === 'station' && (
           <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-500/50 bg-zinc-400/75" /> Bed cleanup</span>
+        )}
+        {scale === 'day' && (
+          <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/20" /> Reservation (unassigned)</span>
         )}
       </div>
     </div>

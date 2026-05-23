@@ -342,27 +342,29 @@ export function NewReservationDialog({
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle className="font-bold">{isEdit ? 'Edit Reservation' : walkIn ? 'Walk-in' : 'New Reservation'}</DialogTitle>
+            <DialogTitle className="font-bold">{isEdit ? 'Edit Reservation' : walkIn ? 'Walk-in / Waiting' : 'New Reservation'}</DialogTitle>
             <DialogDescription className="font-medium">
-              {walkIn ? 'Seat the guest at the soonest available time.' : 'Book a slot. Convert to an order at check-in.'}
+              {walkIn ? 'Guest is here — seat now or wait for the soonest available time.' : 'Book a slot. Convert to an order at check-in.'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-2 gap-4 py-4">
-            <div className="flex flex-col gap-2">
+            <div className={`flex flex-col gap-2${walkIn ? ' col-span-2' : ''}`}>
               <Label className="font-semibold">Branch *</Label>
               <Select items={branchOptions} value={branchId} onValueChange={(v) => v && pickBranch(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Source *</Label>
-              <Select items={sourceOptions} value={sourceId} onValueChange={(v) => v && setSourceId(v)}>
-                <SelectTrigger><SelectValue placeholder="Pick a source" /></SelectTrigger>
-                <SelectContent>{sourceOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
+            {!walkIn && (
+              <div className="flex flex-col gap-2">
+                <Label className="font-semibold">Source *</Label>
+                <Select items={sourceOptions} value={sourceId} onValueChange={(v) => v && setSourceId(v)}>
+                  <SelectTrigger><SelectValue placeholder="Pick a source" /></SelectTrigger>
+                  <SelectContent>{sourceOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="flex flex-col gap-2 col-span-2">
               <Label className="font-semibold">Service Types *</Label>

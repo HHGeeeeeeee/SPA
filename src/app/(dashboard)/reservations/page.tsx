@@ -44,7 +44,7 @@ async function fetchData() {
         branch:branches ( code ),
         source:customer_sources ( code ),
         reservation_service_categories ( service_categories ( id, code, name ) ),
-        reservation_resources ( resource_id )
+        reservation_resources ( resource_id, resources ( resource_name ) )
       `)
       .is('deleted_at', null)
       .order('desired_service_start', { ascending: false })
@@ -131,9 +131,13 @@ export default async function ReservationsPage() {
                 const cats = (r.reservation_service_categories ?? [])
                   .map((link) => one(link.service_categories))
                   .filter(Boolean) as { id: string; code: string; name: string }[];
-                // Beds are staff-internal — kept for the edit form, never shown in
-                // this booking-facing list.
+                // Beds are staff-internal: shown here in the back office, but the
+                // booker never gets to pick them (booking form only offers
+                // "seat together"; bed selection is behind "Adjust beds (staff)").
                 const pinnedIds = (r.reservation_resources ?? []).map((x) => x.resource_id);
+                const pinnedNames = (r.reservation_resources ?? [])
+                  .map((x) => one(x.resources)?.resource_name)
+                  .filter(Boolean) as string[];
                 return (
                   <TableRow key={r.id}>
                     <TableCell className="font-mono font-bold whitespace-nowrap">{r.reservation_no}</TableCell>
@@ -144,6 +148,11 @@ export default async function ReservationsPage() {
                     </TableCell>
                     <TableCell className="font-medium">
                       {cats.length ? cats.map((c) => c.name).join(', ') : '—'}
+                      {pinnedNames.length > 0 && (
+                        <span className="ml-2 inline-flex items-center rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-bold text-violet-700 dark:text-violet-300">
+                          🛏 {pinnedNames.join(', ')}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="font-mono font-semibold text-sm">{source?.code ?? '—'}</TableCell>
                     <TableCell className="font-bold tabular">{r.pax}</TableCell>

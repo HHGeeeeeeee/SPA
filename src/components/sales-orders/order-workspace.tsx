@@ -79,8 +79,8 @@ interface OrderCustomer {
   subtotal_cents: number;
   paid_cents: number;
 }
-interface Opt { id: string; code: string; name: string }
-interface BorrowOpt { id: string; code: string; name: string; homeBranchCode: string | null }
+interface Opt { id: string; code: string; name: string; gender?: string | null }
+interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
@@ -125,6 +125,12 @@ interface Props {
 }
 
 const NONE = '__none__';
+const ANY_GENDER = '__any__';
+const GENDER_OPTS = [
+  { value: ANY_GENDER, label: 'Any gender' },
+  { value: 'F', label: 'Female only' },
+  { value: 'M', label: 'Male only' },
+];
 
 function peso0(cents: number | null): string {
   return cents == null ? '—' : `₱${(cents / 100).toLocaleString('en-PH')}`;
@@ -181,6 +187,7 @@ export function OrderWorkspace({
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
   const [resourceId, setResourceId] = useState(NONE);
+  const [genderPref, setGenderPref] = useState(ANY_GENDER); // therapist gender filter for this line
   const noDiscount = discountClasses.find((d) => d.code === 'DIS-00');
   // New service lines default to the customer source's discount class (if it
   // still exists), else No Discount. Always overridable per line.
@@ -234,7 +241,7 @@ export function OrderWorkspace({
         discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
         discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
       });
-      if (r.ok) { setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride(''); setActiveCustomer(null); toast.success('Service added'); }
+      if (r.ok) { setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride(''); setActiveCustomer(null); setGenderPref(ANY_GENDER); toast.success('Service added'); }
       else toast.error(r.error);
     });
   }
@@ -254,7 +261,9 @@ export function OrderWorkspace({
 
     const neededGroup = serviceItems.find((s) => s.id === svcId)?.group ?? groupSel;
     const freeTherapist = employees.find(
-      (e) => !takenTherapists.has(e.id) && (!neededGroup || (capabilityByEmployee[e.id] ?? []).includes(neededGroup)),
+      (e) => !takenTherapists.has(e.id)
+        && (!neededGroup || (capabilityByEmployee[e.id] ?? []).includes(neededGroup))
+        && (genderPref === ANY_GENDER || e.gender === genderPref),
     );
     const neededType = serviceItems.find((s) => s.id === svcId)?.required_resource_type ?? null;
     const freeStation = resources.find(
@@ -364,13 +373,16 @@ export function OrderWorkspace({
   // A therapist is offered only if they can perform the chosen service group.
   // No group picked yet → show everyone (the picker is disabled until a group exists anyway).
   const canDoGroup = (id: string) => !groupSel || (capabilityByEmployee[id] ?? []).includes(groupSel);
+  // Gender preference for this line: only offer therapists of that gender.
+  const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
+  const matchGender = (id: string) => genderPref === ANY_GENDER || genderOf.get(id) === genderPref;
   // A therapist mid-service elsewhere can't take a new one — show them but
   // disable so they can't be picked (auto-assign already skips them too).
   const thisBranchOptions = employees
-    .filter((e) => canDoGroup(e.id))
+    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
     .map((e) => ({ value: e.id, label: `${e.code} — ${e.name}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
   const borrowOptions = borrowableEmployees
-    .filter((e) => canDoGroup(e.id))
+    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
     .map((e) => ({
       value: e.id,
       label: `${e.code} — ${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`,
@@ -672,6 +684,24 @@ export function OrderWorkspace({
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {resOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="max-w-[15rem]">
+                          <Label className="text-xs font-semibold">Therapist gender</Label>
+                          <Select
+                            items={GENDER_OPTS}
+                            value={genderPref}
+                            onValueChange={(v) => {
+                              const g = v ?? ANY_GENDER;
+                              setGenderPref(g);
+                              // Drop a now-mismatched selection so you can't keep a wrong-gender therapist.
+                              if (g !== ANY_GENDER && therapistId !== NONE && genderOf.get(therapistId) !== g) setTherapistId(NONE);
+                            }}
+                          >
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {GENDER_OPTS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>

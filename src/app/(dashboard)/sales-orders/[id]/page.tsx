@@ -63,7 +63,7 @@ async function fetchData(id: string) {
       .eq('active', true)
       .order('service_group')
       .order('duration_minutes'),
-    supabase.from('employees').select('id, employee_code, name, home_branch_id, home_branch:branches ( code )').eq('status', 'active').order('employee_code'),
+    supabase.from('employees').select('id, employee_code, name, gender, home_branch_id, home_branch:branches ( code )').eq('status', 'active').order('employee_code'),
     supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description, discount_percent, discount_amount_cents').eq('active', true).order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
@@ -126,6 +126,7 @@ async function fetchData(id: string) {
     id: e.id,
     code: e.employee_code,
     name: e.name,
+    gender: (e.gender as string | null) ?? null,
     homeBranchId: e.home_branch_id as string | null,
     homeBranchCode: one(e.home_branch)?.code ?? null,
   }));
@@ -143,10 +144,10 @@ async function fetchData(id: string) {
   const rosteredHere = (e: { id: string }) => scheduledIds.has(e.id);
   const thisBranchEmployees = allEmployees
     .filter(rosteredHere)
-    .map((e) => ({ id: e.id, code: e.code, name: e.name }));
+    .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender }));
   const borrowableEmployees = allEmployees
     .filter((e) => !rosteredHere(e) && e.homeBranchId !== order.branch_id && e.homeBranchId !== null && shareBranchIds.has(e.homeBranchId))
-    .map((e) => ({ id: e.id, code: e.code, name: e.name, homeBranchCode: e.homeBranchCode }));
+    .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, homeBranchCode: e.homeBranchCode }));
 
   return {
     order,

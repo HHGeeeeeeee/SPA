@@ -166,6 +166,7 @@ export function DayTimeline({
                     key={s.id}
                     reservationId={s.id}
                     guest={s.guest}
+                    pending={s.pending}
                     className={`absolute rounded border border-dashed px-1.5 flex flex-col items-center justify-center text-center overflow-hidden text-[10px] leading-tight cursor-pointer ${
                       s.overdue
                         ? 'border-red-500/70 bg-red-500/20 text-red-900 dark:text-red-100 hover:bg-red-500/30'

@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
+import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,13 +15,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { convertReservationToOrder } from '@/app/(dashboard)/reservations/actions';
+import { confirmReservation, convertReservationToOrder } from '@/app/(dashboard)/reservations/actions';
 
-// A reservation block on the Shift Schedule. Clicking it opens a confirm, then
-// converts the reservation to a draft Sales Order and jumps to it.
+// A reservation block on the Shift Schedule. Clicking opens a dialog: a pending
+// reservation can be Confirmed (establishes it + holds the bed) or Converted
+// straight to a draft Sales Order; a confirmed one just offers Convert.
 export function ReservationConvertButton({
   reservationId,
   guest,
+  pending = false,
   className,
   style,
   title,
@@ -28,6 +31,7 @@ export function ReservationConvertButton({
 }: {
   reservationId: string;
   guest: string;
+  pending?: boolean;
   className?: string;
   style?: React.CSSProperties;
   title?: string;
@@ -35,9 +39,22 @@ export function ReservationConvertButton({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
+  const [busy, start] = useTransition();
 
-  function convert() {
+  function doConfirm() {
+    start(async () => {
+      const r = await confirmReservation(reservationId);
+      if (r.ok) {
+        toast.success('Reservation confirmed — bed held');
+        setOpen(false);
+        router.refresh();
+      } else {
+        toast.error(r.error); // e.g. a pinned bed was taken — keep the dialog open
+      }
+    });
+  }
+
+  function doConvert() {
     start(async () => {
       const r = await convertReservationToOrder(reservationId);
       if (r.ok && r.data) {
@@ -57,15 +74,23 @@ export function ReservationConvertButton({
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Convert reservation to an order?</AlertDialogTitle>
+            <AlertDialogTitle>{pending ? 'Pending reservation' : 'Convert reservation to an order?'}</AlertDialogTitle>
             <AlertDialogDescription>
-              {guest} — this creates a draft Sales Order (with the guest) and marks the reservation converted. You can add services on the order.
+              {guest}
+              {pending
+                ? ' — Confirm to establish it and hold the bed, or convert straight to a draft Sales Order.'
+                : ' — this creates a draft Sales Order (with the guest) and marks the reservation converted.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={convert} disabled={pending}>
-              {pending ? 'Converting…' : 'Convert & open'}
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            {pending && (
+              <Button variant="outline" disabled={busy} onClick={doConfirm}>
+                {busy ? 'Working…' : 'Confirm (hold bed)'}
+              </Button>
+            )}
+            <AlertDialogAction onClick={doConvert} disabled={busy}>
+              {busy ? 'Working…' : 'Convert & open'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

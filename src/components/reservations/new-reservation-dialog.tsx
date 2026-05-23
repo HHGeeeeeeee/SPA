@@ -259,7 +259,7 @@ export function NewReservationDialog({
     if (!branchId) return toast.error('Pick a branch first');
     if (neededTypes.length === 0) return toast.error('Pick a service type first');
     setFinding(true);
-    const r = await nextAvailableSlot({ branch_id: branchId, resource_type: neededTypes[0], pax: paxNum, durationMin: 60 });
+    const r = await nextAvailableSlot({ branch_id: branchId, resource_type: neededTypes[0], pax: paxNum, durationMin: 60, gender: genderPref === '__none__' ? null : genderPref });
     setFinding(false);
     if (!r.ok) return toast.error(r.error);
     if (!r.data?.start) return toast.error('No slot within 24h — not enough free beds + on-shift therapists for this party.');

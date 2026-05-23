@@ -316,6 +316,7 @@ export async function nextAvailableSlot(input: {
   resource_type: string;
   pax: number;
   durationMin: number;
+  gender?: string | null; // 'M' | 'F' — only count therapists of this gender
 }): Promise<ActionResult<{ start: string | null; availableNow: boolean }>> {
   if (!input.branch_id || !input.resource_type) return { ok: false, error: 'Missing input' };
   const supabase = createServiceClient();
@@ -353,10 +354,15 @@ export async function nextAvailableSlot(input: {
     .from('employee_shifts').select('employee_id, shift_start, shift_end')
     .eq('branch_id', input.branch_id).eq('shift_date', today).in('shift_type', ['regular', 'cross_branch', 'on_call']);
   let pool = (shiftsToday ?? []).map((s) => ({ id: s.employee_id, startMin: hhmmToMin(s.shift_start), endMin: hhmmToMin(s.shift_end) }));
-  if (therapistPos.size > 0 && pool.length) {
-    const { data: emps } = await supabase.from('employees').select('id, position_id').in('id', pool.map((p) => p.id));
-    const posOf = new Map((emps ?? []).map((e) => [e.id, e.position_id]));
-    pool = pool.filter((p) => therapistPos.has(posOf.get(p.id) as string));
+  if (pool.length && (therapistPos.size > 0 || input.gender)) {
+    const { data: emps } = await supabase.from('employees').select('id, position_id, gender').in('id', pool.map((p) => p.id));
+    const meta = new Map((emps ?? []).map((e) => [e.id, e]));
+    pool = pool.filter((p) => {
+      const e = meta.get(p.id);
+      if (therapistPos.size > 0 && !therapistPos.has(e?.position_id as string)) return false; // only therapists
+      if (input.gender && e?.gender !== input.gender) return false; // gender preference
+      return true;
+    });
   }
   if (input.pax > pool.length) return { ok: true, data: { start: null, availableNow: false } };
 

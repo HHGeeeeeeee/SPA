@@ -118,7 +118,10 @@ export default async function ReservationsPage() {
             serviceCategories={serviceCategories}
             walkIn
             trigger={
-              <Button variant="outline" disabled={branches.length === 0}>
+              <Button
+                disabled={branches.length === 0}
+                className="bg-amber-500 text-white hover:bg-amber-600 focus-visible:ring-amber-500/40 dark:bg-amber-500 dark:hover:bg-amber-600"
+              >
                 <Footprints className="size-4" />
                 Walk-in
               </Button>

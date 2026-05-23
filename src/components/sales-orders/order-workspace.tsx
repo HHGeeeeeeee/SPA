@@ -45,6 +45,7 @@ import {
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
+import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -126,7 +127,6 @@ interface Props {
 }
 
 const NONE = '__none__';
-const ANY_GENDER = '__any__';
 const GENDER_OPTS = [
   { value: ANY_GENDER, label: 'Any gender' },
   { value: 'F', label: 'Female only' },
@@ -266,8 +266,8 @@ export function OrderWorkspace({
     const neededGroup = serviceItems.find((s) => s.id === svcId)?.group ?? groupSel;
     const freeTherapist = employees.find(
       (e) => !takenTherapists.has(e.id)
-        && (!neededGroup || (capabilityByEmployee[e.id] ?? []).includes(neededGroup))
-        && (genderPref === ANY_GENDER || e.gender === genderPref),
+        && canPerformGroup(capabilityByEmployee[e.id] ?? [], neededGroup)
+        && matchesGender(e.gender, genderPref),
     );
     const neededType = serviceItems.find((s) => s.id === svcId)?.required_resource_type ?? null;
     const freeStation = resources.find(
@@ -376,10 +376,10 @@ export function OrderWorkspace({
   const busy = new Set(busyTherapistIds);
   // A therapist is offered only if they can perform the chosen service group.
   // No group picked yet → show everyone (the picker is disabled until a group exists anyway).
-  const canDoGroup = (id: string) => !groupSel || (capabilityByEmployee[id] ?? []).includes(groupSel);
+  const canDoGroup = (id: string) => canPerformGroup(capabilityByEmployee[id] ?? [], groupSel || null);
   // Gender preference for this line: only offer therapists of that gender.
   const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
-  const matchGender = (id: string) => genderPref === ANY_GENDER || genderOf.get(id) === genderPref;
+  const matchGender = (id: string) => matchesGender(genderOf.get(id), genderPref);
   // A therapist mid-service elsewhere can't take a new one — show them but
   // disable so they can't be picked (auto-assign already skips them too).
   const thisBranchOptions = employees

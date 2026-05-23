@@ -52,12 +52,12 @@ export function ReservationRowActions({ reservation, branches, sources, serviceC
     });
   }
 
-  // Confirm establishes the booking and holds the bed(s); it can fail if a
-  // pinned bed was taken since, so surface the error.
+  // Confirm establishes the booking (an on-site one then holds its bed); it can
+  // fail if a pinned bed was taken since, so surface the error.
   function confirm() {
     startTransition(async () => {
       const r = await confirmReservation(id);
-      if (r.ok) toast.success('Reservation confirmed — bed held');
+      if (r.ok) toast.success('Reservation confirmed');
       else toast.error(r.error);
     });
   }

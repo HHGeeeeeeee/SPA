@@ -18,8 +18,9 @@ import {
 import { confirmReservation, convertReservationToOrder } from '@/app/(dashboard)/reservations/actions';
 
 // A reservation block on the Shift Schedule. Clicking opens a dialog: a pending
-// reservation can be Confirmed (establishes it + holds the bed) or Converted
-// straight to a draft Sales Order; a confirmed one just offers Convert.
+// reservation can be Confirmed (establishes it; an on-site one then holds its
+// bed) or Converted straight to a draft Sales Order; a confirmed one just offers
+// Convert.
 export function ReservationConvertButton({
   reservationId,
   guest,
@@ -45,7 +46,7 @@ export function ReservationConvertButton({
     start(async () => {
       const r = await confirmReservation(reservationId);
       if (r.ok) {
-        toast.success('Reservation confirmed — bed held');
+        toast.success('Reservation confirmed');
         setOpen(false);
         router.refresh();
       } else {
@@ -78,7 +79,7 @@ export function ReservationConvertButton({
             <AlertDialogDescription>
               {guest}
               {pending
-                ? ' — Confirm to establish it and hold the bed, or convert straight to a draft Sales Order.'
+                ? ' — Confirm to establish it, or convert straight to a draft Sales Order.'
                 : ' — this creates a draft Sales Order (with the guest) and marks the reservation converted.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -86,7 +87,7 @@ export function ReservationConvertButton({
             <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             {pending && (
               <Button variant="outline" disabled={busy} onClick={doConfirm}>
-                {busy ? 'Working…' : 'Confirm (hold bed)'}
+                {busy ? 'Working…' : 'Confirm'}
               </Button>
             )}
             <AlertDialogAction onClick={doConvert} disabled={busy}>

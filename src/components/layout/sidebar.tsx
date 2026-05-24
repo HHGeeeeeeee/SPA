@@ -50,24 +50,37 @@ function NavLink({
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
+      <div
         className={cn(
-          'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+          'flex items-center rounded-lg text-sm transition-colors',
           'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
           active
             ? 'bg-sidebar-primary/15 text-sidebar-primary font-bold'
             : 'text-sidebar-foreground/85 font-semibold',
         )}
       >
-        <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
-        <span className="flex-1 truncate text-left">{item.label}</span>
-        <ChevronDown
-          className={cn('size-4 transition-transform', open && 'rotate-180')}
-          strokeWidth={2}
-        />
-      </button>
+        {item.href ? (
+          // Parent with its own page (e.g. a hub): the label navigates, the
+          // chevron toggles the children.
+          <Link href={item.href} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2">
+            <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
+            <span className="truncate">{item.label}</span>
+          </Link>
+        ) : (
+          <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left">
+            <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
+            <span className="truncate">{item.label}</span>
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? 'Collapse' : 'Expand'}
+          className="shrink-0 px-2.5 py-2"
+        >
+          <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} strokeWidth={2} />
+        </button>
+      </div>
       {open && (item.children || item.childGroups) && (
         <div className="mt-1 ml-3 flex flex-col gap-px border-l border-sidebar-border pl-3">
           {item.children?.map((c) => (

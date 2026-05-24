@@ -49,6 +49,7 @@ export const mainNavItems: NavItem[] = [
   {
     label: 'Reconciliation',
     icon: Wallet,
+    href: '/reconciliation',
     children: [
       { label: 'Cash Reconciliation', href: '/reconciliation/cash' },
       { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm' },

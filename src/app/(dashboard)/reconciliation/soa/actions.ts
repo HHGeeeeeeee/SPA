@@ -37,6 +37,91 @@ export async function loadSoaCandidates(billingToId: string, from: string, to: s
     .map((o) => ({ id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents }));
 }
 
+export interface SoaGuestLine { name: string; amount_cents: number }
+export interface SoaOrderLine { id: string; order_no: string; service_date: string; total_cents: number; guests: SoaGuestLine[] }
+export interface SoaGroup {
+  billing_id: string;
+  code: string;
+  name: string;
+  settlement_type: string;
+  bookings: number;
+  total_cents: number;
+  orders: SoaOrderLine[];
+}
+
+/**
+ * Every AR billing destination with closed orders in range that aren't on any
+ * SOA yet — grouped, with per-guest detail. Drives the "Generate SOA" workspace.
+ */
+export async function loadSoaWorkspace(from: string, to: string): Promise<SoaGroup[]> {
+  const supabase = createServiceClient();
+  const { data: arMethod } = await supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle();
+  const arId = arMethod?.id ?? null;
+  if (!arId) return [];
+  const { data: bills } = await supabase
+    .from('billing_destinations')
+    .select('id, code, name, settlement_type, default_payment_method_id')
+    .eq('active', true);
+  const billMap = new Map((bills ?? []).filter((b) => b.default_payment_method_id === arId).map((b) => [b.id, b]));
+  if (billMap.size === 0) return [];
+
+  const [{ data: orders }, { data: taken }] = await Promise.all([
+    supabase
+      .from('orders')
+      .select('id, order_no, service_date, total_cents, billing_to_id, order_customers ( id, customer_name, seq_no ), order_items ( order_customer_id, final_amount_cents, status )')
+      .in('billing_to_id', [...billMap.keys()])
+      .eq('status', 'closed')
+      .is('deleted_at', null)
+      .gte('service_date', from)
+      .lte('service_date', to)
+      .order('service_date'),
+    supabase.from('revenue_soa_orders').select('order_id'),
+  ]);
+  const takenIds = new Set((taken ?? []).map((t) => t.order_id));
+
+  const groups = new Map<string, SoaGroup>();
+  for (const o of orders ?? []) {
+    if (takenIds.has(o.id) || !o.billing_to_id) continue;
+    const b = billMap.get(o.billing_to_id);
+    if (!b) continue;
+    const name = new Map((o.order_customers ?? []).map((c) => [c.id, c.customer_name]));
+    const seq = new Map((o.order_customers ?? []).map((c) => [c.id, c.seq_no]));
+    const byCust = new Map<string, number>();
+    for (const it of o.order_items ?? []) {
+      if (it.status === 'cancelled' || !it.order_customer_id) continue;
+      byCust.set(it.order_customer_id, (byCust.get(it.order_customer_id) ?? 0) + (it.final_amount_cents ?? 0));
+    }
+    const guests: SoaGuestLine[] = [...byCust.entries()]
+      .map(([cid, amt]) => ({ name: name.get(cid) ?? 'Guest', amount_cents: amt, _seq: seq.get(cid) ?? 99 }))
+      .sort((a, b2) => a._seq - b2._seq)
+      .map(({ name: n, amount_cents }) => ({ name: n, amount_cents }));
+
+    const g = groups.get(b.id) ?? { billing_id: b.id, code: b.code, name: b.name, settlement_type: b.settlement_type, bookings: 0, total_cents: 0, orders: [] };
+    g.bookings += 1;
+    g.total_cents += o.total_cents;
+    g.orders.push({ id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents, guests });
+    groups.set(b.id, g);
+  }
+  return [...groups.values()].sort((a, b) => b.total_cents - a.total_cents);
+}
+
+/** Generate one SOA per selected billing destination over the same period. */
+export async function generateSOAForBillings(billingIds: string[], from: string, to: string): Promise<ActionResult<{ created: number }>> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  if (!billingIds.length) return { ok: false, error: 'Select at least one billing destination' };
+  let created = 0;
+  const errors: string[] = [];
+  for (const id of billingIds) {
+    const r = await generateSOA({ billing_to_id: id, period_from: from, period_to: to });
+    if (r.ok) created += 1;
+    else errors.push(r.error);
+  }
+  if (created === 0) return { ok: false, error: errors[0] ?? 'Nothing to generate' };
+  revalidatePath('/reconciliation/soa');
+  return { ok: true, data: { created } };
+}
+
 const createSchema = z.object({
   billing_to_id: z.string().uuid(),
   period_from: z.string().min(1),

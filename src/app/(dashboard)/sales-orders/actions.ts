@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { isBusinessDayClosed } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
 
 // Append a row to the generic status-change audit log.
 async function logStatus(
@@ -65,6 +66,10 @@ export async function createDraftOrder(input: unknown): Promise<ActionResult<{ i
     .eq('id', d.branch_id)
     .single();
   if (be || !branch) return { ok: false, error: 'Branch not found' };
+
+  if (await isBusinessDayClosed(d.branch_id, d.service_date)) {
+    return { ok: false, error: 'The business day is closed for this branch — no new orders can post to this date.' };
+  }
 
   const branchUnitIds = (branch.branch_business_units ?? []).map((r) => r.business_unit_id);
   if (d.business_unit_id && !branchUnitIds.includes(d.business_unit_id)) {
@@ -833,12 +838,15 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
 
   const { data: order, error: oe } = await supabase
     .from('orders')
-    .select('total_cents, paid_cents, status')
+    .select('total_cents, paid_cents, status, branch_id, service_date')
     .eq('id', d.order_id)
     .single();
   if (oe || !order) return { ok: false, error: 'Order not found' };
   if (['closed', 'void'].includes(order.status)) {
     return { ok: false, error: 'Order is already closed or void' };
+  }
+  if (await isBusinessDayClosed(order.branch_id, order.service_date)) {
+    return { ok: false, error: 'The business day is closed — payments can no longer post to this date.' };
   }
 
   const { data: method } = await supabase

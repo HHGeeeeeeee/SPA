@@ -17,6 +17,7 @@ export interface EodRecord {
   opened_at: string;
   order_reviewed_at: string | null;
   balances_ok_at: string | null;
+  revenue_confirmed_at: string | null;
   closed_at: string | null;
   opened_by_name: string | null;
   closed_by_name: string | null;
@@ -49,12 +50,12 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
 
   const { data: rec } = await supabase
     .from('business_day_close')
-    .select('status, opened_at, order_reviewed_at, balances_ok_at, closed_at, opened:staff_users!business_day_close_opened_by_fkey ( display_name ), closer:staff_users!business_day_close_closed_by_fkey ( display_name )')
+    .select('status, opened_at, order_reviewed_at, balances_ok_at, revenue_confirmed_at, closed_at, opened:staff_users!business_day_close_opened_by_fkey ( display_name ), closer:staff_users!business_day_close_closed_by_fkey ( display_name )')
     .eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   const record: EodRecord | null = rec
     ? {
         status: rec.status, opened_at: rec.opened_at, order_reviewed_at: rec.order_reviewed_at,
-        balances_ok_at: rec.balances_ok_at, closed_at: rec.closed_at,
+        balances_ok_at: rec.balances_ok_at, revenue_confirmed_at: rec.revenue_confirmed_at, closed_at: rec.closed_at,
         opened_by_name: one(rec.opened)?.display_name ?? null, closed_by_name: one(rec.closer)?.display_name ?? null,
       }
     : null;
@@ -193,30 +194,46 @@ export async function runBalanceCheck(branchId: string, date: string): Promise<A
   return { ok: true };
 }
 
-/** Step 4: lock the business day. Requires review + balances done + every order confirmed (closed). */
+/** Step 3: explicitly acknowledge revenue is confirmed (all the day's orders closed). */
+export async function markRevenueConfirmed(branchId: string, date: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const supabase = createServiceClient();
+  const { data: rec } = await supabase.from('business_day_close').select('status, balances_ok_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
+  if (!rec || !rec.balances_ok_at) return { ok: false, error: 'Run Check Balances first' };
+  if (rec.status === 'closed') return { ok: false, error: 'Business day is already closed' };
+
+  // There must be nothing left to close (done on the Revenue Confirm page).
+  const arId = await arMethodId(supabase);
+  const { data: orders } = await supabase
+    .from('orders')
+    .select('order_no, status, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id )')
+    .eq('branch_id', branchId).eq('service_date', date).is('deleted_at', null)
+    .in('status', ['paid', 'completed']);
+  const pending = (orders ?? []).filter((o) => {
+    const ar = !!arId && one<{ default_payment_method_id: string | null }>(o.billing)?.default_payment_method_id === arId;
+    return o.status === 'paid' || (o.status === 'completed' && ar);
+  });
+  if (pending.length > 0) {
+    return { ok: false, error: `${pending.length} order(s) still to confirm — close them on the Revenue Confirm page first.` };
+  }
+
+  await supabase.from('business_day_close').update({ revenue_confirmed_at: new Date().toISOString() }).eq('branch_id', branchId).eq('business_date', date);
+  revalidatePath('/reconciliation/end-of-day');
+  return { ok: true };
+}
+
+/** Step 4: lock the business day. Requires review + balances + revenue confirmed. */
 export async function closeBusinessDay(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = createServiceClient();
-  const { data: rec } = await supabase.from('business_day_close').select('status, order_reviewed_at, balances_ok_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
+  const { data: rec } = await supabase.from('business_day_close').select('status, order_reviewed_at, balances_ok_at, revenue_confirmed_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   if (!rec) return { ok: false, error: 'Run the checks first' };
   if (rec.status === 'closed') return { ok: false, error: 'Already closed' };
   if (!rec.order_reviewed_at) return { ok: false, error: 'Run Order Review first' };
   if (!rec.balances_ok_at) return { ok: false, error: 'Run Check Balances first' };
-
-  // Revenue must be confirmed: no order left to close for the day.
-  const arId = await arMethodId(supabase);
-  const { data: open } = await supabase
-    .from('orders')
-    .select('order_no, status, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id )')
-    .eq('branch_id', branchId).eq('service_date', date).is('deleted_at', null).not('status', 'in', '(closed,void)');
-  const pending = (open ?? []).filter((o) => {
-    const ar = !!arId && one<{ default_payment_method_id: string | null }>(o.billing)?.default_payment_method_id === arId;
-    return o.status === 'paid' || (o.status === 'completed' && ar) || ['draft', 'open', 'in_service', 'completed'].includes(o.status);
-  });
-  if (pending.length > 0) {
-    return { ok: false, error: `${pending.length} order(s) not yet confirmed/closed — finish Revenue Confirmation first.` };
-  }
+  if (!rec.revenue_confirmed_at) return { ok: false, error: 'Confirm revenue first' };
 
   const { error } = await supabase
     .from('business_day_close')

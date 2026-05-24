@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import {
-  loadEod, runOrderReview, runBalanceCheck, closeBusinessDay, type EodView,
+  loadEod, runOrderReview, runBalanceCheck, markRevenueConfirmed, closeBusinessDay, type EodView,
 } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
 
 function peso(cents: number): string {
@@ -54,7 +54,7 @@ export function EodPipeline({
   const rec = view.record;
   const step1Done = !!rec?.order_reviewed_at;
   const step2Done = !!rec?.balances_ok_at;
-  const step3Done = view.pendingConfirmCount === 0; // revenue confirmed = nothing left to close
+  const step3Done = !!rec?.revenue_confirmed_at; // manually acknowledged after all orders are closed
   const closed = rec?.status === 'closed';
   const eodNo = `EOD-${date.replaceAll('-', '').slice(2)}`;
 
@@ -159,11 +159,18 @@ export function EodPipeline({
             {view.pendingConfirmCount > 0 && !view.cashClosed && <span className="block mt-1 text-amber-700 dark:text-amber-400">Cash not closed yet — Revenue Confirm will be blocked.</span>}
           </p>
           {step3Done ? (
-            <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><CircleCheck className="size-4" /> All confirmed</div>
+            <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><CircleCheck className="size-4" /> Confirmed {rec?.revenue_confirmed_at ? `· ${fmt(rec.revenue_confirmed_at)}` : ''}</div>
+          ) : step2Done ? (
+            <div className="flex flex-col gap-2">
+              <Link href={`/reconciliation/revenue-confirm?branch=${branchId}&date=${date}`} className={buttonVariants({ variant: 'outline' })}>
+                Go to Revenue Confirm
+              </Link>
+              <Button onClick={() => run(markRevenueConfirmed, 'Revenue confirmed')} disabled={pending || view.pendingConfirmCount > 0}>
+                {pending ? '…' : view.pendingConfirmCount > 0 ? `${view.pendingConfirmCount} still to confirm` : 'Confirm Revenue'}
+              </Button>
+            </div>
           ) : (
-            <Link href={`/reconciliation/revenue-confirm?branch=${branchId}&date=${date}`} className={buttonVariants({ variant: 'outline' })}>
-              Go to Revenue Confirm
-            </Link>
+            <p className="text-xs font-semibold text-muted-foreground">Complete Step 2 first.</p>
           )}
         </Card>
 

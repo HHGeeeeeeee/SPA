@@ -23,7 +23,6 @@ export interface ConfirmableOrder {
   cash_cents: number;
   paymaya_cents: number;
   billing_label: string | null;
-  adjusted: boolean; // a reversal adjustment has been requested for this closed order
 }
 
 const ORDER_SELECT = `
@@ -44,7 +43,6 @@ function mapOrderRow(o: any, arMethodId: string | null): ConfirmableOrder {
     pax: o.order_customers?.length ?? 0, isAR, service_date: o.service_date, total_cents: o.total_cents,
     cash_cents: sumByCode('cash'), paymaya_cents: sumByCode('paymaya'),
     billing_label: b ? `${b.code} — ${b.name}` : null,
-    adjusted: false,
   };
 }
 
@@ -78,15 +76,7 @@ export async function loadConfirmedHistory(branchId: string): Promise<Confirmabl
     .order('order_no', { ascending: false })
     .limit(300);
 
-  const rows = (data ?? []).map((o) => mapOrderRow(o, arMethodId));
-  // Flag orders that already have a reversal adjustment requested.
-  const ids = rows.map((r) => r.id);
-  if (ids.length > 0) {
-    const { data: adj } = await supabase.from('order_adjustments').select('original_order_id').in('original_order_id', ids);
-    const adjusted = new Set((adj ?? []).map((a) => a.original_order_id));
-    for (const r of rows) r.adjusted = adjusted.has(r.id);
-  }
-  return rows;
+  return (data ?? []).map((o) => mapOrderRow(o, arMethodId));
 }
 
 export async function isCashClosed(branchId: string, date: string): Promise<boolean> {

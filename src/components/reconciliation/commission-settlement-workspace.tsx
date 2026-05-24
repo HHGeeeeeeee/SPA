@@ -215,7 +215,7 @@ export function CommissionSettlementWorkspace({
                           <TableRow>
                             <TableHead className="w-32 font-bold">Date</TableHead>
                             <TableHead className="w-44 font-bold">Order No</TableHead>
-                            <TableHead className="font-bold">Service</TableHead>
+                            <TableHead className="font-bold pl-6">Service</TableHead>
                             <TableHead className="w-28 font-bold text-right">Gross</TableHead>
                             <TableHead className="w-20 font-bold text-right">Rate</TableHead>
                             <TableHead className="w-32 font-bold text-right pr-4">Commission</TableHead>
@@ -226,7 +226,7 @@ export function CommissionSettlementWorkspace({
                             <TableRow key={it.item_id}>
                               <TableCell className="font-medium tabular text-muted-foreground">{it.service_date}</TableCell>
                               <TableCell className="font-mono font-bold">{it.order_no}</TableCell>
-                              <TableCell className="font-medium">
+                              <TableCell className="font-medium pl-6">
                                 {it.service}
                                 {it.warmup && <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">warm-up</span>}
                               </TableCell>

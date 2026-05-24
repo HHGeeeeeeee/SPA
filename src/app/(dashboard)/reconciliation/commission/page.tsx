@@ -30,7 +30,7 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
     branchId ? loadCommissionGroups(branchId, from, to) : Promise.resolve([]),
     supabase
       .from('commission_periods')
-      .select('id, period_no, status, period_from, period_to, total_sessions, total_commission_cents, branch:branches!commission_periods_branch_id_fkey ( code )')
+      .select('id, period_no, status, period_from, period_to, total_sessions, total_commission_cents, confirmed_at, branch:branches!commission_periods_branch_id_fkey ( code ), commission_entries ( therapist:employees!commission_entries_therapist_id_fkey ( name ) )')
       .order('created_at', { ascending: false }),
   ]);
   const history: CommHistoryRow[] = (histRes.data ?? []).map((p) => ({
@@ -38,6 +38,8 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
     period_from: p.period_from, period_to: p.period_to,
     total_sessions: p.total_sessions ?? 0, total_commission_cents: p.total_commission_cents ?? 0,
     branch_code: one(p.branch)?.code ?? null,
+    confirmed_at: p.confirmed_at,
+    therapists: (p.commission_entries ?? []).map((e) => one(e.therapist)?.name).filter(Boolean) as string[],
   }));
 
   if (!branchId) {

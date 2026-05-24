@@ -25,6 +25,14 @@ import { loadCommissionGroups, settleCommission, voidCommissionPeriod, type Comm
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 }
+function fmtDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+}
+function therapistList(names: string[]): string {
+  if (names.length === 0) return '—';
+  if (names.length <= 2) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+}
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   draft: 'secondary', closed: 'default', void: 'destructive',
@@ -40,6 +48,8 @@ export interface CommHistoryRow {
   period_to: string;
   total_sessions: number;
   total_commission_cents: number;
+  confirmed_at: string | null;
+  therapists: string[];
 }
 
 export function CommissionSettlementWorkspace({
@@ -256,13 +266,15 @@ export function CommissionSettlementWorkspace({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="font-bold">Period No</TableHead>
-                <TableHead className="w-20 font-bold">Branch</TableHead>
+                <TableHead className="font-bold">Settlement No</TableHead>
+                <TableHead className="w-16 font-bold">Branch</TableHead>
+                <TableHead className="font-bold">Therapists</TableHead>
                 <TableHead className="font-bold">Period</TableHead>
-                <TableHead className="w-20 font-bold text-right">Sessions</TableHead>
+                <TableHead className="w-40 font-bold">Settle Date</TableHead>
+                <TableHead className="w-16 font-bold text-right">Sessions</TableHead>
                 <TableHead className="w-32 font-bold text-right">Commission</TableHead>
-                <TableHead className="w-28 font-bold">Status</TableHead>
-                <TableHead className="w-24" />
+                <TableHead className="w-24 font-bold">Status</TableHead>
+                <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -270,7 +282,9 @@ export function CommissionSettlementWorkspace({
                 <TableRow key={p.id}>
                   <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
                   <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
+                  <TableCell className="font-medium" title={p.therapists.join(', ')}>{therapistList(p.therapists)}</TableCell>
                   <TableCell className="font-medium tabular text-muted-foreground">{p.period_from} → {p.period_to}</TableCell>
+                  <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
                   <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
                   <TableCell className="font-bold tabular text-right">{peso(p.total_commission_cents)}</TableCell>
                   <TableCell><Badge variant={STATUS_VARIANT[p.status] ?? 'secondary'} className="font-bold capitalize">{p.status}</Badge></TableCell>

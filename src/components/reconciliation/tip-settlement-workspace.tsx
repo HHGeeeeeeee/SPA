@@ -28,11 +28,6 @@ function peso(cents: number): string {
 function fmtDateTime(iso: string): string {
   return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
-function therapistList(names: string[]): string {
-  if (names.length === 0) return '—';
-  if (names.length <= 2) return names.join(', ');
-  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
-}
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   draft: 'secondary', posting: 'secondary', closed: 'default', failed: 'destructive', void: 'destructive',
@@ -264,7 +259,6 @@ export function TipSettlementWorkspace({
                 <TableHead className="w-8" />
                 <TableHead className="font-bold">Settlement No</TableHead>
                 <TableHead className="w-16 font-bold">Branch</TableHead>
-                <TableHead className="font-bold">Therapists</TableHead>
                 <TableHead className="font-bold">Period</TableHead>
                 <TableHead className="w-40 font-bold">Settle Date</TableHead>
                 <TableHead className="w-32 font-bold text-right">Total</TableHead>
@@ -281,7 +275,6 @@ export function TipSettlementWorkspace({
                       <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</TableCell>
                       <TableCell className="font-mono font-bold">{s.settlement_no}</TableCell>
                       <TableCell className="font-mono font-bold">{s.branch_code ?? '—'}</TableCell>
-                      <TableCell className="font-medium" title={s.therapists.join(', ')}>{therapistList(s.therapists)}</TableCell>
                       <TableCell className="font-medium tabular text-muted-foreground">{s.period_from} → {s.period_to}</TableCell>
                       <TableCell className="font-medium tabular">{s.posted_at ? fmtDateTime(s.posted_at) : '—'}</TableCell>
                       <TableCell className="font-bold tabular text-right">{peso(s.subtotal_cents)}</TableCell>
@@ -296,7 +289,7 @@ export function TipSettlementWorkspace({
                     </TableRow>
                     {isOpen && (
                       <TableRow>
-                        <TableCell colSpan={9} className="bg-muted/20 p-0">
+                        <TableCell colSpan={8} className="bg-muted/20 p-0">
                           <Table>
                             <TableHeader>
                               <TableRow>

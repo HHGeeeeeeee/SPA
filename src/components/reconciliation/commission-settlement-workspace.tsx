@@ -317,7 +317,7 @@ export function CommissionSettlementWorkspace({
                               <TableRow>
                                 <TableHead className="w-32 font-bold pl-12">Date</TableHead>
                                 <TableHead className="w-44 font-bold">Order No</TableHead>
-                                <TableHead className="font-bold">Service</TableHead>
+                                <TableHead className="font-bold pl-4">Service</TableHead>
                                 <TableHead className="w-28 font-bold text-right">Gross</TableHead>
                                 <TableHead className="w-16 font-bold text-right">Rate</TableHead>
                                 <TableHead className="w-32 font-bold text-right">Commission</TableHead>
@@ -326,11 +326,17 @@ export function CommissionSettlementWorkspace({
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {p.detail.map((g) => (
+                              {p.detail.map((g) => {
+                                const initials = g.therapist.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+                                return (
                                 <Fragment key={g.therapist}>
-                                  <TableRow className="bg-muted/40">
-                                    <TableCell colSpan={5} className="font-bold pl-12">{g.therapist} · {g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</TableCell>
-                                    <TableCell className="font-bold tabular text-right">{peso(g.commission_cents)}</TableCell>
+                                  <TableRow className="border-t-2 border-primary/20 bg-primary/[0.07] hover:bg-primary/[0.07]">
+                                    <TableCell colSpan={5} className="py-2.5 pl-6">
+                                      <span className="mr-2 inline-flex size-6 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary align-middle">{initials}</span>
+                                      <span className="align-middle text-sm font-extrabold text-primary">{g.therapist}</span>
+                                      <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">{g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</span>
+                                    </TableCell>
+                                    <TableCell className="py-2.5 font-extrabold tabular text-right text-primary">{peso(g.commission_cents)}</TableCell>
                                     <TableCell className="w-24" />
                                     <TableCell className="w-20" />
                                   </TableRow>
@@ -338,7 +344,7 @@ export function CommissionSettlementWorkspace({
                                     <TableRow key={`${g.therapist}-${i}`}>
                                       <TableCell className="font-medium tabular text-muted-foreground pl-12">{l.service_date}</TableCell>
                                       <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
-                                      <TableCell className="font-medium">{l.service}</TableCell>
+                                      <TableCell className="font-medium pl-4">{l.service}</TableCell>
                                       <TableCell className="tabular text-right text-muted-foreground">{peso(l.gross_cents)}</TableCell>
                                       <TableCell className="tabular text-right text-muted-foreground">{(l.rate * 100).toFixed(0)}%</TableCell>
                                       <TableCell className="font-bold tabular text-right">{peso(l.commission_cents)}</TableCell>
@@ -347,7 +353,8 @@ export function CommissionSettlementWorkspace({
                                     </TableRow>
                                   ))}
                                 </Fragment>
-                              ))}
+                                );
+                              })}
                             </TableBody>
                           </Table>
                         </TableCell>

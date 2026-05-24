@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
 import { NewReservationDialog } from '@/components/reservations/new-reservation-dialog';
 import { ReservationsExplorer, type ReservationRow } from '@/components/reservations/reservations-explorer';
-import { cancelStaleReservations, getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
+import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +18,6 @@ function one<T>(v: T | T[] | null): T | null {
 
 async function fetchData() {
   const supabase = createServiceClient();
-  await cancelStaleReservations(); // sweep past-day no-shows → cancelled
   const [resv, br, src, cat, si] = await Promise.all([
     supabase
       .from('reservations')

@@ -3926,16 +3926,7 @@ export type Database = {
       }
     }
     Functions: {
-      cancel_stale_reservations: { Args: never; Returns: undefined }
-      cron_cancel_status: {
-        Args: never
-        Returns: {
-          active: boolean
-          last_start: string
-          last_status: string
-          schedule: string
-        }[]
-      }
+      [_ in never]: never
     }
     Enums: {
       [_ in never]: never

@@ -23,23 +23,6 @@ export async function getReservationGraceMinutes(): Promise<number> {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_OVERDUE_GRACE_MIN;
 }
 
-// Housekeeping: once a day has rolled over (past midnight PHT), an active
-// reservation whose desired day has already passed counts as a no-show and is
-// auto-cancelled. Runs lazily whenever the reservations/schedule pages load — no
-// cron needed. Cancelled is reversible via Reopen if it was a mistake.
-export async function cancelStaleReservations(): Promise<void> {
-  const supabase = createServiceClient();
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
-  await supabase
-    .from('reservations')
-    .update({ status: 'cancelled' })
-    .in('status', ['reserved', 'confirmed'])
-    .is('deleted_at', null)
-    .lt('desired_service_start', `${today}T00:00:00+08:00`);
-}
-
 // Overdue = an active reservation whose desired start passed more than the grace
 // window ago. Such reservations keep their status but auto-release pinned beds.
 export function isReservationOverdue(opts: {

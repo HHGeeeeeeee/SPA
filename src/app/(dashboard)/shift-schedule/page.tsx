@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
-import { cancelStaleReservations, getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
+import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 
 export const dynamic = 'force-dynamic';
 
@@ -262,7 +262,6 @@ export default async function ShiftSchedulePage({
   searchParams: Promise<{ branch?: string; week?: string; view?: string; scale?: string; day?: string }>;
 }) {
   const sp = await searchParams;
-  await cancelStaleReservations(); // sweep past-day no-shows → cancelled
   // Station (live bed occupancy) is the default subject; Therapist is opt-in.
   const view: ShiftView = sp.view === 'employee' ? 'employee' : 'station';
   // The roster only plans working hours; beds are assigned dynamically when a

@@ -28,11 +28,6 @@ function peso(cents: number): string {
 function fmtDateTime(iso: string): string {
   return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
-function therapistList(names: string[]): string {
-  if (names.length === 0) return '—';
-  if (names.length <= 2) return names.join(', ');
-  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
-}
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   draft: 'secondary', closed: 'default', void: 'destructive',
@@ -277,7 +272,6 @@ export function CommissionSettlementWorkspace({
                 <TableHead className="w-8" />
                 <TableHead className="font-bold">Settlement No</TableHead>
                 <TableHead className="w-16 font-bold">Branch</TableHead>
-                <TableHead className="font-bold">Therapists</TableHead>
                 <TableHead className="font-bold pl-6">Period</TableHead>
                 <TableHead className="w-40 font-bold">Settle Date</TableHead>
                 <TableHead className="w-16 font-bold text-right">Sessions</TableHead>
@@ -295,7 +289,6 @@ export function CommissionSettlementWorkspace({
                       <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</TableCell>
                       <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
                       <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
-                      <TableCell className="font-medium" title={p.therapists.join(', ')}>{therapistList(p.therapists)}</TableCell>
                       <TableCell className="font-medium tabular text-muted-foreground pl-6">{p.period_from} → {p.period_to}</TableCell>
                       <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
                       <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
@@ -311,20 +304,8 @@ export function CommissionSettlementWorkspace({
                     </TableRow>
                     {isOpen && (
                       <TableRow>
-                        <TableCell colSpan={10} className="bg-muted/20 p-0">
+                        <TableCell colSpan={9} className="bg-muted/20 p-0">
                           <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-32 font-bold pl-12">Date</TableHead>
-                                <TableHead className="w-44 font-bold">Order No</TableHead>
-                                <TableHead className="font-bold pl-4">Service</TableHead>
-                                <TableHead className="w-28 font-bold text-right">Gross</TableHead>
-                                <TableHead className="w-16 font-bold text-right">Rate</TableHead>
-                                <TableHead className="w-32 font-bold text-right">Commission</TableHead>
-                                <TableHead className="w-24" />
-                                <TableHead className="w-20" />
-                              </TableRow>
-                            </TableHeader>
                             <TableBody>
                               {p.detail.map((g) => {
                                 const initials = g.therapist.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -337,6 +318,16 @@ export function CommissionSettlementWorkspace({
                                       <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">{g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</span>
                                     </TableCell>
                                     <TableCell className="py-2.5 font-extrabold tabular text-right text-primary">{peso(g.commission_cents)}</TableCell>
+                                    <TableCell className="w-24" />
+                                    <TableCell className="w-20" />
+                                  </TableRow>
+                                  <TableRow className="border-b border-border">
+                                    <TableCell className="w-32 pl-12 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Date</TableCell>
+                                    <TableCell className="w-44 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
+                                    <TableCell className="pl-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Service</TableCell>
+                                    <TableCell className="w-28 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Gross</TableCell>
+                                    <TableCell className="w-16 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Rate</TableCell>
+                                    <TableCell className="w-32 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Commission</TableCell>
                                     <TableCell className="w-24" />
                                     <TableCell className="w-20" />
                                   </TableRow>

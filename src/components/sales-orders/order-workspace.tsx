@@ -35,6 +35,7 @@ import {
   removeOrderCustomer,
   updateOrderCustomer,
   addOrderItem,
+  updateOrderItem,
   removeOrderItem,
   startOrderItem,
   startAllServices,
@@ -55,6 +56,8 @@ function peso(cents: number): string {
 interface OrderItem {
   id: string;
   order_customer_id: string;
+  service_item_id: string;
+  discount_class_id: string | null;
   service_name: string;
   therapist_name: string | null;
   therapist_home_branch_code: string | null;
@@ -188,8 +191,10 @@ export function OrderWorkspace({
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
 
-  // add item (per customer) — two-step: group → duration variant
+  // add item (per customer) — two-step: group → duration variant. The same panel
+  // edits an existing not-yet-started line when editingItemId is set.
   const [activeCustomer, setActiveCustomer] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [groupSel, setGroupSel] = useState('');
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
@@ -238,6 +243,13 @@ export function OrderWorkspace({
     });
   }
 
+  function closeItemForm() {
+    setActiveCustomer(null);
+    setEditingItemId(null);
+    setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
+    setTherapistId(NONE); setResourceId(NONE); setGenderPref(initialGenderPref);
+  }
+
   function doAddItem(customerId: string) {
     if (!svcId) return toast.error('Pick a service');
     startTransition(async () => {
@@ -250,7 +262,39 @@ export function OrderWorkspace({
         discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
         discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
       });
-      if (r.ok) { setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride(''); setActiveCustomer(null); setGenderPref(initialGenderPref); toast.success('Service added'); }
+      if (r.ok) { closeItemForm(); toast.success('Service added'); }
+      else toast.error(r.error);
+    });
+  }
+
+  // Open the shared panel pre-filled to edit an existing (not-yet-started) line.
+  function startEditItem(it: OrderItem) {
+    const grp = serviceItems.find((s) => s.id === it.service_item_id)?.group ?? '';
+    setEditingItemId(it.id);
+    setActiveCustomer(it.order_customer_id);
+    setGroupSel(grp);
+    setSvcId(it.service_item_id);
+    setTherapistId(it.therapist_id ?? NONE);
+    setResourceId(it.resource_id ?? NONE);
+    setDiscountId(it.discount_class_id ?? defaultDiscountId);
+    setDiscountOverride(it.discount_amount_cents > 0 ? String(it.discount_amount_cents / 100) : '');
+    setGenderPref(initialGenderPref);
+  }
+
+  function doSaveItem() {
+    if (!editingItemId) return;
+    if (!svcId) return toast.error('Pick a service');
+    startTransition(async () => {
+      const r = await updateOrderItem({
+        id: editingItemId,
+        order_id: order.id,
+        service_item_id: svcId,
+        therapist_id: therapistId === NONE ? null : therapistId,
+        resource_id: resourceId === NONE ? null : resourceId,
+        discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
+        discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
+      });
+      if (r.ok) { closeItemForm(); toast.success('Service updated'); }
       else toast.error(r.error);
     });
   }
@@ -643,6 +687,11 @@ export function OrderWorkspace({
                           {peso(it.final_amount_cents)}
                         </span>
                       )}
+                      {order.editable && it.status === 'scheduled' && (
+                        <Button size="icon-sm" variant="ghost" onClick={() => startEditItem(it)} disabled={pending}>
+                          <Pencil className="size-3.5 text-muted-foreground" />
+                        </Button>
+                      )}
                       {order.editable && (
                         <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending}>
                           <Trash2 className="size-3.5 text-destructive" />
@@ -660,6 +709,9 @@ export function OrderWorkspace({
               {order.editable && (
                 activeCustomer === c.id ? (
                   <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-border p-3">
+                    <p className="col-span-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                      {editingItemId ? 'Edit service' : 'Add service'}
+                    </p>
                     <div className="max-w-[15rem]">
                       <Label className="text-xs font-semibold">Service</Label>
                       <Select
@@ -769,8 +821,12 @@ export function OrderWorkspace({
                       </div>
                     </div>
                     <div className="col-span-3 flex gap-2 justify-end">
-                      <Button size="sm" variant="ghost" onClick={() => setActiveCustomer(null)} disabled={pending}>Cancel</Button>
-                      <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
+                      <Button size="sm" variant="ghost" onClick={closeItemForm} disabled={pending}>Cancel</Button>
+                      {editingItemId ? (
+                        <Button size="sm" onClick={doSaveItem} disabled={pending || !svcId}>Save changes</Button>
+                      ) : (
+                        <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
+                      )}
                     </div>
                   </div>
                 ) : (

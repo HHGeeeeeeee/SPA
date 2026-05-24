@@ -277,12 +277,34 @@ const addItemSchema = z.object({
 const MANAGER_DISCOUNTS = ['DIS-90', 'DIS-91', 'DIS-99'];
 const VARIABLE_DISCOUNTS = ['DIS-91', 'DIS-99'];
 
-export async function addOrderItem(input: unknown): Promise<ActionResult> {
-  const parsed = addItemSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
-  const d = parsed.data;
-  const supabase = createServiceClient();
+// Shared line pricing for add + edit: resolve service → category/duration, the
+// active list price, the discount (honoring a source's locked group rate +
+// manager-only discounts), and the therapist's home branch. Returns the column
+// patch both paths write, or an error message.
+interface LinePatch {
+  service_item_id: string;
+  service_category_id: string;
+  therapist_id: string | null;
+  therapist_home_branch_id: string | null;
+  resource_id: string | null;
+  duration_minutes: number;
+  list_price_cents: number;
+  discount_class_id: string;
+  discount_amount_cents: number;
+  final_amount_cents: number;
+}
 
+async function resolveLinePricing(
+  supabase: ReturnType<typeof createServiceClient>,
+  d: {
+    order_id: string;
+    service_item_id: string;
+    therapist_id?: string | null;
+    resource_id?: string | null;
+    discount_class_id: string;
+    discount_override?: number | null;
+  },
+): Promise<{ error: string } | { patch: LinePatch }> {
   // If the order's customer source locks the discount (group rate), force the
   // source's default discount and ignore whatever the client sent.
   const { data: ord } = await supabase
@@ -301,7 +323,7 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
     .select('id, service_category_id, duration_minutes')
     .eq('id', d.service_item_id)
     .single();
-  if (se || !svc) return { ok: false, error: 'Service item not found' };
+  if (se || !svc) return { error: 'Service item not found' };
 
   // A station must be active to be assigned (cleaning/maintenance/closed reject).
   if (d.resource_id) {
@@ -310,8 +332,8 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
       .select('status')
       .eq('id', d.resource_id)
       .single();
-    if (!resource) return { ok: false, error: 'Station not found' };
-    if (resource.status !== 'active') return { ok: false, error: `Station is ${resource.status}, not available` };
+    if (!resource) return { error: 'Station not found' };
+    if (resource.status !== 'active') return { error: `Station is ${resource.status}, not available` };
   }
 
   // Active Normal / all-branch list price
@@ -323,7 +345,7 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
     .is('branch_id', null)
     .limit(1)
     .maybeSingle();
-  if (!priceRow) return { ok: false, error: 'No list price set for this service. Set one in Service Items.' };
+  if (!priceRow) return { error: 'No list price set for this service. Set one in Service Items.' };
   const listPrice = priceRow.price_cents;
 
   // Discount
@@ -332,10 +354,10 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
     .select('code, discount_percent, discount_amount_cents')
     .eq('id', discountClassId)
     .single();
-  if (de || !disc) return { ok: false, error: 'Discount class not found' };
+  if (de || !disc) return { error: 'Discount class not found' };
 
   if (MANAGER_DISCOUNTS.includes(disc.code) && !isManager(await currentSession())) {
-    return { ok: false, error: `${disc.code} requires manager permission` };
+    return { error: `${disc.code} requires manager permission` };
   }
 
   let discountAmount = 0;
@@ -343,7 +365,7 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
     discountAmount = listPrice; // complaint — 100% off
   } else if (VARIABLE_DISCOUNTS.includes(disc.code)) {
     const override = Math.round((d.discount_override ?? 0) * 100);
-    if (override <= 0) return { ok: false, error: `Enter a discount amount for ${disc.code}` };
+    if (override <= 0) return { error: `Enter a discount amount for ${disc.code}` };
     discountAmount = Math.min(override, listPrice);
   } else if (disc.discount_percent > 0) {
     discountAmount = Math.round((listPrice * disc.discount_percent) / 100);
@@ -364,21 +386,70 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
     therapistHomeBranch = emp?.home_branch_id ?? null;
   }
 
+  return {
+    patch: {
+      service_item_id: d.service_item_id,
+      service_category_id: svc.service_category_id,
+      therapist_id: d.therapist_id || null,
+      therapist_home_branch_id: therapistHomeBranch,
+      resource_id: d.resource_id || null,
+      duration_minutes: svc.duration_minutes,
+      list_price_cents: listPrice,
+      discount_class_id: discountClassId,
+      discount_amount_cents: discountAmount,
+      final_amount_cents: finalAmount,
+    },
+  };
+}
+
+export async function addOrderItem(input: unknown): Promise<ActionResult> {
+  const parsed = addItemSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const supabase = createServiceClient();
+
+  const res = await resolveLinePricing(supabase, d);
+  if ('error' in res) return { ok: false, error: res.error };
+
   const { error } = await supabase.from('order_items').insert({
     order_id: d.order_id,
     order_customer_id: d.order_customer_id,
-    service_item_id: d.service_item_id,
-    service_category_id: svc.service_category_id,
-    therapist_id: d.therapist_id || null,
-    therapist_home_branch_id: therapistHomeBranch,
-    resource_id: d.resource_id || null,
-    duration_minutes: svc.duration_minutes,
-    list_price_cents: listPrice,
-    discount_class_id: discountClassId,
-    discount_amount_cents: discountAmount,
-    final_amount_cents: finalAmount,
+    ...res.patch,
     status: 'scheduled',
   });
+  if (error) return { ok: false, error: error.message };
+  await recomputeTotals(d.order_id);
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
+const updateItemSchema = z.object({
+  id: z.string().uuid(),
+  order_id: z.string().uuid(),
+  service_item_id: z.string().uuid(),
+  therapist_id: z.string().uuid().optional().nullable(),
+  resource_id: z.string().uuid().optional().nullable(),
+  discount_class_id: z.string().uuid(),
+  discount_override: z.coerce.number().min(0).optional().nullable(),
+});
+
+// Edit a not-yet-started line: re-price for the new service/discount and
+// reassign therapist/station. Blocked once the line is in-service or done (the
+// numbers are committed by then — delete + re-add for those).
+export async function updateOrderItem(input: unknown): Promise<ActionResult> {
+  const parsed = updateItemSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const supabase = createServiceClient();
+
+  const { data: existing } = await supabase.from('order_items').select('status').eq('id', d.id).single();
+  if (!existing) return { ok: false, error: 'Service line not found' };
+  if (existing.status !== 'scheduled') return { ok: false, error: 'Only a not-yet-started line can be edited' };
+
+  const res = await resolveLinePricing(supabase, d);
+  if ('error' in res) return { ok: false, error: res.error };
+
+  const { error } = await supabase.from('order_items').update(res.patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);
   revalidatePath(`/sales-orders/${d.order_id}`);

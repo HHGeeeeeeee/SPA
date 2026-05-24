@@ -50,7 +50,13 @@ export interface CommHistoryRow {
   total_commission_cents: number;
   confirmed_at: string | null;
   therapists: string[];
-  entries: { therapist: string; sessions: number; gross_cents: number; commission_cents: number }[];
+  detail: {
+    therapist: string;
+    sessions: number;
+    gross_cents: number;
+    commission_cents: number;
+    lines: { service_date: string; order_no: string; service: string; gross_cents: number; rate: number; commission_cents: number }[];
+  }[];
 }
 
 export function CommissionSettlementWorkspace({
@@ -272,11 +278,11 @@ export function CommissionSettlementWorkspace({
                 <TableHead className="font-bold">Settlement No</TableHead>
                 <TableHead className="w-16 font-bold">Branch</TableHead>
                 <TableHead className="font-bold">Therapists</TableHead>
-                <TableHead className="font-bold">Period</TableHead>
+                <TableHead className="font-bold pl-6">Period</TableHead>
                 <TableHead className="w-40 font-bold">Settle Date</TableHead>
                 <TableHead className="w-16 font-bold text-right">Sessions</TableHead>
                 <TableHead className="w-32 font-bold text-right">Commission</TableHead>
-                <TableHead className="w-24 font-bold">Status</TableHead>
+                <TableHead className="w-24 font-bold pl-6">Status</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
@@ -290,11 +296,11 @@ export function CommissionSettlementWorkspace({
                       <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
                       <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
                       <TableCell className="font-medium" title={p.therapists.join(', ')}>{therapistList(p.therapists)}</TableCell>
-                      <TableCell className="font-medium tabular text-muted-foreground">{p.period_from} → {p.period_to}</TableCell>
+                      <TableCell className="font-medium tabular text-muted-foreground pl-6">{p.period_from} → {p.period_to}</TableCell>
                       <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
                       <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
                       <TableCell className="font-bold tabular text-right">{peso(p.total_commission_cents)}</TableCell>
-                      <TableCell><Badge variant={STATUS_VARIANT[p.status] ?? 'secondary'} className="font-bold capitalize">{p.status}</Badge></TableCell>
+                      <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[p.status] ?? 'secondary'} className="font-bold capitalize">{p.status}</Badge></TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end">
                           {p.status === 'closed' && (
@@ -309,20 +315,38 @@ export function CommissionSettlementWorkspace({
                           <Table>
                             <TableHeader>
                               <TableRow>
-                                <TableHead className="font-bold pl-12">Therapist</TableHead>
-                                <TableHead className="w-24 font-bold text-right">Sessions</TableHead>
-                                <TableHead className="w-32 font-bold text-right">Gross</TableHead>
-                                <TableHead className="w-36 font-bold text-right pr-4">Commission</TableHead>
+                                <TableHead className="w-32 font-bold pl-12">Date</TableHead>
+                                <TableHead className="w-44 font-bold">Order No</TableHead>
+                                <TableHead className="font-bold">Service</TableHead>
+                                <TableHead className="w-28 font-bold text-right">Gross</TableHead>
+                                <TableHead className="w-16 font-bold text-right">Rate</TableHead>
+                                <TableHead className="w-32 font-bold text-right">Commission</TableHead>
+                                <TableHead className="w-24" />
+                                <TableHead className="w-20" />
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {p.entries.map((e, i) => (
-                                <TableRow key={`${p.id}-${i}`}>
-                                  <TableCell className="font-medium pl-12">{e.therapist}</TableCell>
-                                  <TableCell className="tabular text-right text-muted-foreground">{e.sessions}</TableCell>
-                                  <TableCell className="tabular text-right text-muted-foreground">{peso(e.gross_cents)}</TableCell>
-                                  <TableCell className="font-bold tabular text-right pr-4">{peso(e.commission_cents)}</TableCell>
-                                </TableRow>
+                              {p.detail.map((g) => (
+                                <Fragment key={g.therapist}>
+                                  <TableRow className="bg-muted/40">
+                                    <TableCell colSpan={5} className="font-bold pl-12">{g.therapist} · {g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</TableCell>
+                                    <TableCell className="font-bold tabular text-right">{peso(g.commission_cents)}</TableCell>
+                                    <TableCell className="w-24" />
+                                    <TableCell className="w-20" />
+                                  </TableRow>
+                                  {g.lines.map((l, i) => (
+                                    <TableRow key={`${g.therapist}-${i}`}>
+                                      <TableCell className="font-medium tabular text-muted-foreground pl-12">{l.service_date}</TableCell>
+                                      <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
+                                      <TableCell className="font-medium">{l.service}</TableCell>
+                                      <TableCell className="tabular text-right text-muted-foreground">{peso(l.gross_cents)}</TableCell>
+                                      <TableCell className="tabular text-right text-muted-foreground">{(l.rate * 100).toFixed(0)}%</TableCell>
+                                      <TableCell className="font-bold tabular text-right">{peso(l.commission_cents)}</TableCell>
+                                      <TableCell className="w-24" />
+                                      <TableCell className="w-20" />
+                                    </TableRow>
+                                  ))}
+                                </Fragment>
                               ))}
                             </TableBody>
                           </Table>

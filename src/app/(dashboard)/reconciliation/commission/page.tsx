@@ -30,12 +30,27 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
     branchId ? loadCommissionGroups(branchId, from, to) : Promise.resolve([]),
     supabase
       .from('commission_periods')
-      .select('id, period_no, status, period_from, period_to, total_sessions, total_commission_cents, confirmed_at, branch:branches!commission_periods_branch_id_fkey ( code ), commission_entries ( total_sessions, total_gross_sales_cents, final_amount_cents, therapist:employees!commission_entries_therapist_id_fkey ( name ) )')
+      .select('id, period_no, status, period_from, period_to, total_sessions, total_commission_cents, confirmed_at, branch:branches!commission_periods_branch_id_fkey ( code ), items:order_items!fk_order_items_commission_period ( list_price_cents, commission_rate, commission_amount_cents, status, therapist:employees!order_items_therapist_id_fkey ( name ), order:orders!order_items_order_id_fkey ( order_no, service_date ), service:service_items!order_items_service_item_id_fkey ( name ) )')
       .order('created_at', { ascending: false }),
   ]);
   const history: CommHistoryRow[] = (histRes.data ?? []).map((p) => {
-    const entries = (p.commission_entries ?? [])
-      .map((e) => ({ therapist: one(e.therapist)?.name ?? '—', sessions: e.total_sessions ?? 0, gross_cents: e.total_gross_sales_cents ?? 0, commission_cents: e.final_amount_cents ?? 0 }))
+    // Group the period's settled service lines by therapist, listing each order.
+    const byTh = new Map<string, CommHistoryRow['detail'][number]>();
+    for (const it of (p.items ?? []).filter((i) => i.status !== 'cancelled')) {
+      const th = one(it.therapist)?.name ?? '—';
+      const g = byTh.get(th) ?? { therapist: th, sessions: 0, gross_cents: 0, commission_cents: 0, lines: [] };
+      g.sessions += 1;
+      g.gross_cents += it.list_price_cents ?? 0;
+      g.commission_cents += it.commission_amount_cents ?? 0;
+      g.lines.push({
+        service_date: one(it.order)?.service_date ?? '', order_no: one(it.order)?.order_no ?? '—',
+        service: one(it.service)?.name ?? 'Service', gross_cents: it.list_price_cents ?? 0,
+        rate: Number(it.commission_rate ?? 0), commission_cents: it.commission_amount_cents ?? 0,
+      });
+      byTh.set(th, g);
+    }
+    const detail = [...byTh.values()]
+      .map((g) => ({ ...g, lines: g.lines.sort((a, b) => (a.service_date < b.service_date ? 1 : -1)) }))
       .sort((a, b) => b.commission_cents - a.commission_cents);
     return {
       id: p.id, period_no: p.period_no, status: p.status,
@@ -43,8 +58,8 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
       total_sessions: p.total_sessions ?? 0, total_commission_cents: p.total_commission_cents ?? 0,
       branch_code: one(p.branch)?.code ?? null,
       confirmed_at: p.confirmed_at,
-      therapists: entries.map((e) => e.therapist),
-      entries,
+      therapists: detail.map((g) => g.therapist),
+      detail,
     };
   });
 

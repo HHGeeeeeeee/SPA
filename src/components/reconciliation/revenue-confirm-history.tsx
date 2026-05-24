@@ -1,10 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { ChevronRight, ChevronDown, CalendarCheck } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
@@ -14,6 +17,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
+import { requestOrderAdjustment } from '@/app/(dashboard)/sales-orders/actions';
 import type { ConfirmableOrder } from '@/app/(dashboard)/reconciliation/revenue-confirm/actions';
 
 function peso(cents: number): string {
@@ -47,6 +52,19 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.length ? [groups[0].date] : []));
   function toggle(date: string) {
     setExpanded((prev) => { const n = new Set(prev); n.has(date) ? n.delete(date) : n.add(date); return n; });
+  }
+
+  // Request Adjustment: a closed order stays closed; a reversal is recorded.
+  const router = useRouter();
+  const [adjustOrder, setAdjustOrder] = useState<ConfirmableOrder | null>(null);
+  const [pending, startTransition] = useTransition();
+  function doAdjust(reason: string) {
+    if (!adjustOrder) return;
+    startTransition(async () => {
+      const r = await requestOrderAdjustment(adjustOrder.id, reason);
+      if (r.ok) { toast.success('Adjustment requested'); setAdjustOrder(null); router.refresh(); }
+      else toast.error(r.error);
+    });
   }
 
   if (groups.length === 0) {
@@ -89,7 +107,8 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
                     <TableHead className="w-28 font-bold text-right">Cash</TableHead>
                     <TableHead className="w-28 font-bold text-right">PAYMAYA</TableHead>
                     <TableHead className="w-28 font-bold text-right">AR</TableHead>
-                    <TableHead className="w-32 font-bold text-right pr-4">Total</TableHead>
+                    <TableHead className="w-32 font-bold text-right">Total</TableHead>
+                    <TableHead className="w-32 font-bold text-right pr-4">Adjustment</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -105,7 +124,14 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
                       <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.cash_cents)}</TableCell>
                       <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.paymaya_cents)}</TableCell>
                       <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.isAR ? o.total_cents : 0)}</TableCell>
-                      <TableCell className="font-bold tabular text-right pr-4">{peso(o.total_cents)}</TableCell>
+                      <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
+                      <TableCell className="text-right pr-4">
+                        {o.adjusted ? (
+                          <Badge variant="destructive" className="font-bold">Adjusted</Badge>
+                        ) : (
+                          <Button size="sm" variant="ghost" className="text-amber-700 hover:text-amber-800 dark:text-amber-400" onClick={() => setAdjustOrder(o)} disabled={pending}>Adjust</Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -114,6 +140,16 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
           </Card>
         );
       })}
+
+      <ReasonDialog
+        open={adjustOrder != null}
+        onOpenChange={(o) => { if (!o) setAdjustOrder(null); }}
+        title={`Request adjustment · ${adjustOrder?.order_no ?? ''}`}
+        description="Closed orders stay locked — this records a reversal adjustment (the reversal journal posts in the ERP phase). Manager-only, reason required."
+        confirmLabel="Request adjustment"
+        pending={pending}
+        onConfirm={doAdjust}
+      />
     </div>
   );
 }

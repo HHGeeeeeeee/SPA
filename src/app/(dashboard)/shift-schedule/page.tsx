@@ -304,13 +304,14 @@ export default async function ShiftSchedulePage({
           No active therapists for this branch (or its sharing group).
         </Card>
       ) : (
-        <Card className="p-0 overflow-x-auto">
+        <Card className="p-0 overflow-auto max-h-[calc(100vh-16rem)]">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
-                <th className="text-left font-bold text-sm p-3 w-48 sticky left-0 bg-card">Therapist</th>
+              <tr>
+                {/* Top-left corner: frozen on both axes (above the header row and the name column). */}
+                <th className="text-left font-bold text-sm p-3 w-48 sticky left-0 top-0 z-30 bg-card border-b border-border">Therapist</th>
                 {days.map((d) => (
-                  <th key={d.date} className="text-center font-bold text-xs p-2 min-w-[88px]">
+                  <th key={d.date} className="text-center font-bold text-xs p-2 min-w-[88px] sticky top-0 z-20 bg-card border-b border-border">
                     <div>{d.dow}</div>
                     <div className="font-medium text-muted-foreground tabular">{d.label}</div>
                   </th>
@@ -320,7 +321,7 @@ export default async function ShiftSchedulePage({
             <tbody>
               {employees.map((e) => (
                 <tr key={e.id} className="border-b border-border last:border-0">
-                  <td className="p-3 sticky left-0 bg-card">
+                  <td className="p-3 sticky left-0 z-10 bg-card">
                     <div className="font-semibold text-sm">
                       {e.name}
                       {e.home_branch_id !== branchId && (

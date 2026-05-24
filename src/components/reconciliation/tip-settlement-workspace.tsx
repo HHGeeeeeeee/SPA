@@ -208,7 +208,7 @@ export function TipSettlementWorkspace({
                         <TableHeader>
                           <TableRow>
                             <TableHead className="w-36 font-bold">Date</TableHead>
-                            <TableHead className="font-bold">Booking #</TableHead>
+                            <TableHead className="font-bold">Order No</TableHead>
                             <TableHead className="w-36 font-bold text-right pr-4">Amount</TableHead>
                           </TableRow>
                         </TableHeader>

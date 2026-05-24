@@ -217,7 +217,7 @@ export function SoaWorkspace({
                         <TableHeader>
                           <TableRow>
                             <TableHead className="w-32 font-bold">Date</TableHead>
-                            <TableHead className="w-44 font-bold">Booking #</TableHead>
+                            <TableHead className="w-44 font-bold">Order No</TableHead>
                             <TableHead className="font-bold">Guest Name</TableHead>
                             <TableHead className="font-bold">Service</TableHead>
                             <TableHead className="w-20 font-bold text-right">Mins</TableHead>

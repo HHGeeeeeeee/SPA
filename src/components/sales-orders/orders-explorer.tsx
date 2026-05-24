@@ -140,11 +140,11 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
               <TableHead className="w-24 font-bold">Billing To</TableHead>
               <TableHead className="w-16 font-bold">PAX</TableHead>
               <TableHead className="w-32 font-bold">Service Date</TableHead>
-              <TableHead className="w-28 font-bold text-right">Cash</TableHead>
-              <TableHead className="w-28 font-bold text-right">Paymaya</TableHead>
-              <TableHead className="w-28 font-bold text-right">AR</TableHead>
-              <TableHead className="w-32 font-bold text-right">Total</TableHead>
-              <TableHead className="w-24 font-bold text-right">Tips</TableHead>
+              <TableHead className="w-28 font-bold text-center">Cash</TableHead>
+              <TableHead className="w-28 font-bold text-center">Paymaya</TableHead>
+              <TableHead className="w-28 font-bold text-center">AR</TableHead>
+              <TableHead className="w-32 font-bold text-center">Total</TableHead>
+              <TableHead className="w-24 font-bold text-center">Tips</TableHead>
               <TableHead className="w-28 font-bold text-center">Status</TableHead>
             </TableRow>
           </TableHeader>

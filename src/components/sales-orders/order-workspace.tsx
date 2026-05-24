@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History, Play } from 'lucide-react';
+import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History, Play, Pencil, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,7 @@ import {
 import {
   addOrderCustomer,
   removeOrderCustomer,
+  updateOrderCustomer,
   addOrderItem,
   removeOrderItem,
   startOrderItem,
@@ -182,6 +183,10 @@ export function OrderWorkspace({
   // add customer
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
+  // inline rename of an existing guest (fill in a converted "Guest 2" placeholder)
+  const [editCust, setEditCust] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
 
   // add item (per customer) — two-step: group → duration variant
   const [activeCustomer, setActiveCustomer] = useState<string | null>(null);
@@ -286,6 +291,26 @@ export function OrderWorkspace({
     } else {
       toast.warning(`${freeTherapist!.name} set — no free station${neededType ? ` (${neededType})` : ''}`);
     }
+  }
+
+  function startEditCustomer(c: { id: string; customer_name: string; customer_phone: string | null }) {
+    setEditCust(c.id);
+    setEditName(c.customer_name);
+    setEditPhone(c.customer_phone ?? '');
+  }
+  function doRenameCustomer() {
+    if (!editCust) return;
+    if (!editName.trim()) return toast.error('Customer name required');
+    startTransition(async () => {
+      const r = await updateOrderCustomer({
+        id: editCust,
+        order_id: order.id,
+        customer_name: editName,
+        customer_phone: editPhone || null,
+      });
+      if (r.ok) { setEditCust(null); toast.success('Guest updated'); }
+      else toast.error(r.error);
+    });
   }
 
   function doRemoveItem(id: string) {
@@ -478,11 +503,43 @@ export function OrderWorkspace({
         customers.sort((a, b) => a.seq_no - b.seq_no).map((c) => (
           <Card key={c.id}>
             <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
-                {c.customer_name}
-                {c.customer_phone && <span className="font-medium text-muted-foreground">{c.customer_phone}</span>}
-              </CardTitle>
+              {editCust === c.id ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
+                  <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Name"
+                    className="h-8 w-44"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter') doRenameCustomer(); if (e.key === 'Escape') setEditCust(null); }}
+                  />
+                  <Input
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="Phone (optional)"
+                    className="h-8 w-36"
+                    onKeyDown={(e) => { if (e.key === 'Enter') doRenameCustomer(); if (e.key === 'Escape') setEditCust(null); }}
+                  />
+                  <Button size="icon-sm" variant="ghost" onClick={doRenameCustomer} disabled={pending}>
+                    <Check className="size-4 text-primary" />
+                  </Button>
+                  <Button size="icon-sm" variant="ghost" onClick={() => setEditCust(null)} disabled={pending}>
+                    <X className="size-4 text-muted-foreground" />
+                  </Button>
+                </div>
+              ) : (
+                <CardTitle className="text-sm font-bold flex items-center gap-2">
+                  <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
+                  {c.customer_name}
+                  {c.customer_phone && <span className="font-medium text-muted-foreground">{c.customer_phone}</span>}
+                  {order.editable && (
+                    <Button size="icon-sm" variant="ghost" className="size-6" onClick={() => startEditCustomer(c)} disabled={pending}>
+                      <Pencil className="size-3.5 text-muted-foreground" />
+                    </Button>
+                  )}
+                </CardTitle>
+              )}
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-sm font-bold tabular">{peso(c.subtotal_cents)}</span>
                 {order.editable && (

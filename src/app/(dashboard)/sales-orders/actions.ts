@@ -239,6 +239,29 @@ export async function removeOrderCustomer(customerId: string, orderId: string): 
   return { ok: true };
 }
 
+const updateCustomerSchema = z.object({
+  id: z.string().uuid(),
+  order_id: z.string().uuid(),
+  customer_name: z.string().min(1).max(120),
+  customer_phone: z.string().max(40).optional().nullable(),
+});
+
+// Rename / re-phone an existing guest (e.g. fill in a converted booking's
+// "Guest 2" placeholder once they're at the desk).
+export async function updateOrderCustomer(input: unknown): Promise<ActionResult> {
+  const parsed = updateCustomerSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from('order_customers')
+    .update({ customer_name: d.customer_name, customer_phone: d.customer_phone || null })
+    .eq('id', d.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
 const addItemSchema = z.object({
   order_id: z.string().uuid(),
   order_customer_id: z.string().uuid(),

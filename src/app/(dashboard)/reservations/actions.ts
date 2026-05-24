@@ -631,7 +631,7 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
   const supabase = createServiceClient();
   const { data: r, error: re } = await supabase
     .from('reservations')
-    .select('id, branch_id, source_id, billing_to_id, desired_service_start, status, guest_name, guest_phone, pax, note, service_item_id')
+    .select('id, branch_id, source_id, billing_to_id, desired_service_start, status, guest_name, guest_phone, pax, note, service_item_id, seat_together')
     .eq('id', id)
     .single();
   if (re || !r) return { ok: false, error: 'Reservation not found' };
@@ -677,9 +677,12 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
   ).select('id, seq_no');
   const firstCustomer = (createdCustomers ?? []).find((c) => c.seq_no === 1) ?? createdCustomers?.[0];
 
-  // If the booking named a specific service, pre-create that order line (with
-  // price/duration + the pinned bed). Therapist is left for the desk to confirm
-  // (the workspace pre-filters by gender). Reuses addOrderItem's pricing.
+  // If the booking named a specific service, pre-create order line(s) (with
+  // price/duration + pinned bed). Therapist is left for the desk to confirm
+  // (the workspace pre-filters by the reservation's gender). Reuses addOrderItem.
+  //  - "Seat together" groups: every guest gets the same service, and the pinned
+  //    beds are handed out in bed-number order (Guest 1 → lowest, Guest 2 → next).
+  //  - Otherwise only the first guest is pre-lined; the rest are set at check-in.
   if (r.service_item_id && firstCustomer) {
     const { data: src } = await supabase.from('customer_sources').select('default_discount_class_id').eq('id', r.source_id ?? '').maybeSingle();
     let discountClassId = src?.default_discount_class_id ?? null;
@@ -687,15 +690,26 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
       const { data: dis0 } = await supabase.from('discount_classes').select('id').eq('code', 'DIS-00').maybeSingle();
       discountClassId = dis0?.id ?? null;
     }
-    const { data: firstPin } = await supabase.from('reservation_resources').select('resource_id').eq('reservation_id', id).limit(1).maybeSingle();
     if (discountClassId) {
-      await addOrderItem({
-        order_id: order.id,
-        order_customer_id: firstCustomer.id,
-        service_item_id: r.service_item_id,
-        resource_id: firstPin?.resource_id ?? null,
-        discount_class_id: discountClassId,
-      });
+      const { data: pinRows } = await supabase
+        .from('reservation_resources')
+        .select('resource_id, resources ( resource_name )')
+        .eq('reservation_id', id);
+      const beds = (pinRows ?? [])
+        .map((p) => ({ id: p.resource_id, name: one(p.resources)?.resource_name ?? '' }))
+        .sort((a, b) => bedNum(a.name) - bedNum(b.name));
+
+      const sortedCustomers = [...(createdCustomers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
+      const targets = r.seat_together && sortedCustomers.length > 1 ? sortedCustomers : [firstCustomer];
+      for (let i = 0; i < targets.length; i++) {
+        await addOrderItem({
+          order_id: order.id,
+          order_customer_id: targets[i].id,
+          service_item_id: r.service_item_id,
+          resource_id: beds[i]?.id ?? null,
+          discount_class_id: discountClassId,
+        });
+      }
     }
   }
 

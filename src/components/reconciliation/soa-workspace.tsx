@@ -201,11 +201,9 @@ export function SoaWorkspace({
                           <TableRow>
                             <TableHead className="w-32 font-bold">Date</TableHead>
                             <TableHead className="w-44 font-bold">Booking #</TableHead>
-                            <TableHead className="font-bold">Guest</TableHead>
+                            <TableHead className="font-bold">Guest Name</TableHead>
                             <TableHead className="font-bold">Service</TableHead>
                             <TableHead className="w-20 font-bold text-right">Mins</TableHead>
-                            <TableHead className="w-28 font-bold text-right">Gross</TableHead>
-                            <TableHead className="w-28 font-bold text-right">Discount</TableHead>
                             <TableHead className="w-32 font-bold text-right pr-4">Net</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -220,8 +218,6 @@ export function SoaWorkspace({
                                 <TableCell className="font-medium">{ln.guest}</TableCell>
                                 <TableCell className="font-medium">{ln.service}</TableCell>
                                 <TableCell className="tabular text-right text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
-                                <TableCell className="tabular text-right text-muted-foreground">{peso(ln.gross_cents)}</TableCell>
-                                <TableCell className="tabular text-right text-muted-foreground">{ln.discount_cents > 0 ? `−${peso(ln.discount_cents)}` : '—'}</TableCell>
                                 <TableCell className="font-bold tabular text-right pr-4">{peso(ln.net_cents)}</TableCell>
                               </TableRow>
                             )),

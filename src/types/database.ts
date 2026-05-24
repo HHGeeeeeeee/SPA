@@ -195,7 +195,7 @@ export type Database = {
           note: string | null
           opened_at: string
           opened_by: string | null
-          revenue_confirmed_at: string | null
+          order_reviewed_at: string | null
           status: string
           updated_at: string
         }
@@ -210,7 +210,7 @@ export type Database = {
           note?: string | null
           opened_at?: string
           opened_by?: string | null
-          revenue_confirmed_at?: string | null
+          order_reviewed_at?: string | null
           status?: string
           updated_at?: string
         }
@@ -225,7 +225,7 @@ export type Database = {
           note?: string | null
           opened_at?: string
           opened_by?: string | null
-          revenue_confirmed_at?: string | null
+          order_reviewed_at?: string | null
           status?: string
           updated_at?: string
         }

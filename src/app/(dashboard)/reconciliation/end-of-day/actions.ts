@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -14,7 +15,7 @@ export interface EodSummaryRow { label: string; amount_cents: number }
 export interface EodRecord {
   status: string;
   opened_at: string;
-  revenue_confirmed_at: string | null;
+  order_reviewed_at: string | null;
   balances_ok_at: string | null;
   closed_at: string | null;
   opened_by_name: string | null;
@@ -24,10 +25,12 @@ export interface EodView {
   branchId: string;
   date: string;
   record: EodRecord | null;
+  cashClosed: boolean;
   noShowCount: number;
-  blocking: { order_no: string; status: string }[];
+  unserved: { order_no: string; status: string }[];
   nonArOutstandingCount: number;
   nonArOutstandingCents: number;
+  pendingConfirmCount: number;
   revenue: EodSummaryRow[];
   payments: EodSummaryRow[];
   revenueTotalCents: number;
@@ -46,23 +49,23 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
 
   const { data: rec } = await supabase
     .from('business_day_close')
-    .select('status, opened_at, revenue_confirmed_at, balances_ok_at, closed_at, opened:staff_users!business_day_close_opened_by_fkey ( display_name ), closer:staff_users!business_day_close_closed_by_fkey ( display_name )')
+    .select('status, opened_at, order_reviewed_at, balances_ok_at, closed_at, opened:staff_users!business_day_close_opened_by_fkey ( display_name ), closer:staff_users!business_day_close_closed_by_fkey ( display_name )')
     .eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   const record: EodRecord | null = rec
     ? {
-        status: rec.status, opened_at: rec.opened_at, revenue_confirmed_at: rec.revenue_confirmed_at,
+        status: rec.status, opened_at: rec.opened_at, order_reviewed_at: rec.order_reviewed_at,
         balances_ok_at: rec.balances_ok_at, closed_at: rec.closed_at,
         opened_by_name: one(rec.opened)?.display_name ?? null, closed_by_name: one(rec.closer)?.display_name ?? null,
       }
     : null;
 
-  // Reservations that never showed (still reserved/confirmed, not converted) for the day.
+  const cashClosed = await isDayCashClosed(branchId, date);
+
   const { count: noShowCount } = await supabase
     .from('reservations').select('id', { count: 'exact', head: true })
     .eq('branch_id', branchId).is('deleted_at', null).in('status', ['reserved', 'confirmed'])
     .gte('desired_service_start', `${date}T00:00:00+08:00`).lt('desired_service_start', `${nextDay(date)}T00:00:00+08:00`);
 
-  // The day's orders (non-void) with billing + payments, for blocking/balance/summary.
   const { data: orders } = await supabase
     .from('orders')
     .select('order_no, status, total_cents, paid_cents, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id ), order_items ( final_amount_cents, status, service:service_items!order_items_service_item_id_fkey ( service_category_id ) ), payments ( amount_cents, method:payment_methods ( code, display_name ) )')
@@ -70,9 +73,9 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
 
   const isAR = (o: { billing: unknown }) => !!arId && one<{ default_payment_method_id: string | null }>(o.billing as never)?.default_payment_method_id === arId;
 
-  // Blocking = not terminal and not auto-resolvable by Step 1 (paid / AR-completed).
-  const blocking = (orders ?? [])
-    .filter((o) => !['closed'].includes(o.status) && o.status !== 'paid' && !(o.status === 'completed' && isAR(o)))
+  // Step 1: orders not yet served (still draft / open / in service).
+  const unserved = (orders ?? [])
+    .filter((o) => ['draft', 'open', 'in_service'].includes(o.status))
     .map((o) => ({ order_no: o.order_no, status: o.status }));
 
   // Step 2: non-AR orders not fully settled.
@@ -83,7 +86,10 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
     if (out > 0) { nonArOutstandingCents += out; nonArOutstandingCount += 1; }
   }
 
-  // Revenue by service category name; payments by method (+ AR as the AR-billed totals).
+  // Step 3: orders still to confirm (paid / AR-completed not yet closed).
+  const pendingConfirmCount = (orders ?? []).filter((o) => o.status === 'paid' || (o.status === 'completed' && isAR(o))).length;
+
+  // Sales summary: revenue by category, payments by method (+ AR as the AR-billed totals).
   const catIds = new Set<string>();
   for (const o of orders ?? []) for (const it of o.order_items ?? []) { const c = one<{ service_category_id: string }>(it.service); if (c) catIds.add(c.service_category_id); }
   const { data: cats } = await supabase.from('service_categories').select('id, name').in('id', [...catIds]);
@@ -103,7 +109,7 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
       const label = one<{ display_name: string }>(p.method)?.display_name ?? 'Payment';
       payByMethod.set(label, (payByMethod.get(label) ?? 0) + p.amount_cents);
     }
-    if (isAR(o)) arPaymentCents += o.total_cents; // AR is invoiced — count the total as the AR "payment"
+    if (isAR(o)) arPaymentCents += o.total_cents;
   }
   if (arPaymentCents > 0) payByMethod.set('AR (Account Receivable)', (payByMethod.get('AR (Account Receivable)') ?? 0) + arPaymentCents);
 
@@ -111,10 +117,11 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
   const payments = [...payByMethod.entries()].map(([label, amount_cents]) => ({ label, amount_cents })).sort((a, b) => b.amount_cents - a.amount_cents);
 
   return {
-    branchId, date, record,
+    branchId, date, record, cashClosed,
     noShowCount: noShowCount ?? 0,
-    blocking,
+    unserved,
     nonArOutstandingCount, nonArOutstandingCents,
+    pendingConfirmCount,
     revenue, payments,
     revenueTotalCents: revenue.reduce((s, r) => s + r.amount_cents, 0),
     paymentTotalCents: payments.reduce((s, r) => s + r.amount_cents, 0),
@@ -131,49 +138,30 @@ async function ensureRecord(supabase: ReturnType<typeof createServiceClient>, br
   return created;
 }
 
-/** Step 1: cancel no-show reservations, close paid + AR-completed orders, verify nothing's stuck. */
-export async function runRevenueCheck(branchId: string, date: string): Promise<ActionResult> {
+/** Step 1: cancel no-show reservations and verify every order has been served. */
+export async function runOrderReview(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = createServiceClient();
   const rec = await ensureRecord(supabase, branchId, date, session?.staffUserId ?? null);
   if (rec?.status === 'closed') return { ok: false, error: 'Business day is already closed' };
-  const arId = await arMethodId(supabase);
 
-  // 1) No-show sweep.
+  // No-show sweep.
   await supabase
     .from('reservations').update({ status: 'no_show' })
     .eq('branch_id', branchId).is('deleted_at', null).in('status', ['reserved', 'confirmed'])
     .gte('desired_service_start', `${date}T00:00:00+08:00`).lt('desired_service_start', `${nextDay(date)}T00:00:00+08:00`);
 
-  // 2) Close paid + AR-completed orders.
-  const { data: orders } = await supabase
-    .from('orders')
-    .select('id, order_no, status, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id )')
+  // Every order must be served (none left draft/open/in_service).
+  const { data: unserved } = await supabase
+    .from('orders').select('order_no, status')
     .eq('branch_id', branchId).eq('service_date', date).is('deleted_at', null)
-    .in('status', ['paid', 'completed']);
-  const now = new Date().toISOString();
-  for (const o of orders ?? []) {
-    const ar = !!arId && one<{ default_payment_method_id: string | null }>(o.billing)?.default_payment_method_id === arId;
-    if (!(o.status === 'paid' || (o.status === 'completed' && ar))) continue;
-    await supabase.from('orders').update({ status: 'closed' }).eq('id', o.id);
-    await supabase.from('order_status_log').insert({ entity_type: 'order', entity_id: o.id, from_status: o.status, to_status: 'closed', reason: 'End of Day — Revenue Confirmation', changed_by_staff_id: session!.staffUserId, changed_at: now });
+    .in('status', ['draft', 'open', 'in_service']);
+  if (unserved && unserved.length > 0) {
+    return { ok: false, error: `${unserved.length} order(s) not finished yet (e.g. ${unserved.slice(0, 3).map((o) => `${o.order_no}:${o.status}`).join(', ')}). Complete or void them first.` };
   }
 
-  // 3) Anything still not terminal blocks the step.
-  const { data: remaining } = await supabase
-    .from('orders')
-    .select('order_no, status, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id )')
-    .eq('branch_id', branchId).eq('service_date', date).is('deleted_at', null).not('status', 'in', '(closed,void)');
-  const stuck = (remaining ?? []).filter((o) => {
-    const ar = !!arId && one<{ default_payment_method_id: string | null }>(o.billing)?.default_payment_method_id === arId;
-    return !(o.status === 'completed' && ar) && o.status !== 'paid';
-  });
-  if (stuck.length > 0) {
-    return { ok: false, error: `${stuck.length} order(s) not ready (e.g. ${stuck.slice(0, 3).map((o) => `${o.order_no}:${o.status}`).join(', ')}). Finish/settle them first.` };
-  }
-
-  await supabase.from('business_day_close').update({ revenue_confirmed_at: now }).eq('branch_id', branchId).eq('business_date', date);
+  await supabase.from('business_day_close').update({ order_reviewed_at: new Date().toISOString() }).eq('branch_id', branchId).eq('business_date', date);
   revalidatePath('/reconciliation/end-of-day');
   return { ok: true };
 }
@@ -183,8 +171,8 @@ export async function runBalanceCheck(branchId: string, date: string): Promise<A
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = createServiceClient();
-  const { data: rec } = await supabase.from('business_day_close').select('status, revenue_confirmed_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
-  if (!rec || !rec.revenue_confirmed_at) return { ok: false, error: 'Run Revenue Confirmation first' };
+  const { data: rec } = await supabase.from('business_day_close').select('status, order_reviewed_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
+  if (!rec || !rec.order_reviewed_at) return { ok: false, error: 'Run Order Review first' };
   if (rec.status === 'closed') return { ok: false, error: 'Business day is already closed' };
 
   const arId = await arMethodId(supabase);
@@ -205,15 +193,30 @@ export async function runBalanceCheck(branchId: string, date: string): Promise<A
   return { ok: true };
 }
 
-/** Step 3: lock the business day. No new orders / payments for it afterward. */
+/** Step 4: lock the business day. Requires review + balances done + every order confirmed (closed). */
 export async function closeBusinessDay(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = createServiceClient();
-  const { data: rec } = await supabase.from('business_day_close').select('status, balances_ok_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
+  const { data: rec } = await supabase.from('business_day_close').select('status, order_reviewed_at, balances_ok_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   if (!rec) return { ok: false, error: 'Run the checks first' };
-  if (!rec.balances_ok_at) return { ok: false, error: 'Run Check Balances first' };
   if (rec.status === 'closed') return { ok: false, error: 'Already closed' };
+  if (!rec.order_reviewed_at) return { ok: false, error: 'Run Order Review first' };
+  if (!rec.balances_ok_at) return { ok: false, error: 'Run Check Balances first' };
+
+  // Revenue must be confirmed: no order left to close for the day.
+  const arId = await arMethodId(supabase);
+  const { data: open } = await supabase
+    .from('orders')
+    .select('order_no, status, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id )')
+    .eq('branch_id', branchId).eq('service_date', date).is('deleted_at', null).not('status', 'in', '(closed,void)');
+  const pending = (open ?? []).filter((o) => {
+    const ar = !!arId && one<{ default_payment_method_id: string | null }>(o.billing)?.default_payment_method_id === arId;
+    return o.status === 'paid' || (o.status === 'completed' && ar) || ['draft', 'open', 'in_service', 'completed'].includes(o.status);
+  });
+  if (pending.length > 0) {
+    return { ok: false, error: `${pending.length} order(s) not yet confirmed/closed — finish Revenue Confirmation first.` };
+  }
 
   const { error } = await supabase
     .from('business_day_close')

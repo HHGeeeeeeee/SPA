@@ -6,13 +6,13 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Sunset, Scale, Lock, CircleCheck } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import {
-  loadEod, runRevenueCheck, runBalanceCheck, closeBusinessDay, type EodView,
+  loadEod, runOrderReview, runBalanceCheck, closeBusinessDay, type EodView,
 } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
 
 function peso(cents: number): string {
@@ -52,8 +52,9 @@ export function EodPipeline({
   }, [branchId, date]);
 
   const rec = view.record;
-  const step1Done = !!rec?.revenue_confirmed_at;
+  const step1Done = !!rec?.order_reviewed_at;
   const step2Done = !!rec?.balances_ok_at;
+  const step3Done = view.pendingConfirmCount === 0; // revenue confirmed = nothing left to close
   const closed = rec?.status === 'closed';
   const eodNo = `EOD-${date.replaceAll('-', '').slice(2)}`;
 
@@ -107,27 +108,27 @@ export function EodPipeline({
         </CardContent>
       </Card>
 
-      {/* 3-step pipeline */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Step 1 */}
+      {/* 4-step pipeline */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Step 1 — Order Review */}
         <Card className="p-4 flex flex-col gap-3">
           <div className="flex items-center gap-2">
             <StepDot n={1} done={step1Done} active={!closed && !step1Done} />
-            <h3 className="text-lg font-bold">Revenue Confirmation</h3>
+            <h3 className="text-lg font-bold">Order Review</h3>
           </div>
           <p className="text-sm font-medium text-muted-foreground flex-1">
-            Cancel no-show reservations and move the day&apos;s Paid / AR-completed orders to Closed.
+            Cancel no-show reservations and check every order has been served (none left draft / open / in service).
             {view.noShowCount > 0 && <span className="block mt-1 text-amber-700 dark:text-amber-400">{view.noShowCount} no-show reservation(s) will be cancelled.</span>}
-            {view.blocking.length > 0 && <span className="block mt-1 text-amber-700 dark:text-amber-400">{view.blocking.length} order(s) not ready: {view.blocking.slice(0, 3).map((b) => `${b.order_no}(${b.status})`).join(', ')}{view.blocking.length > 3 ? '…' : ''}</span>}
+            {view.unserved.length > 0 && <span className="block mt-1 text-amber-700 dark:text-amber-400">{view.unserved.length} order(s) not finished: {view.unserved.slice(0, 3).map((b) => `${b.order_no}(${b.status})`).join(', ')}{view.unserved.length > 3 ? '…' : ''}</span>}
           </p>
           {step1Done ? (
-            <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><CircleCheck className="size-4" /> Confirmed {rec?.revenue_confirmed_at ? `· ${fmt(rec.revenue_confirmed_at)}` : ''}</div>
+            <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><CircleCheck className="size-4" /> Reviewed {rec?.order_reviewed_at ? `· ${fmt(rec.order_reviewed_at)}` : ''}</div>
           ) : (
-            <Button onClick={() => run(runRevenueCheck, 'Revenue confirmed')} disabled={pending || closed}>{pending ? '…' : 'Run Revenue Check'}</Button>
+            <Button onClick={() => run(runOrderReview, 'Orders reviewed')} disabled={pending || closed}>{pending ? '…' : 'Run Order Review'}</Button>
           )}
         </Card>
 
-        {/* Step 2 */}
+        {/* Step 2 — Check Balances */}
         <Card className="p-4 flex flex-col gap-3">
           <div className="flex items-center gap-2">
             <StepDot n={2} done={step2Done} active={!closed && step1Done && !step2Done} />
@@ -146,10 +147,30 @@ export function EodPipeline({
           )}
         </Card>
 
-        {/* Step 3 */}
+        {/* Step 3 — Revenue Confirmation (handled on its own page) */}
         <Card className="p-4 flex flex-col gap-3">
           <div className="flex items-center gap-2">
-            <StepDot n={3} done={closed} active={!closed && step2Done} />
+            <StepDot n={3} done={step3Done} active={!closed && step2Done && !step3Done} />
+            <h3 className="text-lg font-bold">Revenue Confirmation</h3>
+          </div>
+          <p className="text-sm font-medium text-muted-foreground flex-1">
+            Close the day&apos;s Paid / AR-completed orders on the Revenue Confirm page (cash must be reconciled first).
+            {view.pendingConfirmCount > 0 && <span className="block mt-1 text-amber-700 dark:text-amber-400">{view.pendingConfirmCount} order(s) still to confirm.</span>}
+            {!view.cashClosed && <span className="block mt-1 text-amber-700 dark:text-amber-400">Cash not closed yet — Revenue Confirm will be blocked.</span>}
+          </p>
+          {step3Done ? (
+            <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><CircleCheck className="size-4" /> All confirmed</div>
+          ) : (
+            <Link href={`/reconciliation/revenue-confirm?branch=${branchId}&date=${date}`} className={buttonVariants({ variant: 'outline' })}>
+              Go to Revenue Confirm
+            </Link>
+          )}
+        </Card>
+
+        {/* Step 4 — Close Day */}
+        <Card className="p-4 flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <StepDot n={4} done={closed} active={!closed && step1Done && step2Done && step3Done} />
             <h3 className="text-lg font-bold">Close Day</h3>
           </div>
           <p className="text-sm font-medium text-muted-foreground flex-1">
@@ -157,12 +178,12 @@ export function EodPipeline({
           </p>
           {closed ? (
             <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><Lock className="size-4" /> Day closed</div>
-          ) : step2Done ? (
+          ) : step1Done && step2Done && step3Done ? (
             <Button className="bg-foreground text-background hover:bg-foreground/90" onClick={() => run(closeBusinessDay, 'Business day closed')} disabled={pending}>
               <Lock className="size-4" /> {pending ? '…' : 'Close Business Day'}
             </Button>
           ) : (
-            <p className="text-xs font-semibold text-muted-foreground">Complete Step 2 first.</p>
+            <p className="text-xs font-semibold text-muted-foreground">Complete Steps 1–3 first.</p>
           )}
         </Card>
       </div>

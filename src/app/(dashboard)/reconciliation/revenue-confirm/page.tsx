@@ -25,6 +25,9 @@ function todayPHT(): string {
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 }
+function moneyCell(cents: number): string {
+  return cents > 0 ? peso(cents) : '—';
+}
 
 export default async function RevenueConfirmPage({
   searchParams,
@@ -95,12 +98,14 @@ export default async function RevenueConfirmPage({
                   <TableHead className="font-bold">Order No</TableHead>
                   <TableHead className="font-bold">Type</TableHead>
                   <TableHead className="font-bold">Billing</TableHead>
+                  <TableHead className="w-28 font-bold text-right">Cash</TableHead>
+                  <TableHead className="w-28 font-bold text-right">PAYMAYA</TableHead>
                   <TableHead className="w-32 font-bold text-right">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {orders.length === 0 ? (
-                  <TableRow><TableCell colSpan={4} className="text-center py-10 text-sm font-semibold text-muted-foreground">No orders pending confirmation for this branch/day.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-center py-10 text-sm font-semibold text-muted-foreground">No orders pending confirmation for this branch/day.</TableCell></TableRow>
                 ) : (
                   orders.map((o) => (
                     <TableRow key={o.id}>
@@ -111,6 +116,8 @@ export default async function RevenueConfirmPage({
                         <Badge variant={o.isAR ? 'secondary' : 'default'} className="font-bold">{o.isAR ? 'AR' : 'Paid'}</Badge>
                       </TableCell>
                       <TableCell className="font-medium text-muted-foreground">{o.billing_label ?? 'Self-pay'}</TableCell>
+                      <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.cash_cents)}</TableCell>
+                      <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.paymaya_cents)}</TableCell>
                       <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
                     </TableRow>
                   ))

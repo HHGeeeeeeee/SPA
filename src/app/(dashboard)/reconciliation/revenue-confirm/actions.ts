@@ -17,6 +17,8 @@ export interface ConfirmableOrder {
   status: string;
   isAR: boolean;
   total_cents: number;
+  cash_cents: number;
+  paymaya_cents: number;
   billing_label: string | null;
 }
 
@@ -30,7 +32,8 @@ export async function loadConfirmable(branchId: string, date: string): Promise<C
     .from('orders')
     .select(`
       id, order_no, status, total_cents,
-      billing:billing_destinations!orders_billing_to_id_fkey ( code, name, default_payment_method_id )
+      billing:billing_destinations!orders_billing_to_id_fkey ( code, name, default_payment_method_id ),
+      payments ( amount_cents, method:payment_methods ( code ) )
     `)
     .eq('branch_id', branchId)
     .eq('service_date', date)
@@ -41,12 +44,17 @@ export async function loadConfirmable(branchId: string, date: string): Promise<C
     .map((o) => {
       const b = one(o.billing);
       const isAR = !!arMethodId && b?.default_payment_method_id === arMethodId;
+      const pays = o.payments ?? [];
+      const sumByCode = (code: string) =>
+        pays.filter((p) => one(p.method)?.code === code).reduce((s, p) => s + p.amount_cents, 0);
       return {
         id: o.id,
         order_no: o.order_no,
         status: o.status,
         isAR,
         total_cents: o.total_cents,
+        cash_cents: sumByCode('cash'),
+        paymaya_cents: sumByCode('paymaya'),
         billing_label: b ? `${b.code} — ${b.name}` : null,
       };
     })

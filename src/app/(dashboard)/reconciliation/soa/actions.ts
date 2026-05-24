@@ -37,8 +37,15 @@ export async function loadSoaCandidates(billingToId: string, from: string, to: s
     .map((o) => ({ id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents }));
 }
 
-export interface SoaGuestLine { name: string; amount_cents: number }
-export interface SoaOrderLine { id: string; order_no: string; service_date: string; total_cents: number; guests: SoaGuestLine[] }
+export interface SoaItemLine {
+  guest: string;
+  service: string;
+  duration_minutes: number | null;
+  gross_cents: number;
+  discount_cents: number;
+  net_cents: number;
+}
+export interface SoaOrderLine { id: string; order_no: string; service_date: string; total_cents: number; lines: SoaItemLine[] }
 export interface SoaGroup {
   billing_id: string;
   code: string;
@@ -68,7 +75,7 @@ export async function loadSoaWorkspace(from: string, to: string): Promise<SoaGro
   const [{ data: orders }, { data: taken }] = await Promise.all([
     supabase
       .from('orders')
-      .select('id, order_no, service_date, total_cents, billing_to_id, order_customers ( id, customer_name, seq_no ), order_items ( order_customer_id, final_amount_cents, status )')
+      .select('id, order_no, service_date, total_cents, billing_to_id, order_customers ( id, customer_name, seq_no ), order_items ( order_customer_id, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status, service:service_items ( name ) )')
       .in('billing_to_id', [...billMap.keys()])
       .eq('status', 'closed')
       .is('deleted_at', null)
@@ -86,20 +93,25 @@ export async function loadSoaWorkspace(from: string, to: string): Promise<SoaGro
     if (!b) continue;
     const name = new Map((o.order_customers ?? []).map((c) => [c.id, c.customer_name]));
     const seq = new Map((o.order_customers ?? []).map((c) => [c.id, c.seq_no]));
-    const byCust = new Map<string, number>();
-    for (const it of o.order_items ?? []) {
-      if (it.status === 'cancelled' || !it.order_customer_id) continue;
-      byCust.set(it.order_customer_id, (byCust.get(it.order_customer_id) ?? 0) + (it.final_amount_cents ?? 0));
-    }
-    const guests: SoaGuestLine[] = [...byCust.entries()]
-      .map(([cid, amt]) => ({ name: name.get(cid) ?? 'Guest', amount_cents: amt, _seq: seq.get(cid) ?? 99 }))
+    // One detail row per service line: which service, duration, gross, discount, net.
+    const lines: SoaItemLine[] = (o.order_items ?? [])
+      .filter((it) => it.status !== 'cancelled')
+      .map((it) => ({
+        guest: name.get(it.order_customer_id ?? '') ?? 'Guest',
+        _seq: seq.get(it.order_customer_id ?? '') ?? 99,
+        service: one(it.service)?.name ?? 'Service',
+        duration_minutes: it.duration_minutes,
+        gross_cents: it.list_price_cents ?? 0,
+        discount_cents: it.discount_amount_cents ?? 0,
+        net_cents: it.final_amount_cents ?? 0,
+      }))
       .sort((a, b2) => a._seq - b2._seq)
-      .map(({ name: n, amount_cents }) => ({ name: n, amount_cents }));
+      .map(({ _seq, ...rest }) => rest);
 
     const g = groups.get(b.id) ?? { billing_id: b.id, code: b.code, name: b.name, settlement_type: b.settlement_type, bookings: 0, total_cents: 0, orders: [] };
     g.bookings += 1;
     g.total_cents += o.total_cents;
-    g.orders.push({ id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents, guests });
+    g.orders.push({ id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents, lines });
     groups.set(b.id, g);
   }
   return [...groups.values()].sort((a, b) => b.total_cents - a.total_cents);

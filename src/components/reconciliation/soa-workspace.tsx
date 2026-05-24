@@ -199,22 +199,30 @@ export function SoaWorkspace({
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="w-36 font-bold">Date</TableHead>
-                            <TableHead className="font-bold">Booking #</TableHead>
+                            <TableHead className="w-32 font-bold">Date</TableHead>
+                            <TableHead className="w-44 font-bold">Booking #</TableHead>
                             <TableHead className="font-bold">Guest</TableHead>
-                            <TableHead className="w-36 font-bold text-right pr-4">Amount</TableHead>
+                            <TableHead className="font-bold">Service</TableHead>
+                            <TableHead className="w-20 font-bold text-right">Mins</TableHead>
+                            <TableHead className="w-28 font-bold text-right">Gross</TableHead>
+                            <TableHead className="w-28 font-bold text-right">Discount</TableHead>
+                            <TableHead className="w-32 font-bold text-right pr-4">Net</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {g.orders.flatMap((o) =>
-                            (o.guests.length ? o.guests : [{ name: '—', amount_cents: o.total_cents }]).map((gu, i) => (
+                            (o.lines.length ? o.lines : [{ guest: '—', service: '—', duration_minutes: null, gross_cents: o.total_cents, discount_cents: 0, net_cents: o.total_cents }]).map((ln, i) => (
                               <TableRow key={`${o.id}-${i}`}>
-                                <TableCell className="font-medium tabular text-muted-foreground">{o.service_date}</TableCell>
+                                <TableCell className="font-medium tabular text-muted-foreground">{i === 0 ? o.service_date : ''}</TableCell>
                                 <TableCell className="font-mono font-bold">
-                                  <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link>
+                                  {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
                                 </TableCell>
-                                <TableCell className="font-medium">{gu.name}</TableCell>
-                                <TableCell className="font-bold tabular text-right pr-4">{peso(gu.amount_cents)}</TableCell>
+                                <TableCell className="font-medium">{ln.guest}</TableCell>
+                                <TableCell className="font-medium">{ln.service}</TableCell>
+                                <TableCell className="tabular text-right text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
+                                <TableCell className="tabular text-right text-muted-foreground">{peso(ln.gross_cents)}</TableCell>
+                                <TableCell className="tabular text-right text-muted-foreground">{ln.discount_cents > 0 ? `−${peso(ln.discount_cents)}` : '—'}</TableCell>
+                                <TableCell className="font-bold tabular text-right pr-4">{peso(ln.net_cents)}</TableCell>
                               </TableRow>
                             )),
                           )}

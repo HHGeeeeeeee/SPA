@@ -96,7 +96,9 @@ export default async function RevenueConfirmPage({
               <TableHeader>
                 <TableRow>
                   <TableHead className="font-bold">Order No</TableHead>
-                  <TableHead className="font-bold">Type</TableHead>
+                  <TableHead className="w-28 font-bold">Type</TableHead>
+                  <TableHead className="w-16 font-bold text-center">PAX</TableHead>
+                  <TableHead className="w-24 font-bold">Settle</TableHead>
                   <TableHead className="font-bold">Billing</TableHead>
                   <TableHead className="w-28 font-bold text-right">Cash</TableHead>
                   <TableHead className="w-28 font-bold text-right">PAYMAYA</TableHead>
@@ -106,13 +108,15 @@ export default async function RevenueConfirmPage({
               </TableHeader>
               <TableBody>
                 {orders.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-10 text-sm font-semibold text-muted-foreground">No orders pending confirmation for this branch/day.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center py-10 text-sm font-semibold text-muted-foreground">No orders pending confirmation for this branch/day.</TableCell></TableRow>
                 ) : (
                   orders.map((o) => (
                     <TableRow key={o.id}>
                       <TableCell className="font-mono font-bold">
                         <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link>
                       </TableCell>
+                      <TableCell className="font-medium text-muted-foreground text-xs capitalize">{o.order_type.replace('_', ' ')}</TableCell>
+                      <TableCell className="font-bold tabular text-center">{o.pax}</TableCell>
                       <TableCell>
                         <Badge variant={o.isAR ? 'secondary' : 'default'} className="font-bold">{o.isAR ? 'AR' : 'Paid'}</Badge>
                       </TableCell>

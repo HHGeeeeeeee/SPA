@@ -15,6 +15,8 @@ export interface ConfirmableOrder {
   id: string;
   order_no: string;
   status: string;
+  order_type: string;
+  pax: number;
   isAR: boolean;
   total_cents: number;
   cash_cents: number;
@@ -31,8 +33,9 @@ export async function loadConfirmable(branchId: string, date: string): Promise<C
   const { data } = await supabase
     .from('orders')
     .select(`
-      id, order_no, status, total_cents,
+      id, order_no, status, order_type, total_cents,
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, default_payment_method_id ),
+      order_customers ( id ),
       payments ( amount_cents, method:payment_methods ( code ) )
     `)
     .eq('branch_id', branchId)
@@ -51,6 +54,8 @@ export async function loadConfirmable(branchId: string, date: string): Promise<C
         id: o.id,
         order_no: o.order_no,
         status: o.status,
+        order_type: o.order_type,
+        pax: o.order_customers?.length ?? 0,
         isAR,
         total_cents: o.total_cents,
         cash_cents: sumByCode('cash'),

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { Suspense, useState, useTransition } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Sparkles } from 'lucide-react';
 
@@ -10,7 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { login } from './actions';
 
-export default function LoginPage() {
+// The form reads ?next= via useSearchParams, so it must sit under a Suspense
+// boundary (otherwise the static prerender of /login bails out and the build
+// fails). The page provides that boundary; the form is the client child.
+function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const [email, setEmail] = useState('');
@@ -34,32 +37,40 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex size-10 items-center justify-center rounded-xl bg-primary/15 text-primary">
-            <Sparkles className="size-5" />
+    <Card className="w-full max-w-sm">
+      <CardHeader className="text-center">
+        <div className="mx-auto mb-2 flex size-10 items-center justify-center rounded-xl bg-primary/15 text-primary">
+          <Sparkles className="size-5" />
+        </div>
+        <CardTitle className="text-xl font-bold">HHG-SPA POS</CardTitle>
+        <p className="text-sm font-medium text-muted-foreground">Sign in to continue</p>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="email" className="font-semibold">Email</Label>
+            <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           </div>
-          <CardTitle className="text-xl font-bold">HHG-SPA POS</CardTitle>
-          <p className="text-sm font-medium text-muted-foreground">Sign in to continue</p>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={submit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="email" className="font-semibold">Email</Label>
-              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password" className="font-semibold">Password</Label>
-              <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            </div>
-            {error && <p className="text-sm font-semibold text-destructive">{error}</p>}
-            <Button type="submit" disabled={pending} className="w-full">
-              {pending ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="password" className="font-semibold">Password</Label>
+            <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </div>
+          {error && <p className="text-sm font-semibold text-destructive">{error}</p>}
+          <Button type="submit" disabled={pending} className="w-full">
+            {pending ? 'Signing in…' : 'Sign in'}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
+      <Suspense fallback={<div className="h-80 w-full max-w-sm animate-pulse rounded-xl border border-border bg-card" />}>
+        <LoginForm />
+      </Suspense>
     </div>
   );
 }

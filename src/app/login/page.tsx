@@ -16,7 +16,7 @@ import { login } from './actions';
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -25,7 +25,7 @@ function LoginForm() {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const r = await login({ email, password });
+      const r = await login({ username, password });
       if (r.ok) {
         const next = params.get('next') || '/dashboard';
         router.replace(next);
@@ -48,8 +48,8 @@ function LoginForm() {
       <CardContent>
         <form onSubmit={submit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="email" className="font-semibold">Email</Label>
-            <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+            <Label htmlFor="username" className="font-semibold">Username</Label>
+            <Input id="username" type="text" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="password" className="font-semibold">Password</Label>

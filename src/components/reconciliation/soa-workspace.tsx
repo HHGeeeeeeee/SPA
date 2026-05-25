@@ -314,10 +314,10 @@ export function SoaWorkspace({
                   <TableHead className="w-8" />
                   <TableHead className="font-bold">SOA No</TableHead>
                   <TableHead className="font-bold">Billing</TableHead>
-                  <TableHead className="w-28 font-bold">Type</TableHead>
+                  <TableHead className="w-28 font-bold text-center">Type</TableHead>
                   <TableHead className="font-bold">Period</TableHead>
                   <TableHead className="w-32 font-bold text-right">Total</TableHead>
-                  <TableHead className="w-28 font-bold pl-6">Status</TableHead>
+                  <TableHead className="w-28 font-bold text-center">Status</TableHead>
                   <TableHead className="w-44" />
                 </TableRow>
               </TableHeader>
@@ -340,10 +340,10 @@ export function SoaWorkspace({
                         </TableCell>
                         <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
                         <TableCell className="font-medium">{s.billing_code ? `${s.billing_code} — ${s.billing_name}` : '—'}</TableCell>
-                        <TableCell><Badge variant="secondary" className="font-bold capitalize">{(s.settlement_type ?? '').replace('_', '-')}</Badge></TableCell>
+                        <TableCell className="text-center"><Badge variant="secondary" className="font-bold capitalize">{(s.settlement_type ?? '').replace('_', '-')}</Badge></TableCell>
                         <TableCell className="font-medium tabular text-muted-foreground">{s.period_from} → {s.period_to}</TableCell>
                         <TableCell className="font-bold tabular text-right">{peso(s.total_cents)}</TableCell>
-                        <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
+                        <TableCell className="text-center"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
                         <TableCell><div className="flex justify-end"><SoaActions id={s.id} status={s.status} /></div></TableCell>
                       </TableRow>
                       {isOpen && (
@@ -371,9 +371,9 @@ export function SoaWorkspace({
                                   <TableRow>
                                     <TableHead className="font-bold pl-6">Date</TableHead>
                                     <TableHead className="font-bold">Order No</TableHead>
-                                    <TableHead className="font-bold">Guest Name</TableHead>
+                                    <TableHead className="font-bold pl-4">Guest Name</TableHead>
                                     <TableHead className="font-bold">Service</TableHead>
-                                    <TableHead className="font-bold text-right">Mins</TableHead>
+                                    <TableHead className="font-bold text-center">Mins</TableHead>
                                     <TableHead className="font-bold text-right">Net</TableHead>
                                     <TableHead />
                                     <TableHead />
@@ -387,9 +387,9 @@ export function SoaWorkspace({
                                         <TableCell className="font-mono font-bold">
                                           {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
                                         </TableCell>
-                                        <TableCell className="font-medium">{ln.guest}</TableCell>
+                                        <TableCell className="font-medium pl-4">{ln.guest}</TableCell>
                                         <TableCell className="font-medium">{ln.service}</TableCell>
-                                        <TableCell className="tabular text-right text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
+                                        <TableCell className="tabular text-center text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
                                         <TableCell className="font-bold tabular text-right">{peso(ln.net_cents)}</TableCell>
                                         <TableCell className="w-28" />
                                         <TableCell className="w-44" />

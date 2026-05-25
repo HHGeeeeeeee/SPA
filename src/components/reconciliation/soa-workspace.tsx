@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronDown, FileText, FilePlus2, CalendarClock } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, FilePlus2, CalendarClock, Download } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -112,9 +112,9 @@ export function SoaWorkspace({
     });
   }
 
-  // --- History batch-settle ---
-  const settleable = history.filter((s) => SETTLEABLE.has(s.status));
-  const allHistSelected = settleable.length > 0 && histSel.size === settleable.length;
+  // --- History selection: ANY statement can be selected (for PDF download);
+  // settling acts only on the settleable subset of the selection. ---
+  const allHistSelected = history.length > 0 && histSel.size === history.length;
   function toggleHistSel(id: string) {
     setHistSel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
@@ -122,13 +122,18 @@ export function SoaWorkspace({
     setHistExp((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleAllHist() {
-    setHistSel(allHistSelected ? new Set() : new Set(settleable.map((s) => s.id)));
+    setHistSel(allHistSelected ? new Set() : new Set(history.map((s) => s.id)));
   }
-  const histSelTotal = history.filter((s) => histSel.has(s.id)).reduce((sum, s) => sum + s.total_cents, 0);
+  const selectedSettleable = history.filter((s) => histSel.has(s.id) && SETTLEABLE.has(s.status));
+  // 1 selected → that statement's PDF; many → a ZIP of separate PDFs.
+  const pdfHref = histSel.size === 1
+    ? `/reconciliation/soa/${[...histSel][0]}/pdf`
+    : `/reconciliation/soa/pdf-zip?ids=${[...histSel].join(',')}`;
   function doSettle() {
-    if (histSel.size === 0) return;
+    const ids = selectedSettleable.map((s) => s.id);
+    if (ids.length === 0) return;
     startSettle(async () => {
-      const r = await settleSOABatch([...histSel]);
+      const r = await settleSOABatch(ids);
       if (r.ok) {
         toast.success(`Settled ${r.data?.settled} SOA${(r.data?.settled ?? 0) > 1 ? 's' : ''}`);
         setHistSel(new Set());
@@ -287,22 +292,30 @@ export function SoaWorkspace({
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {/* Batch-settle bar — select issued/partial-paid statements and settle
-              (and post, once ERP wiring lands) them in one pass. */}
-          {settleable.length > 0 && (
-            <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allHistSelected} onChange={toggleAllHist} />
-                <span className="text-sm font-bold">Select all issued ({settleable.length})</span>
-              </label>
-              {histSel.size > 0 && (
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-bold">{histSel.size} SOA · {peso(histSelTotal)}</span>
-                  <Button size="sm" onClick={doSettle} disabled={settling}>{settling ? 'Settling…' : `Settle & post (${histSel.size})`}</Button>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Selection bar — pick statements to download as PDF; settling acts
+              only on the settleable (issued / partial-paid) ones selected. */}
+          <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allHistSelected} onChange={toggleAllHist} />
+              <span className="text-sm font-bold">Select all ({history.length})</span>
+            </label>
+            {histSel.size > 0 && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-bold">{histSel.size} selected</span>
+                <a
+                  href={pdfHref}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-bold text-primary-foreground hover:bg-primary/90"
+                >
+                  <Download className="size-4" /> Download PDF ({histSel.size})
+                </a>
+                {selectedSettleable.length > 0 && (
+                  <Button size="sm" variant="secondary" onClick={doSettle} disabled={settling}>
+                    {settling ? 'Settling…' : `Settle & post (${selectedSettleable.length})`}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
 
           <Card className="p-0 overflow-hidden">
             {/* table-fixed: exact column widths so the nested detail's Net lines
@@ -324,19 +337,16 @@ export function SoaWorkspace({
               <TableBody>
                 {history.map((s) => {
                   const isOpen = histExp.has(s.id);
-                  const canSettle = SETTLEABLE.has(s.status);
                   return (
                     <Fragment key={s.id}>
-                      <TableRow className={cn(canSettle && histSel.has(s.id) && 'bg-primary/5')}>
+                      <TableRow className={cn(histSel.has(s.id) && 'bg-primary/5')}>
                         <TableCell className="pr-0">
                           <button type="button" onClick={() => toggleHistExp(s.id)} className="text-muted-foreground hover:text-foreground">
                             {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                           </button>
                         </TableCell>
                         <TableCell className="pr-0">
-                          {canSettle && (
-                            <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(s.id)} onChange={() => toggleHistSel(s.id)} />
-                          )}
+                          <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(s.id)} onChange={() => toggleHistSel(s.id)} />
                         </TableCell>
                         <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
                         <TableCell className="font-medium">{s.billing_code ? `${s.billing_code} — ${s.billing_name}` : '—'}</TableCell>
@@ -344,7 +354,14 @@ export function SoaWorkspace({
                         <TableCell className="font-medium tabular text-muted-foreground">{s.period_from} → {s.period_to}</TableCell>
                         <TableCell className="font-bold tabular text-right">{peso(s.total_cents)}</TableCell>
                         <TableCell className="text-center"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
-                        <TableCell><div className="flex justify-end"><SoaActions id={s.id} status={s.status} /></div></TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-1">
+                            <a href={`/reconciliation/soa/${s.id}/pdf`} title="Download PDF" className="rounded p-1 text-muted-foreground hover:text-primary hover:bg-accent">
+                              <Download className="size-4" />
+                            </a>
+                            <SoaActions id={s.id} status={s.status} />
+                          </div>
+                        </TableCell>
                       </TableRow>
                       {isOpen && (
                         <TableRow className="bg-muted/20 hover:bg-muted/20">

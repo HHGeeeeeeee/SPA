@@ -56,24 +56,28 @@ export function BatchPriceDialog({
   onApplied?: () => void;
 }) {
   const router = useRouter();
-  const [mode, setMode] = useState<'percent' | 'amount'>('percent');
+  const [mode, setMode] = useState<'percent' | 'amount' | 'set'>('percent');
   const [direction, setDirection] = useState<1 | -1>(1);
   const [magnitude, setMagnitude] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(todayISO());
   const [busy, startBusy] = useTransition();
 
-  const signedValue = (Number(magnitude) || 0) * direction;
+  // 'set' is an absolute target (no direction); percent/amount are signed.
+  const sentValue = mode === 'set' ? (Number(magnitude) || 0) : (Number(magnitude) || 0) * direction;
 
   // Preview rows — new price computed with the same rule the server uses
   // (round to ₱1). Skips items with no current price (server reads the open
   // segment authoritatively, so this is a guide).
   const preview = useMemo(() => targets.map((t) => {
-    if (t.currentCents == null) return { ...t, newCents: null as number | null, skip: 'no price' };
-    const raw = mode === 'percent' ? t.currentCents * (1 + signedValue / 100) : t.currentCents + signedValue * 100;
+    if (mode !== 'set' && t.currentCents == null) return { ...t, newCents: null as number | null, skip: 'no price' };
+    const base = t.currentCents ?? 0;
+    const raw = mode === 'percent' ? base * (1 + sentValue / 100)
+      : mode === 'amount' ? base + sentValue * 100
+      : sentValue * 100;
     const newCents = roundPeso(raw);
     if (newCents <= 0) return { ...t, newCents, skip: '≤ ₱0' };
     return { ...t, newCents, skip: '' };
-  }), [targets, mode, signedValue]);
+  }), [targets, mode, sentValue]);
 
   const changing = preview.filter((p) => !p.skip && p.newCents != null && p.newCents !== p.currentCents).length;
 
@@ -83,7 +87,7 @@ export function BatchPriceDialog({
       const r = await batchScheduleServicePriceChange({
         service_item_ids: targets.map((t) => t.id),
         mode,
-        value: signedValue,
+        value: sentValue,
         effective_from: effectiveFrom,
       });
       if (r.ok) {
@@ -104,7 +108,7 @@ export function BatchPriceDialog({
             <Percent className="size-5 text-primary" /> Batch price change — {targets.length} service{targets.length > 1 ? 's' : ''}
           </DialogTitle>
           <DialogDescription className="font-medium">
-            Adjust by percentage or a fixed amount, rounded to ₱1. Each service keeps its history; the new price applies from the effective date.
+            Adjust by percentage, by a fixed amount, or set every selected service to one price — rounded to ₱1. Each service keeps its history; the new price applies from the effective date.
           </DialogDescription>
         </DialogHeader>
 
@@ -113,28 +117,30 @@ export function BatchPriceDialog({
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Type</Label>
               <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
-                {(['percent', 'amount'] as const).map((m) => (
+                {([['percent', 'Percentage'], ['amount', 'Fixed ₱'], ['set', 'Set to']] as const).map(([m, lbl]) => (
                   <button key={m} type="button" onClick={() => setMode(m)}
                     className={cn('rounded-md px-3 py-1.5 text-sm font-bold transition-colors', mode === m ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent')}>
-                    {m === 'percent' ? 'Percentage' : 'Fixed ₱'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-xs font-semibold">Direction</Label>
-              <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
-                {([[1, 'Increase'], [-1, 'Decrease']] as const).map(([d, lbl]) => (
-                  <button key={lbl} type="button" onClick={() => setDirection(d as 1 | -1)}
-                    className={cn('rounded-md px-3 py-1.5 text-sm font-bold transition-colors', direction === d ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent')}>
                     {lbl}
                   </button>
                 ))}
               </div>
             </div>
+            {mode !== 'set' && (
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Direction</Label>
+                <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+                  {([[1, 'Increase'], [-1, 'Decrease']] as const).map(([d, lbl]) => (
+                    <button key={lbl} type="button" onClick={() => setDirection(d as 1 | -1)}
+                      className={cn('rounded-md px-3 py-1.5 text-sm font-bold transition-colors', direction === d ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent')}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex flex-col gap-1">
-              <Label className="text-xs font-semibold">{mode === 'percent' ? 'Percent (%)' : 'Amount (₱)'}</Label>
-              <Input type="number" min="0" step={mode === 'percent' ? '0.5' : '1'} value={magnitude} onChange={(e) => setMagnitude(e.target.value)} className="w-32" placeholder={mode === 'percent' ? '10' : '100'} />
+              <Label className="text-xs font-semibold">{mode === 'percent' ? 'Percent (%)' : mode === 'amount' ? 'Amount (₱)' : 'Set price to (₱)'}</Label>
+              <Input type="number" min="0" step={mode === 'percent' ? '0.5' : '1'} value={magnitude} onChange={(e) => setMagnitude(e.target.value)} className="w-32" placeholder={mode === 'percent' ? '10' : mode === 'amount' ? '100' : '1000'} />
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Effective from</Label>

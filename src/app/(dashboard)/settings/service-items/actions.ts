@@ -250,8 +250,9 @@ export async function deleteFuturePrice(priceId: string): Promise<ActionResult> 
 
 const batchSchema = z.object({
   service_item_ids: z.array(z.string().uuid()).min(1),
-  mode: z.enum(['percent', 'amount']),
-  value: z.coerce.number(), // signed: percentage points, or PHP amount
+  // percent / amount: signed adjustment off the current price; set: absolute target price.
+  mode: z.enum(['percent', 'amount', 'set']),
+  value: z.coerce.number(),
   effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date'),
 });
 
@@ -295,7 +296,9 @@ export async function batchScheduleServicePriceChange(
     if (effective_from <= open.effective_from) { skipped.push({ label: lbl, reason: 'a later/equal price segment already exists' }); continue; }
 
     const base = open.price_cents;
-    const raw = mode === 'percent' ? base * (1 + value / 100) : base + value * 100;
+    const raw = mode === 'percent' ? base * (1 + value / 100)
+      : mode === 'amount' ? base + value * 100
+      : value * 100; // set: absolute target
     const newCents = roundPeso(raw);
     if (newCents <= 0) { skipped.push({ label: lbl, reason: 'result would be ₱0 or less' }); continue; }
     if (newCents === base) { skipped.push({ label: lbl, reason: 'no change' }); continue; }

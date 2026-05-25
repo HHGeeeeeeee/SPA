@@ -31,7 +31,7 @@ const sections = [
       { icon: Percent, label: 'Commission Policies', href: '/settings/commission-policies', desc: 'Per-branch warm-up / first-session rules' },
       { icon: Users, label: 'Employees', href: '/settings/employees', desc: 'Therapists & staff records' },
       { icon: Tags, label: 'Service Categories', href: '/settings/service-categories', desc: 'Massage / Hair / Nail / Rest' },
-      { icon: ScrollText, label: 'Service Items', href: '/settings/service-items', desc: 'Individual services & pricing' },
+      { icon: ScrollText, label: 'Service Items Price', href: '/settings/service-items', desc: 'Service prices, validity & batch changes' },
       { icon: Wrench, label: 'Service Stations', href: '/settings/resources', desc: 'Beds, chairs, tables, rooms' },
     ],
   },

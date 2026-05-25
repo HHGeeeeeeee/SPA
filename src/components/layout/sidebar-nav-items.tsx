@@ -83,7 +83,7 @@ export const mainNavItems: NavItem[] = [
         label: 'Catalog',
         items: [
           { label: 'Service Categories', href: '/settings/service-categories' },
-          { label: 'Service Items', href: '/settings/service-items' },
+          { label: 'Service Items Price', href: '/settings/service-items' },
           { label: 'Service Stations', href: '/settings/resources' },
         ],
       },

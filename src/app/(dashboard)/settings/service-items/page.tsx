@@ -103,7 +103,7 @@ export default async function ServiceItemsPage() {
             <ChevronLeft className="size-3" />
             Settings
           </Link>
-          <h2 className="text-3xl font-bold tracking-tight mt-1">Service Items</h2>
+          <h2 className="text-3xl font-bold tracking-tight mt-1">Service Items Price</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
             {items.length} total · {activeCount} active
           </p>

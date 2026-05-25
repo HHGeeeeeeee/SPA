@@ -94,12 +94,14 @@ export function ServiceItemsTable({
               </TableHead>
               <TableHead className="w-52 font-bold">Service Group</TableHead>
               <TableHead className="w-24 font-bold">Code</TableHead>
-              <TableHead className="w-28 font-bold">Duration</TableHead>
-              <TableHead className="w-32 font-bold text-right">Price</TableHead>
-              <TableHead className="w-48 font-bold">Validity</TableHead>
-              <TableHead className="w-24 font-bold">Slot</TableHead>
+              <TableHead className="w-20 font-bold">Duration</TableHead>
+              <TableHead className="w-24 font-bold text-right">Price</TableHead>
+              <TableHead className="w-52 font-bold">Validity</TableHead>
+              <TableHead className="w-20 font-bold">Slot</TableHead>
+              {/* Station has no width so it soaks up the leftover space — keeps the
+                  left columns tight (Price sits close to Duration). */}
+              <TableHead className="font-bold">Station</TableHead>
               <TableHead className="w-24 font-bold">Status</TableHead>
-              <TableHead className="w-36 font-bold">Station</TableHead>
               <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
@@ -128,11 +130,6 @@ export function ServiceItemsTable({
                       <TableCell className="font-bold tabular">{r.duration_minutes} min</TableCell>
                       <TableCell className="font-bold tabular text-right">
                         {r.priceCents != null ? `₱${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
-                        {r.future && (
-                          <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
-                            → ₱{(r.future.price_cents / 100).toLocaleString('en-PH')} · {r.future.effective_from}
-                          </div>
-                        )}
                       </TableCell>
                       <TableCell className="font-medium tabular text-sm text-muted-foreground">
                         {r.validFrom ? (
@@ -140,6 +137,11 @@ export function ServiceItemsTable({
                             {r.validFrom} <span className="text-muted-foreground/50">to</span> {r.validTo === '2999-12-31' ? 'open' : r.validTo}
                           </>
                         ) : '—'}
+                        {r.future && (
+                          <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
+                            → ₱{(r.future.price_cents / 100).toLocaleString('en-PH')} from {r.future.effective_from}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">
@@ -147,15 +149,15 @@ export function ServiceItemsTable({
                           {r.slot} min
                         </span>
                       </TableCell>
+                      <TableCell className="font-mono font-medium text-muted-foreground">
+                        {r.requiredResourceType ?? '—'}
+                      </TableCell>
                       <TableCell>
                         {r.active ? (
                           <Badge className="font-bold">Active</Badge>
                         ) : (
                           <Badge variant="secondary" className="font-bold">Inactive</Badge>
                         )}
-                      </TableCell>
-                      <TableCell className="font-mono font-medium text-muted-foreground">
-                        {r.requiredResourceType ?? '—'}
                       </TableCell>
                       <TableCell>
                         <ServiceItemRowActions item={{ ...r.itemRecord, active: r.active }} categories={categories} businessUnits={businessUnits} groups={groupNames} />

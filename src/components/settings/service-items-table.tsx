@@ -84,19 +84,21 @@ export function ServiceItemsTable({
       )}
 
       <Card className="p-0 overflow-hidden">
-        <Table>
+        {/* Fixed layout with explicit widths so no single column hogs the slack
+            (Service Group used to absorb it all, leaving a big gap before Code). */}
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
               <TableHead className="w-10">
                 <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allSelected} onChange={toggleAll} aria-label="Select all" />
               </TableHead>
-              <TableHead className="font-bold">Service Group</TableHead>
+              <TableHead className="w-52 font-bold">Service Group</TableHead>
               <TableHead className="w-24 font-bold">Code</TableHead>
               <TableHead className="w-28 font-bold">Duration</TableHead>
-              <TableHead className="w-36 font-bold text-right">Price</TableHead>
-              <TableHead className="w-52 font-bold">Validity</TableHead>
+              <TableHead className="w-32 font-bold text-right">Price</TableHead>
+              <TableHead className="w-48 font-bold">Validity</TableHead>
               <TableHead className="w-24 font-bold">Slot</TableHead>
-              <TableHead className="w-28 font-bold">Status</TableHead>
+              <TableHead className="w-24 font-bold">Status</TableHead>
               <TableHead className="w-36 font-bold">Station</TableHead>
               <TableHead className="w-12" />
             </TableRow>

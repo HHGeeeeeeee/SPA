@@ -1,3 +1,5 @@
+import { BedDouble, Users } from 'lucide-react';
+
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
@@ -25,6 +27,9 @@ function tsToMin(iso: string): number {
   const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
   const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
   return h * 60 + m;
+}
+function hm(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
 // Day (hourly) view for either subject. Therapist rows show each rostered
@@ -225,6 +230,85 @@ function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
+interface NowAvailability {
+  bedsFree: number;
+  bedsTotal: number;
+  therapistsFree: number;
+  therapistsOnShift: number;
+  nowMin: number;
+}
+
+// Live "right now" snapshot for the branch — always today, independent of the
+// day/week being viewed. Counts service beds open this minute and rostered
+// therapists who aren't mid-service. Shown above both the Station and Therapist
+// views so the front desk can eyeball walk-in capacity at a glance.
+async function computeNowAvailability(branchId: string): Promise<NowAvailability> {
+  const supabase = createServiceClient();
+  const day = todayISO();
+  const nowMin = tsToMin(new Date().toISOString());
+
+  const [bedsRes, shiftRes, itemsRes, resvRes, graceMin] = await Promise.all([
+    supabase.from('resources').select('id').eq('branch_id', branchId).eq('resource_type', 'massage_bed').eq('status', 'active'),
+    supabase.from('employee_shifts').select('employee_id, shift_start, shift_end').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
+    supabase
+      .from('order_items')
+      .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
+      .not('actual_start', 'is', null),
+    supabase
+      .from('reservations')
+      .select('status, desired_service_start, desired_service_end, service:service_items ( cleanup_after_minutes ), reservation_resources ( resource_id )')
+      .eq('branch_id', branchId).eq('status', 'confirmed').is('deleted_at', null)
+      .gte('desired_service_start', `${day}T00:00:00+08:00`).lte('desired_service_start', `${day}T23:59:59+08:00`),
+    getReservationGraceMinutes(),
+  ]);
+
+  const bedIds = new Set((bedsRes.data ?? []).map((b) => b.id));
+  const items = (itemsRes.data ?? []).filter((it) => { const o = one(it.order); return o && o.branch_id === branchId && o.service_date === day && it.actual_start; });
+
+  // Beds busy this minute: an active service ([prep .. end (+cleanup)]) or a
+  // confirmed, non-overdue pinned reservation whose window covers now.
+  const busyBeds = new Set<string>();
+  for (const it of items) {
+    if (!it.resource_id || !bedIds.has(it.resource_id)) continue;
+    const prep = one(it.service)?.prep_before_minutes ?? 0;
+    const cleanup = one(it.service)?.cleanup_after_minutes ?? 0;
+    const s0 = tsToMin(it.actual_start!);
+    const start = s0 - prep;
+    if (it.actual_end) {
+      const end = tsToMin(it.actual_end);
+      const occEnd = it.bed_released_at ? end : end + cleanup; // released early frees the bed
+      if (nowMin >= start && nowMin < occEnd) busyBeds.add(it.resource_id);
+    } else if (nowMin >= start) {
+      busyBeds.add(it.resource_id); // ongoing
+    }
+  }
+  for (const r of resvRes.data ?? []) {
+    if (isReservationOverdue({ desiredStartIso: r.desired_service_start, graceMin })) continue;
+    const cleanup = one(r.service)?.cleanup_after_minutes ?? 0;
+    const start = tsToMin(r.desired_service_start);
+    const occEnd = tsToMin(r.desired_service_end) + cleanup;
+    if (nowMin >= start && nowMin < occEnd) for (const x of r.reservation_resources ?? []) if (bedIds.has(x.resource_id)) busyBeds.add(x.resource_id);
+  }
+
+  // Therapists rostered (timed shift covering now) minus those mid-service.
+  const onShift = new Set<string>();
+  for (const s of shiftRes.data ?? []) {
+    const ss = timeToMin(s.shift_start), se = timeToMin(s.shift_end);
+    if (ss != null && se != null && nowMin >= ss && nowMin < se) onShift.add(s.employee_id);
+  }
+  const busyTh = new Set<string>();
+  for (const it of items) {
+    if (!it.therapist_id) continue;
+    const s0 = tsToMin(it.actual_start!);
+    const end = it.actual_end ? tsToMin(it.actual_end) : s0 + (it.duration_minutes ?? 60);
+    if (nowMin >= s0 && nowMin < end) busyTh.add(it.therapist_id);
+  }
+  let therapistsFree = 0;
+  for (const id of onShift) if (!busyTh.has(id)) therapistsFree++;
+
+  return { bedsFree: Math.max(0, bedIds.size - busyBeds.size), bedsTotal: bedIds.size, therapistsFree, therapistsOnShift: onShift.size, nowMin };
+}
+
 async function fetchData(branchParam?: string, weekParam?: string) {
   const supabase = createServiceClient();
   const { data: branches } = await supabase
@@ -271,6 +355,8 @@ export default async function ShiftSchedulePage({
   const day = sp.day || todayISO();
   const { branches, branchId, monday, days, employees, shifts } = await fetchData(sp.branch, sp.week);
   const dayData = scale === 'day' && branchId ? await fetchDayData(view, branchId, day) : null;
+  // Live walk-in capacity snapshot — shown above both views, always for "now".
+  const availability = branchId ? await computeNowAvailability(branchId) : null;
 
   const shiftAt = (empId: string, date: string): ShiftData | null => {
     const s = shifts.find((x) => x.employee_id === empId && x.shift_date === date);
@@ -292,6 +378,32 @@ export default async function ShiftSchedulePage({
         </div>
         {branchId && <ShiftControls branches={branches} branchId={branchId} weekStart={monday} day={day} view={view} scale={scale} />}
       </div>
+
+      {/* Live walk-in capacity — open beds + free therapists this minute. Sits
+          above both views, always reflecting "now" regardless of the day shown. */}
+      {availability && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Card className="flex min-w-[180px] flex-1 items-center justify-between gap-3 p-3 sm:max-w-[220px]">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground leading-tight">Beds open now</div>
+              <div className={`mt-0.5 text-2xl font-extrabold tabular ${availability.bedsFree === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`}>
+                {availability.bedsFree}<span className="text-base font-semibold text-muted-foreground"> / {availability.bedsTotal}</span>
+              </div>
+            </div>
+            <BedDouble className="size-6 shrink-0 text-muted-foreground/50" />
+          </Card>
+          <Card className="flex min-w-[180px] flex-1 items-center justify-between gap-3 p-3 sm:max-w-[220px]">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground leading-tight">Therapists free now</div>
+              <div className={`mt-0.5 text-2xl font-extrabold tabular ${availability.therapistsFree === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`}>
+                {availability.therapistsFree}<span className="text-base font-semibold text-muted-foreground"> / {availability.therapistsOnShift} on shift</span>
+              </div>
+            </div>
+            <Users className="size-6 shrink-0 text-muted-foreground/50" />
+          </Card>
+          <span className="text-xs font-semibold text-muted-foreground">Live · as of {hm(availability.nowMin)} PHT</span>
+        </div>
+      )}
 
       {!branchId ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">

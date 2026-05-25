@@ -314,10 +314,14 @@ async function resolveLinePricing(
   // source's default discount and ignore whatever the client sent.
   const { data: ord } = await supabase
     .from('orders')
-    .select('source:customer_sources ( discount_locked, default_discount_class_id )')
+    .select('service_date, source:customer_sources ( discount_locked, default_discount_class_id )')
     .eq('id', d.order_id)
     .maybeSingle();
   const ordSource = ord ? (Array.isArray(ord.source) ? ord.source[0] : ord.source) : null;
+  // Price is the segment effective on the service date (the day it's delivered),
+  // so an advance booking served after a price change pays the new price.
+  const serviceDate = ord?.service_date
+    ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const discountClassId = ordSource?.discount_locked && ordSource.default_discount_class_id
     ? ordSource.default_discount_class_id
     : d.discount_class_id;
@@ -341,16 +345,18 @@ async function resolveLinePricing(
     if (resource.status !== 'active') return { error: `Station is ${resource.status}, not available` };
   }
 
-  // Active Normal / all-branch list price
+  // Normal / all-branch list price whose effective period covers the service date.
   const { data: priceRow } = await supabase
     .from('service_item_prices')
     .select('price_cents')
     .eq('service_item_id', d.service_item_id)
     .eq('price_class', 'Normal')
     .is('branch_id', null)
+    .lte('effective_from', serviceDate)
+    .gte('effective_to', serviceDate)
     .limit(1)
     .maybeSingle();
-  if (!priceRow) return { error: 'No list price set for this service. Set one in Service Items.' };
+  if (!priceRow) return { error: `No list price effective on ${serviceDate} for this service. Set one in Service Items.` };
   const listPrice = priceRow.price_cents;
 
   // Discount

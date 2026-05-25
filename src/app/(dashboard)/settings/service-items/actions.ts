@@ -102,9 +102,147 @@ export async function updateServiceItem(input: unknown): Promise<ActionResult> {
     const { error } = await supabase.from('service_items').update(patch).eq('id', d.id);
     if (error) return { ok: false, error: error.message };
   }
-  if (d.price !== undefined) {
-    const pe = await syncNormalPrice(d.id, d.price);
-    if (pe) return { ok: false, error: pe.message };
+  // NOTE: price is no longer changed here — it has an effective-dated timeline
+  // managed via the price-schedule actions below, so editing service attributes
+  // never silently rewrites price history.
+  revalidatePath('/settings/service-items');
+  return { ok: true };
+}
+
+const OPEN_TO = PRICE_TO; // '2999-12-31' sentinel = "current / until changed"
+
+function todayPHT(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function addDays(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+export interface PriceSegment {
+  id: string;
+  price_cents: number;
+  effective_from: string;
+  effective_to: string;
+  status: 'past' | 'current' | 'future';
+  open_ended: boolean;
+}
+
+/** The Normal / all-branch price timeline for a service item, oldest first. */
+export async function loadPriceSchedule(serviceItemId: string): Promise<PriceSegment[]> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from('service_item_prices')
+    .select('id, price_cents, effective_from, effective_to')
+    .eq('service_item_id', serviceItemId)
+    .eq('price_class', 'Normal')
+    .is('branch_id', null)
+    .order('effective_from', { ascending: true });
+  const today = todayPHT();
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    price_cents: r.price_cents,
+    effective_from: r.effective_from,
+    effective_to: r.effective_to,
+    open_ended: r.effective_to >= OPEN_TO,
+    status: r.effective_to < today ? 'past' : r.effective_from > today ? 'future' : 'current',
+  }));
+}
+
+const scheduleSchema = z.object({
+  service_item_id: z.string().uuid(),
+  price: z.coerce.number().positive(),
+  effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date'),
+});
+
+/** Schedule a price change: cap the open segment, then open a new one. */
+export async function scheduleServicePriceChange(input: unknown): Promise<ActionResult> {
+  const parsed = scheduleSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { service_item_id, price, effective_from } = parsed.data;
+  if (effective_from < todayPHT()) return { ok: false, error: 'Effective date cannot be in the past' };
+  const supabase = createServiceClient();
+
+  // The latest (open) segment is the one we split.
+  const { data: open } = await supabase
+    .from('service_item_prices')
+    .select('id, effective_from, effective_to')
+    .eq('service_item_id', service_item_id)
+    .eq('price_class', 'Normal')
+    .is('branch_id', null)
+    .order('effective_from', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (open) {
+    if (effective_from <= open.effective_from) {
+      return { ok: false, error: 'New price must start after the current price’s start date' };
+    }
+    const cap = await supabase
+      .from('service_item_prices')
+      .update({ effective_to: addDays(effective_from, -1) })
+      .eq('id', open.id);
+    if (cap.error) return { ok: false, error: cap.error.message };
+  }
+  const { error } = await supabase.from('service_item_prices').insert({
+    service_item_id, price_class: 'Normal', branch_id: null,
+    effective_from, effective_to: OPEN_TO, price_cents: Math.round(price * 100),
+  });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/settings/service-items');
+  return { ok: true };
+}
+
+/** Edit the price of a not-yet-effective (future) segment. */
+export async function updateFuturePrice(priceId: string, pricePhp: number): Promise<ActionResult> {
+  if (!(pricePhp > 0)) return { ok: false, error: 'Price must be greater than 0' };
+  const supabase = createServiceClient();
+  const { data: row } = await supabase.from('service_item_prices').select('effective_from').eq('id', priceId).maybeSingle();
+  if (!row) return { ok: false, error: 'Price not found' };
+  if (row.effective_from <= todayPHT()) return { ok: false, error: 'Only a future price change can be edited' };
+  const { error } = await supabase.from('service_item_prices').update({ price_cents: Math.round(pricePhp * 100) }).eq('id', priceId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/settings/service-items');
+  return { ok: true };
+}
+
+/** Cancel the latest future price change, re-opening the prior segment. */
+export async function deleteFuturePrice(priceId: string): Promise<ActionResult> {
+  const supabase = createServiceClient();
+  const { data: row } = await supabase
+    .from('service_item_prices')
+    .select('id, service_item_id, effective_from, effective_to')
+    .eq('id', priceId)
+    .maybeSingle();
+  if (!row) return { ok: false, error: 'Price not found' };
+  if (row.effective_from <= todayPHT()) return { ok: false, error: 'Only a future price change can be removed' };
+  // Only the latest segment can be removed, so the timeline stays a clean chain.
+  const { data: later } = await supabase
+    .from('service_item_prices')
+    .select('id')
+    .eq('service_item_id', row.service_item_id)
+    .eq('price_class', 'Normal')
+    .is('branch_id', null)
+    .gt('effective_from', row.effective_from)
+    .limit(1);
+  if (later && later.length > 0) return { ok: false, error: 'Remove the latest scheduled change first' };
+
+  const del = await supabase.from('service_item_prices').delete().eq('id', priceId);
+  if (del.error) return { ok: false, error: del.error.message };
+  // Re-open the segment that immediately preceded it.
+  const { data: prev } = await supabase
+    .from('service_item_prices')
+    .select('id')
+    .eq('service_item_id', row.service_item_id)
+    .eq('price_class', 'Normal')
+    .is('branch_id', null)
+    .lt('effective_from', row.effective_from)
+    .order('effective_from', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (prev) {
+    const reopen = await supabase.from('service_item_prices').update({ effective_to: row.effective_to }).eq('id', prev.id);
+    if (reopen.error) return { ok: false, error: reopen.error.message };
   }
   revalidatePath('/settings/service-items');
   return { ok: true };

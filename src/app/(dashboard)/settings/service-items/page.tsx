@@ -30,7 +30,7 @@ async function fetchData() {
         required_resource_type, pricing_model,
         commission_applicable, tip_applicable, business_unit_id, active,
         category:service_categories ( code, name ),
-        service_item_prices ( price_cents, price_class, branch_id )
+        service_item_prices ( price_cents, price_class, branch_id, effective_from, effective_to )
       `)
       .order('service_group')
       .order('duration_minutes'),
@@ -52,22 +52,27 @@ async function fetchData() {
 export default async function ServiceItemsPage() {
   const { items, categories, businessUnits, groups } = await fetchData();
   const activeCount = items.filter((i) => i.active).length;
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
   // Group rows by service_group (items already ordered by group then duration).
   type Row = {
     i: (typeof items)[number];
     slot: number;
     priceCents: number | null;
+    future: { price_cents: number; effective_from: string } | null;
     itemRecord: ServiceItemRecord;
   };
   const groupMap = new Map<string, { key: string; name: string; categoryCode: string; rows: Row[] }>();
   for (const i of items) {
     const category = Array.isArray(i.category) ? i.category[0] : i.category;
     const slot = i.duration_minutes + i.prep_before_minutes + i.cleanup_after_minutes;
-    const normalPrice = (i.service_item_prices ?? []).find(
-      (p) => p.price_class === 'Normal' && p.branch_id === null,
-    );
-    const priceCents = normalPrice?.price_cents ?? null;
+    const normalRows = (i.service_item_prices ?? []).filter((p) => p.price_class === 'Normal' && p.branch_id === null);
+    // Current = the segment whose period covers today; future = the next one scheduled to start after today.
+    const current = normalRows.find((p) => p.effective_from <= today && p.effective_to >= today) ?? null;
+    const future = normalRows
+      .filter((p) => p.effective_from > today)
+      .sort((a, b) => a.effective_from.localeCompare(b.effective_from))[0] ?? null;
+    const priceCents = current?.price_cents ?? null;
     const itemRecord: ServiceItemRecord = {
       id: i.id,
       code: i.code,
@@ -88,7 +93,7 @@ export default async function ServiceItemsPage() {
     if (!groupMap.has(key)) {
       groupMap.set(key, { key, name: key, categoryCode: category?.code ?? '', rows: [] });
     }
-    groupMap.get(key)!.rows.push({ i, slot, priceCents, itemRecord });
+    groupMap.get(key)!.rows.push({ i, slot, priceCents, future: future ? { price_cents: future.price_cents, effective_from: future.effective_from } : null, itemRecord });
   }
   const orderedGroups = [...groupMap.values()];
 
@@ -159,6 +164,11 @@ export default async function ServiceItemsPage() {
                       <TableCell className="font-bold tabular">{r.i.duration_minutes} min</TableCell>
                       <TableCell className="font-bold tabular text-right">
                         {r.priceCents != null ? `₱${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
+                        {r.future && (
+                          <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
+                            → ₱{(r.future.price_cents / 100).toLocaleString('en-PH')} · {r.future.effective_from}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">

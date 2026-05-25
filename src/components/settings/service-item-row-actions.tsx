@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { MoreVertical, Pencil, Power, PowerOff } from 'lucide-react';
+import { MoreVertical, Pencil, Power, PowerOff, CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ import {
 
 import { setServiceItemActive } from '@/app/(dashboard)/settings/service-items/actions';
 import { ServiceItemFormDialog, type ServiceItemRecord } from './service-item-form-dialog';
+import { PriceScheduleDialog } from './price-schedule-dialog';
 
 interface Props {
   item: ServiceItemRecord & { active: boolean };
@@ -36,6 +37,7 @@ interface Props {
 export function ServiceItemRowActions({ item, categories, businessUnits, groups }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
+  const [pricesOpen, setPricesOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   function toggleActive() {
@@ -61,6 +63,10 @@ export function ServiceItemRowActions({ item, categories, businessUnits, groups 
             <DropdownMenuItem onClick={() => setTimeout(() => setEditOpen(true))}>
               <Pencil className="size-4" />
               Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTimeout(() => setPricesOpen(true))}>
+              <CalendarClock className="size-4" />
+              Manage prices
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {item.active ? (
@@ -89,6 +95,13 @@ export function ServiceItemRowActions({ item, categories, businessUnits, groups 
         groups={groups}
         open={editOpen}
         onOpenChange={setEditOpen}
+      />
+
+      <PriceScheduleDialog
+        serviceItemId={item.id}
+        label={`${item.code} — ${item.name}`}
+        open={pricesOpen}
+        onOpenChange={setPricesOpen}
       />
 
       <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>

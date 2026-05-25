@@ -225,22 +225,31 @@ export function ServiceItemFormDialog({
               </Select>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="si-price" className="font-semibold">Price (₱) *</Label>
-              <Input
-                id="si-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="1000"
-                required
-              />
-              <p className="text-xs font-medium text-muted-foreground">
-                List price (Normal, all branches). Used as the line price at checkout.
-              </p>
-            </div>
+            {isEdit ? (
+              <div className="flex flex-col justify-center gap-1 rounded-lg border border-dashed border-border px-3 py-2">
+                <Label className="font-semibold text-muted-foreground">Price</Label>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Effective-dated — change it under <strong>Manage prices</strong> (⋮ menu).
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="si-price" className="font-semibold">Price (₱) *</Label>
+                <Input
+                  id="si-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="1000"
+                  required
+                />
+                <p className="text-xs font-medium text-muted-foreground">
+                  Initial list price (Normal, all branches). Later changes are effective-dated.
+                </p>
+              </div>
+            )}
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="si-dur" className="font-semibold">Duration (min) *</Label>

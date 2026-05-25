@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { Fragment, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -21,7 +21,9 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { SoaActions } from '@/components/reconciliation/soa-actions';
-import { loadSoaWorkspace, generateSOAForBillings, type SoaGroup } from '@/app/(dashboard)/reconciliation/soa/actions';
+import { loadSoaWorkspace, generateSOAForBillings, settleSOABatch, type SoaGroup, type SoaHistoryRow } from '@/app/(dashboard)/reconciliation/soa/actions';
+
+export type { SoaHistoryRow };
 
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -31,17 +33,8 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = 
   draft: 'secondary', issued: 'default', partial_paid: 'secondary', settled: 'default', void: 'destructive',
 };
 
-export interface SoaHistoryRow {
-  id: string;
-  soa_no: string;
-  status: string;
-  settlement_type: string | null;
-  period_from: string;
-  period_to: string;
-  total_cents: number;
-  billing_code: string | null;
-  billing_name: string | null;
-}
+// Statuses that can be batch-settled from History.
+const SETTLEABLE = new Set(['issued', 'partial_paid']);
 
 export function SoaWorkspace({
   initialFrom,
@@ -65,6 +58,10 @@ export function SoaWorkspace({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, startLoad] = useTransition();
   const [pending, startGen] = useTransition();
+  // History tab: separate select (settleable rows) + expand state.
+  const [histSel, setHistSel] = useState<Set<string>>(new Set());
+  const [histExp, setHistExp] = useState<Set<string>>(new Set());
+  const [settling, startSettle] = useTransition();
 
   // Reload the unsettled list when the date range changes (debounced).
   const [firstRun, setFirstRun] = useState(true);
@@ -111,6 +108,31 @@ export function SoaWorkspace({
         setGroups(data);
         router.refresh(); // refresh history list
         setTab('history');
+      } else toast.error(r.error);
+    });
+  }
+
+  // --- History batch-settle ---
+  const settleable = history.filter((s) => SETTLEABLE.has(s.status));
+  const allHistSelected = settleable.length > 0 && histSel.size === settleable.length;
+  function toggleHistSel(id: string) {
+    setHistSel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleHistExp(id: string) {
+    setHistExp((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAllHist() {
+    setHistSel(allHistSelected ? new Set() : new Set(settleable.map((s) => s.id)));
+  }
+  const histSelTotal = history.filter((s) => histSel.has(s.id)).reduce((sum, s) => sum + s.total_cents, 0);
+  function doSettle() {
+    if (histSel.size === 0) return;
+    startSettle(async () => {
+      const r = await settleSOABatch([...histSel]);
+      if (r.ok) {
+        toast.success(`Settled ${r.data?.settled} SOA${(r.data?.settled ?? 0) > 1 ? 's' : ''}`);
+        setHistSel(new Set());
+        router.refresh();
       } else toast.error(r.error);
     });
   }
@@ -264,34 +286,111 @@ export function SoaWorkspace({
           </CardContent>
         </Card>
       ) : (
-        <Card className="p-0 overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="font-bold">SOA No</TableHead>
-                <TableHead className="font-bold">Billing</TableHead>
-                <TableHead className="w-28 font-bold">Type</TableHead>
-                <TableHead className="font-bold">Period</TableHead>
-                <TableHead className="w-32 font-bold text-right">Total</TableHead>
-                <TableHead className="w-28 font-bold">Status</TableHead>
-                <TableHead className="w-44" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
-                  <TableCell className="font-medium">{s.billing_code ? `${s.billing_code} — ${s.billing_name}` : '—'}</TableCell>
-                  <TableCell><Badge variant="secondary" className="font-bold capitalize">{(s.settlement_type ?? '').replace('_', '-')}</Badge></TableCell>
-                  <TableCell className="font-medium tabular text-muted-foreground">{s.period_from} → {s.period_to}</TableCell>
-                  <TableCell className="font-bold tabular text-right">{peso(s.total_cents)}</TableCell>
-                  <TableCell><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
-                  <TableCell><div className="flex justify-end"><SoaActions id={s.id} status={s.status} /></div></TableCell>
+        <div className="flex flex-col gap-3">
+          {/* Batch-settle bar — select issued/partial-paid statements and settle
+              (and post, once ERP wiring lands) them in one pass. */}
+          {settleable.length > 0 && (
+            <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allHistSelected} onChange={toggleAllHist} />
+                <span className="text-sm font-bold">Select all issued ({settleable.length})</span>
+              </label>
+              {histSel.size > 0 && (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-bold">{histSel.size} SOA · {peso(histSelTotal)}</span>
+                  <Button size="sm" onClick={doSettle} disabled={settling}>{settling ? 'Settling…' : `Settle & post (${histSel.size})`}</Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <Card className="p-0 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8" />
+                  <TableHead className="w-8" />
+                  <TableHead className="font-bold">SOA No</TableHead>
+                  <TableHead className="font-bold">Billing</TableHead>
+                  <TableHead className="w-28 font-bold">Type</TableHead>
+                  <TableHead className="font-bold">Period</TableHead>
+                  <TableHead className="w-32 font-bold text-right">Total</TableHead>
+                  <TableHead className="w-28 font-bold">Status</TableHead>
+                  <TableHead className="w-44" />
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+              </TableHeader>
+              <TableBody>
+                {history.map((s) => {
+                  const isOpen = histExp.has(s.id);
+                  const canSettle = SETTLEABLE.has(s.status);
+                  return (
+                    <Fragment key={s.id}>
+                      <TableRow className={cn(canSettle && histSel.has(s.id) && 'bg-primary/5')}>
+                        <TableCell className="pr-0">
+                          <button type="button" onClick={() => toggleHistExp(s.id)} className="text-muted-foreground hover:text-foreground">
+                            {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                          </button>
+                        </TableCell>
+                        <TableCell className="pr-0">
+                          {canSettle && (
+                            <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(s.id)} onChange={() => toggleHistSel(s.id)} />
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
+                        <TableCell className="font-medium">{s.billing_code ? `${s.billing_code} — ${s.billing_name}` : '—'}</TableCell>
+                        <TableCell><Badge variant="secondary" className="font-bold capitalize">{(s.settlement_type ?? '').replace('_', '-')}</Badge></TableCell>
+                        <TableCell className="font-medium tabular text-muted-foreground">{s.period_from} → {s.period_to}</TableCell>
+                        <TableCell className="font-bold tabular text-right">{peso(s.total_cents)}</TableCell>
+                        <TableCell><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
+                        <TableCell><div className="flex justify-end"><SoaActions id={s.id} status={s.status} /></div></TableCell>
+                      </TableRow>
+                      {isOpen && (
+                        <TableRow className="bg-muted/20 hover:bg-muted/20">
+                          <TableCell colSpan={9} className="p-0">
+                            {s.detail.length === 0 ? (
+                              <p className="px-6 py-4 text-sm font-semibold text-muted-foreground">
+                                {s.status === 'void' ? 'Voided — orders released back to Generate.' : 'No order detail.'}
+                              </p>
+                            ) : (
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="w-32 font-bold pl-6">Date</TableHead>
+                                    <TableHead className="w-44 font-bold">Order No</TableHead>
+                                    <TableHead className="font-bold">Guest Name</TableHead>
+                                    <TableHead className="font-bold">Service</TableHead>
+                                    <TableHead className="w-20 font-bold text-right">Mins</TableHead>
+                                    <TableHead className="w-32 font-bold text-right pr-6">Net</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {s.detail.flatMap((o) =>
+                                    (o.lines.length ? o.lines : [{ guest: '—', service: '—', duration_minutes: null, gross_cents: o.total_cents, discount_cents: 0, net_cents: o.total_cents }]).map((ln, i) => (
+                                      <TableRow key={`${o.id}-${i}`}>
+                                        <TableCell className="font-medium tabular text-muted-foreground pl-6">{i === 0 ? o.service_date : ''}</TableCell>
+                                        <TableCell className="font-mono font-bold">
+                                          {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
+                                        </TableCell>
+                                        <TableCell className="font-medium">{ln.guest}</TableCell>
+                                        <TableCell className="font-medium">{ln.service}</TableCell>
+                                        <TableCell className="tabular text-right text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
+                                        <TableCell className="font-bold tabular text-right pr-6">{peso(ln.net_cents)}</TableCell>
+                                      </TableRow>
+                                    )),
+                                  )}
+                                </TableBody>
+                              </Table>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
       )}
     </div>
   );

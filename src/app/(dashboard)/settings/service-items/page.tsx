@@ -1,21 +1,10 @@
-import { Fragment } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, Plus, Clock } from 'lucide-react';
+import { ChevronLeft, Plus } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Card } from '@/components/ui/card';
 import { ServiceItemFormDialog, type ServiceItemRecord } from '@/components/settings/service-item-form-dialog';
-import { ServiceItemRowActions } from '@/components/settings/service-item-row-actions';
+import { ServiceItemsTable, type ServiceGroupVM } from '@/components/settings/service-items-table';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,14 +44,7 @@ export default async function ServiceItemsPage() {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
   // Group rows by service_group (items already ordered by group then duration).
-  type Row = {
-    i: (typeof items)[number];
-    slot: number;
-    priceCents: number | null;
-    future: { price_cents: number; effective_from: string } | null;
-    itemRecord: ServiceItemRecord;
-  };
-  const groupMap = new Map<string, { key: string; name: string; categoryCode: string; rows: Row[] }>();
+  const groupMap = new Map<string, ServiceGroupVM>();
   for (const i of items) {
     const category = Array.isArray(i.category) ? i.category[0] : i.category;
     const slot = i.duration_minutes + i.prep_before_minutes + i.cleanup_after_minutes;
@@ -93,7 +75,18 @@ export default async function ServiceItemsPage() {
     if (!groupMap.has(key)) {
       groupMap.set(key, { key, name: key, categoryCode: category?.code ?? '', rows: [] });
     }
-    groupMap.get(key)!.rows.push({ i, slot, priceCents, future: future ? { price_cents: future.price_cents, effective_from: future.effective_from } : null, itemRecord });
+    groupMap.get(key)!.rows.push({
+      id: i.id,
+      code: i.code,
+      name: i.name,
+      duration_minutes: i.duration_minutes,
+      slot,
+      priceCents,
+      future: future ? { price_cents: future.price_cents, effective_from: future.effective_from } : null,
+      requiredResourceType: i.required_resource_type,
+      active: i.active,
+      itemRecord,
+    });
   }
   const orderedGroups = [...groupMap.values()];
 
@@ -126,77 +119,7 @@ export default async function ServiceItemsPage() {
         />
       </div>
 
-      <Card className="p-0 overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="font-bold">Service Group</TableHead>
-              <TableHead className="w-24 font-bold">Code</TableHead>
-              <TableHead className="w-28 font-bold">Duration</TableHead>
-              <TableHead className="w-32 font-bold text-right">Price</TableHead>
-              <TableHead className="w-24 font-bold">Slot</TableHead>
-              <TableHead className="font-bold">Station</TableHead>
-              <TableHead className="w-28 font-bold">Status</TableHead>
-              <TableHead className="w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {items.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
-                  <p className="text-sm font-semibold text-muted-foreground">
-                    No service items yet.
-                  </p>
-                </TableCell>
-              </TableRow>
-            ) : (
-              orderedGroups.map((grp) => (
-                <Fragment key={grp.key}>
-                  {grp.rows.map((r, idx) => (
-                    <TableRow key={r.i.id} className={idx === grp.rows.length - 1 ? 'border-b-2 border-border' : ''}>
-                      {idx === 0 && (
-                        <TableCell rowSpan={grp.rows.length} className="align-top border-r border-border">
-                          <span className="font-extrabold block">{grp.name}</span>
-                          <span className="font-mono font-bold text-xs text-muted-foreground uppercase">{grp.categoryCode}</span>
-                        </TableCell>
-                      )}
-                      <TableCell className="font-mono font-bold">{r.i.code}</TableCell>
-                      <TableCell className="font-bold tabular">{r.i.duration_minutes} min</TableCell>
-                      <TableCell className="font-bold tabular text-right">
-                        {r.priceCents != null ? `₱${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
-                        {r.future && (
-                          <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
-                            → ₱{(r.future.price_cents / 100).toLocaleString('en-PH')} · {r.future.effective_from}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground tabular">
-                          <Clock className="size-3" />
-                          {r.slot} min
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono font-medium text-muted-foreground">
-                        {r.i.required_resource_type ?? '—'}
-                      </TableCell>
-                      <TableCell>
-                        {r.i.active ? (
-                          <Badge className="font-bold">Active</Badge>
-                        ) : (
-                          <Badge variant="secondary" className="font-bold">Inactive</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <ServiceItemRowActions item={{ ...r.itemRecord, active: r.i.active }} categories={categories} businessUnits={businessUnits} groups={groups} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </Fragment>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+      <ServiceItemsTable groups={orderedGroups} categories={categories} businessUnits={businessUnits} groupNames={groups} />
     </div>
   );
 }

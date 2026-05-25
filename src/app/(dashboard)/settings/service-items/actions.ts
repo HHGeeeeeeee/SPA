@@ -26,7 +26,7 @@ const schema = z.object({
 
 const updateSchema = schema.partial().extend({ id: z.string().uuid() });
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult<T = void> = { ok: true; data?: T } | { ok: false; error: string };
 
 const PRICE_FROM = '2020-01-01';
 const PRICE_TO = '2999-12-31';
@@ -246,6 +246,77 @@ export async function deleteFuturePrice(priceId: string): Promise<ActionResult> 
   }
   revalidatePath('/settings/service-items');
   return { ok: true };
+}
+
+const batchSchema = z.object({
+  service_item_ids: z.array(z.string().uuid()).min(1),
+  mode: z.enum(['percent', 'amount']),
+  value: z.coerce.number(), // signed: percentage points, or PHP amount
+  effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date'),
+});
+
+// Round a cents amount to the nearest whole peso (₱1).
+function roundPeso(cents: number): number {
+  return Math.round(cents / 100) * 100;
+}
+
+/**
+ * Batch-schedule a price change across many services: each item's open segment
+ * is capped and a new segment opened with its price adjusted by a percentage or
+ * a fixed amount (rounded to ₱1). Items that can't take the change are skipped
+ * and reported rather than failing the whole batch.
+ */
+export async function batchScheduleServicePriceChange(
+  input: unknown,
+): Promise<ActionResult<{ applied: number; skipped: { label: string; reason: string }[] }>> {
+  const parsed = batchSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { service_item_ids, mode, value, effective_from } = parsed.data;
+  if (effective_from < todayPHT()) return { ok: false, error: 'Effective date cannot be in the past' };
+  const supabase = createServiceClient();
+
+  const { data: metas } = await supabase.from('service_items').select('id, code, name').in('id', service_item_ids);
+  const label = new Map((metas ?? []).map((m) => [m.id, `${m.code} — ${m.name}`]));
+
+  let applied = 0;
+  const skipped: { label: string; reason: string }[] = [];
+  for (const id of service_item_ids) {
+    const lbl = label.get(id) ?? id;
+    const { data: open } = await supabase
+      .from('service_item_prices')
+      .select('id, price_cents, effective_from')
+      .eq('service_item_id', id)
+      .eq('price_class', 'Normal')
+      .is('branch_id', null)
+      .order('effective_from', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!open) { skipped.push({ label: lbl, reason: 'no price set' }); continue; }
+    if (effective_from <= open.effective_from) { skipped.push({ label: lbl, reason: 'a later/equal price segment already exists' }); continue; }
+
+    const base = open.price_cents;
+    const raw = mode === 'percent' ? base * (1 + value / 100) : base + value * 100;
+    const newCents = roundPeso(raw);
+    if (newCents <= 0) { skipped.push({ label: lbl, reason: 'result would be ₱0 or less' }); continue; }
+    if (newCents === base) { skipped.push({ label: lbl, reason: 'no change' }); continue; }
+
+    const cap = await supabase.from('service_item_prices').update({ effective_to: addDays(effective_from, -1) }).eq('id', open.id);
+    if (cap.error) { skipped.push({ label: lbl, reason: cap.error.message }); continue; }
+    const ins = await supabase.from('service_item_prices').insert({
+      service_item_id: id, price_class: 'Normal', branch_id: null,
+      effective_from, effective_to: OPEN_TO, price_cents: newCents,
+    });
+    if (ins.error) {
+      // Roll back the cap so the item keeps an open segment.
+      await supabase.from('service_item_prices').update({ effective_to: OPEN_TO }).eq('id', open.id);
+      skipped.push({ label: lbl, reason: ins.error.message });
+      continue;
+    }
+    applied += 1;
+  }
+  if (applied === 0) return { ok: false, error: skipped[0]?.reason ? `Nothing applied — ${skipped[0].reason}` : 'Nothing applied' };
+  revalidatePath('/settings/service-items');
+  return { ok: true, data: { applied, skipped } };
 }
 
 export async function setServiceItemActive(id: string, active: boolean): Promise<ActionResult> {

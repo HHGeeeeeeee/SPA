@@ -151,9 +151,16 @@ function BedRow({
         {hours.map((h) => (
           <div key={h} className="absolute top-0 bottom-0 border-l border-border" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN }} />
         ))}
-        {hours.slice(0, -1).flatMap((h) => [15, 30, 45].map((q) => (
-          <div key={`${h}-${q}`} className={`absolute top-0 bottom-0 border-l ${q === 30 ? 'border-border/60' : 'border-border/35 border-dashed'}`} style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }} />
-        )))}
+        {hours.slice(0, -1).flatMap((h) => [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((q) => {
+          const quarter = q % 15 === 0;
+          return (
+            <div
+              key={`${h}-${q}`}
+              className={`absolute top-0 bottom-0 border-l ${q === 30 ? 'border-border/60' : quarter ? 'border-border/35 border-dashed' : 'border-border/12'}`}
+              style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }}
+            />
+          );
+        }))}
         {blocks.map((b, i) => (
           <div key={b.key} className="absolute inset-x-0" style={{ top: lanes[i] * LANE_H }}>
             {b.prepMin > 0 && (
@@ -271,16 +278,19 @@ export function ScheduleBoard({
                   <span className="absolute top-1.5 inset-x-0 text-center text-sm font-bold tabular-nums">{String(h).padStart(2, '0')}:00</span>
                 </div>
               ))}
-              {/* bottom tier: the 15-minute marks under each hour */}
-              {hours.slice(0, -1).flatMap((h) => [15, 30, 45].map((q) => (
-                <div
-                  key={`${h}-${q}`}
-                  className={`absolute bottom-0 h-4 border-l ${q === 30 ? 'border-border/70' : 'border-border/40'}`}
-                  style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }}
-                >
-                  <span className="absolute -top-3 left-0.5 text-[9px] font-semibold text-muted-foreground/70 tabular-nums">{q}</span>
-                </div>
-              )))}
+              {/* bottom tier: readable 15-min labels + faint 5-min ticks to aim at */}
+              {hours.slice(0, -1).flatMap((h) => [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((q) => {
+                const quarter = q % 15 === 0;
+                return (
+                  <div
+                    key={`${h}-${q}`}
+                    className={`absolute bottom-0 border-l ${quarter ? (q === 30 ? 'h-5 border-border/70' : 'h-4 border-border/45') : 'h-1.5 border-border/25'}`}
+                    style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }}
+                  >
+                    {quarter && <span className="absolute bottom-4 left-0.5 text-[10px] font-bold text-muted-foreground tabular-nums">{q}</span>}
+                  </div>
+                );
+              }))}
               {nowMin != null && nowMin >= windowStartMin && (
                 <div className="absolute top-0 bottom-0 z-10 -translate-x-1/2 flex flex-col items-center" style={{ left: (nowMin - windowStartMin) * PX_PER_MIN }}>
                   <span className="rounded bg-red-500 px-1 text-[9px] font-bold leading-tight text-white">{hhmm(nowMin)}</span>

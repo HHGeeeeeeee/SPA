@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager, isAdmin } from '@/lib/auth';
+import { canAccessBranch } from '@/lib/branch-access';
 import { SHIFT_LABELS, WINDOW, CASH_SHIFTS_SETTING_KEY as SETTING_KEY, type ShiftLabel, type ShiftStatus } from './shifts';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -168,6 +169,7 @@ export async function closeCashReconciliation(input: unknown): Promise<ActionRes
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
 
   const all = await loadDayShifts(d.branch_id, d.date);
   const shift = all.find((s) => s.label === d.shift_label);

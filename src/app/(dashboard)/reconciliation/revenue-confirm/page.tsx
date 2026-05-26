@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { CircleCheck, CircleAlert } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { getAllowedBranches } from '@/lib/branch-access';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -56,7 +57,7 @@ export default async function RevenueConfirmPage({
 }) {
   const sp = await searchParams;
   const supabase = createServiceClient();
-  const { data: branches } = await supabase.from('branches').select('id, code, name').eq('active', true).order('code');
+  const branches = await getAllowedBranches();
   const list = branches ?? [];
   const branchId = sp.branch && list.some((b) => b.id === sp.branch) ? sp.branch : list[0]?.id;
   const date = sp.date || todayPHT();

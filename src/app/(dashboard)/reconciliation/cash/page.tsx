@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { getAllowedBranches } from '@/lib/branch-access';
 import { currentSession, isAdmin, isManager } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -25,7 +26,7 @@ export default async function CashReconciliationPage({
   const session = await currentSession();
   const admin = isAdmin(session);
   const canReopen = isManager(session);
-  const { data: branches } = await supabase.from('branches').select('id, code, name').eq('active', true).order('code');
+  const branches = await getAllowedBranches();
   const list = branches ?? [];
   const branchId = sp.branch && list.some((b) => b.id === sp.branch) ? sp.branch : list[0]?.id;
   const date = sp.date || todayPHT();

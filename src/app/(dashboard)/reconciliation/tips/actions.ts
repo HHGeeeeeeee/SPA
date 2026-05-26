@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { canAccessBranch } from '@/lib/branch-access';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -60,6 +61,7 @@ export async function settleTips(input: unknown): Promise<ActionResult<{ id: str
   const parsed = settleSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const { branch_id, tip_ids } = parsed.data;
+  if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
 
   const supabase = await createAuditedClient();
   const { data: rows } = await supabase

@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server';
+import { getAllowedBranches } from '@/lib/branch-access';
 import { CommissionSettlementWorkspace, type CommHistoryRow } from '@/components/reconciliation/commission-settlement-workspace';
 import { loadCommissionGroups } from './actions';
 
@@ -21,7 +22,7 @@ function halfMonthRange(): { from: string; to: string } {
 export default async function CommissionSettlementPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const sp = await searchParams;
   const supabase = createServiceClient();
-  const { data: branches } = await supabase.from('branches').select('id, code, name').eq('active', true).order('code');
+  const branches = await getAllowedBranches();
   const list = branches ?? [];
   const branchId = sp.branch && list.some((b) => b.id === sp.branch) ? sp.branch : list[0]?.id ?? '';
   const { from, to } = halfMonthRange();

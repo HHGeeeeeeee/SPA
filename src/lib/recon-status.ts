@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server';
+import { getAllowedBranches } from '@/lib/branch-access';
 import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 
 const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -34,11 +35,11 @@ export async function loadReconStatus(): Promise<ReconStatus> {
   const supabase = createServiceClient();
   const today = todayPHT();
 
-  const [{ data: branches }, { data: arMethod }] = await Promise.all([
-    supabase.from('branches').select('id, code, name').eq('active', true).order('code'),
+  const [branches, { data: arMethod }] = await Promise.all([
+    getAllowedBranches(),
     supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle(),
   ]);
-  const branchList = branches ?? [];
+  const branchList = branches;
   const arId = arMethod?.id ?? null;
 
   // --- Today's orders pending Revenue Confirm (per branch) ---

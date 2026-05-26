@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { NewReservationDialog } from '@/components/reservations/new-reservation-dialog';
 import { ReservationsExplorer, type ReservationRow } from '@/components/reservations/reservations-explorer';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
+import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +43,8 @@ async function fetchData() {
   if (br.error) throw new Error(br.error.message);
   if (src.error) throw new Error(src.error.message);
   if (cat.error) throw new Error(cat.error.message);
-  const branches = (br.data ?? []).map((b) => ({
+  const allowed = await getAllowedBranchIds();
+  const branches = (br.data ?? []).filter((b) => allowed.has(b.id)).map((b) => ({
     id: b.id, code: b.code, name: b.name,
     businessUnitIds: (b.branch_business_units ?? []).map((x) => x.business_unit_id),
   }));

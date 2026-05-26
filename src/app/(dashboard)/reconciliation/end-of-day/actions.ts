@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { createServiceClient, createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { canAccessBranch } from '@/lib/branch-access';
 import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
@@ -143,6 +144,7 @@ async function ensureRecord(supabase: ReturnType<typeof createServiceClient>, br
 export async function runOrderReview(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  if (!(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
   const rec = await ensureRecord(supabase, branchId, date, session?.staffUserId ?? null);
   if (rec?.status === 'closed') return { ok: false, error: 'Business day is already closed' };
@@ -171,6 +173,7 @@ export async function runOrderReview(branchId: string, date: string): Promise<Ac
 export async function runBalanceCheck(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  if (!(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
   const { data: rec } = await supabase.from('business_day_close').select('status, order_reviewed_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   if (!rec || !rec.order_reviewed_at) return { ok: false, error: 'Run Order Review first' };
@@ -198,6 +201,7 @@ export async function runBalanceCheck(branchId: string, date: string): Promise<A
 export async function markRevenueConfirmed(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  if (!(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
   const { data: rec } = await supabase.from('business_day_close').select('status, balances_ok_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   if (!rec || !rec.balances_ok_at) return { ok: false, error: 'Run Check Balances first' };
@@ -227,6 +231,7 @@ export async function markRevenueConfirmed(branchId: string, date: string): Prom
 export async function closeBusinessDay(branchId: string, date: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  if (!(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
   const { data: rec } = await supabase.from('business_day_close').select('status, order_reviewed_at, balances_ok_at, revenue_confirmed_at').eq('branch_id', branchId).eq('business_date', date).maybeSingle();
   if (!rec) return { ok: false, error: 'Run the checks first' };

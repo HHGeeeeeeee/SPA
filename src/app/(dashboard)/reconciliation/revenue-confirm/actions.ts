@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { canAccessBranch } from '@/lib/branch-access';
 import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
@@ -92,6 +93,7 @@ export async function confirmRevenue(input: unknown): Promise<ActionResult<{ clo
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const { branch_id, date } = parsed.data;
+  if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
 
   if (!(await isCashClosed(branch_id, date))) {
     return { ok: false, error: 'Close the Shift Cash Count for this branch/day first' };

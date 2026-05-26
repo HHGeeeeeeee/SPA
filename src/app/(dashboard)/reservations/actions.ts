@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
+import { canAccessBranch } from '@/lib/branch-access';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { canPerformAny, matchesGender } from '@/lib/therapist-availability';
 import { addOrderItem } from '@/app/(dashboard)/sales-orders/actions';
@@ -70,6 +71,7 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
   if (new Date(d.desired_service_end) <= new Date(d.desired_service_start)) {
     return { ok: false, error: 'End time must be after start time' };
   }
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
   const { data: branch, error: be } = await supabase.from('branches').select('code').eq('id', d.branch_id).single();
   if (be || !branch) return { ok: false, error: 'Branch not found' };
@@ -153,6 +155,7 @@ export async function updateReservation(input: unknown): Promise<ActionResult> {
   if (new Date(d.desired_service_end) <= new Date(d.desired_service_start)) {
     return { ok: false, error: 'End time must be after start time' };
   }
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
   const { data: existing } = await supabase.from('reservations').select('status').eq('id', d.id).maybeSingle();
   if (!existing) return { ok: false, error: 'Reservation not found' };

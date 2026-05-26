@@ -6,6 +6,7 @@ import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
+import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -311,9 +312,10 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
 
 async function fetchData(branchParam?: string, weekParam?: string) {
   const supabase = createServiceClient();
+  const allowed = await getAllowedBranchIds();
   const { data: branches } = await supabase
     .from('branches').select('id, code, name, therapist_share_group').eq('active', true).order('code');
-  const list = branches ?? [];
+  const list = (branches ?? []).filter((b) => allowed.has(b.id));
   const branchId = branchParam && list.some((b) => b.id === branchParam) ? branchParam : list[0]?.id;
   const monday = weekParam ?? thisMonday();
   const days = weekDays(monday);

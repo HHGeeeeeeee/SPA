@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { canAccessBranch } from '@/lib/branch-access';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -239,6 +240,7 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   if (!billing) return { ok: false, error: 'Billing destination not found' };
   const { data: branch } = await supabase.from('branches').select('code').eq('id', branch_id).single();
   if (!branch) return { ok: false, error: 'Branch not found' };
+  if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
 
   const candidates = await loadSoaCandidates(billing_to_id, branch_id, period_from, period_to);
   if (candidates.length === 0) return { ok: false, error: 'No un-SOA’d closed orders for this billing/branch/period' };

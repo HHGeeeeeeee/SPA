@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createServiceClient, createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { isBusinessDayClosed } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
+import { canAccessBranch } from '@/lib/branch-access';
 
 // Append a row to the generic status-change audit log.
 async function logStatus(
@@ -66,6 +67,7 @@ export async function createDraftOrder(input: unknown): Promise<ActionResult<{ i
     .eq('id', d.branch_id)
     .single();
   if (be || !branch) return { ok: false, error: 'Branch not found' };
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
 
   if (await isBusinessDayClosed(d.branch_id, d.service_date)) {
     return { ok: false, error: 'The business day is closed for this branch — no new orders can post to this date.' };

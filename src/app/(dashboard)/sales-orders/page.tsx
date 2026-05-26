@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { getAllowedBranchIds } from '@/lib/branch-access';
 import { Button } from '@/components/ui/button';
 import { NewOrderDialog } from '@/components/sales-orders/new-order-dialog';
 import { OrdersExplorer, type OrderRow } from '@/components/sales-orders/orders-explorer';
@@ -43,7 +44,8 @@ async function fetchData() {
   if (brRes.error) throw new Error(brRes.error.message);
   if (srcRes.error) throw new Error(srcRes.error.message);
   if (billRes.error) throw new Error(billRes.error.message);
-  const branches = (brRes.data ?? []).map((b) => ({
+  const allowed = await getAllowedBranchIds();
+  const branches = (brRes.data ?? []).filter((b) => allowed.has(b.id)).map((b) => ({
     id: b.id,
     code: b.code,
     name: b.name,

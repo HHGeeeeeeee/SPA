@@ -1,20 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import Link from 'next/link';
-import { Banknote } from 'lucide-react';
+import { Fragment, useState } from 'react';
+import { ChevronRight, ChevronDown, Download, FilePlus2, Wallet, AlertTriangle } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -23,134 +13,190 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+import { SoaActions } from '@/components/reconciliation/soa-actions';
+import type { ArBalance, ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
 
-export interface ArRow {
-  id: string;
-  order_no: string;
-  service_date: string;
-  outstanding: number;
-  billing_id: string;
-  billing_code: string;
-  billing_name: string;
-  settlement_type: string;
-}
-
-const ALL = '__all__';
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 }
+function fmtDate(ymd: string | null): string {
+  if (!ymd) return '—';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${ymd}T00:00:00Z`));
+}
+const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
+  issued: 'default', partial_paid: 'secondary', settled: 'default', void: 'destructive',
+};
 
-export function ArBalanceExplorer({ rows }: { rows: ArRow[] }) {
-  const [q, setQ] = useState('');
-  const [billing, setBilling] = useState(ALL);
-  const [settlement, setSettlement] = useState(ALL);
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+/**
+ * AR Balance — receivables ledger. Headline outstanding split Current / Overdue,
+ * then debtors grouped by settlement type: third-party (real cash to collect —
+ * the "how much isn't collected" answer) vs intercompany (pending internal
+ * cost-transfer settle). Expand a debtor to act on its open statements.
+ * Reads from open SOA outstanding + un-stated closed AR; collection still happens
+ * on the SOA (Record Payment / Settle) — this view is the ledger, not a new ledger.
+ */
+export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setOpen((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  const filtered = useMemo(
-    () =>
-      rows.filter((r) => {
-        if (billing !== ALL && r.billing_code !== billing) return false;
-        if (settlement !== ALL && r.settlement_type !== settlement) return false;
-        if (from && r.service_date < from) return false;
-        if (to && r.service_date > to) return false;
-        if (q && !r.order_no.toLowerCase().includes(q.toLowerCase())) return false;
-        return true;
-      }),
-    [rows, q, billing, settlement, from, to],
-  );
-
-  const billingItems = [{ value: ALL, label: 'All' }, ...[...new Map(rows.map((r) => [r.billing_code, r.billing_name])).entries()].map(([code, name]) => ({ value: code, label: `${code} — ${name}` }))];
-  const settlementItems = [{ value: ALL, label: 'All' }, { value: 'intercompany', label: 'Intercompany' }, { value: 'third_party', label: 'Third-party' }];
-
-  // Group the filtered rows by billing destination.
-  const groups = new Map<string, { code: string; name: string; settlement_type: string; outstanding: number; orders: ArRow[] }>();
-  let grand = 0;
-  for (const r of filtered) {
-    grand += r.outstanding;
-    const g = groups.get(r.billing_id) ?? { code: r.billing_code, name: r.billing_name, settlement_type: r.settlement_type, outstanding: 0, orders: [] };
-    g.outstanding += r.outstanding;
-    g.orders.push(r);
-    groups.set(r.billing_id, g);
+  if (ar.debtors.length === 0) {
+    return (
+      <Card className="border-dashed bg-muted/30">
+        <CardContent className="py-10 text-center">
+          <Wallet className="size-8 mx-auto text-muted-foreground/50" />
+          <p className="text-sm font-semibold text-muted-foreground mt-3">Nothing outstanding — all receivables are collected.</p>
+        </CardContent>
+      </Card>
+    );
   }
-  const list = [...groups.values()].sort((a, b) => b.outstanding - a.outstanding);
+
+  const thirdParty = ar.debtors.filter((d) => d.settlement_type === 'third_party');
+  const intercompany = ar.debtors.filter((d) => d.settlement_type === 'intercompany');
+
+  function section(title: string, hint: string, debtors: ArDebtor[]) {
+    if (debtors.length === 0) return null;
+    const subtotal = debtors.reduce((s, d) => s + d.total_cents, 0);
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{title}</h3>
+            <p className="text-xs font-medium text-muted-foreground/80">{hint}</p>
+          </div>
+          <span className="text-sm font-bold tabular">{peso(subtotal)}</span>
+        </div>
+        <Card className="p-0 overflow-hidden">
+          <Table className="table-fixed">
+            <colgroup>
+              <col className="w-8" />
+              <col />
+              <col className="w-32" />
+              <col className="w-32" />
+              <col className="w-32" />
+              <col className="w-36" />
+            </colgroup>
+            <TableHeader>
+              <TableRow>
+                <TableHead />
+                <TableHead className="font-bold">Billing</TableHead>
+                <TableHead className="font-bold text-right">Unbilled</TableHead>
+                <TableHead className="font-bold text-right">Current</TableHead>
+                <TableHead className="font-bold text-right">Overdue</TableHead>
+                <TableHead className="font-bold text-right pr-4">Total Owed</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {debtors.map((d) => {
+                const isOpen = open.has(d.billing_id);
+                return (
+                  <Fragment key={d.billing_id}>
+                    <TableRow className={cn('cursor-pointer', isOpen && 'bg-primary/5')} onClick={() => toggle(d.billing_id)}>
+                      <TableCell className="pr-0">
+                        {isOpen ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronRight className="size-4 text-muted-foreground" />}
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-bold">{d.code}</span>
+                        <span className="ml-2 text-sm text-muted-foreground">{d.name}</span>
+                      </TableCell>
+                      <TableCell className="tabular text-right text-muted-foreground">{d.unbilled_cents > 0 ? peso(d.unbilled_cents) : '—'}</TableCell>
+                      <TableCell className="tabular text-right">{d.current_cents > 0 ? peso(d.current_cents) : '—'}</TableCell>
+                      <TableCell className={cn('tabular text-right font-semibold', d.overdue_cents > 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                        {d.overdue_cents > 0 ? peso(d.overdue_cents) : '—'}
+                      </TableCell>
+                      <TableCell className="tabular text-right font-extrabold pr-4">{peso(d.total_cents)}</TableCell>
+                    </TableRow>
+                    {isOpen && (
+                      <TableRow className="bg-muted/20 hover:bg-muted/20">
+                        <TableCell colSpan={6} className="p-0">
+                          <div className="px-6 py-3 flex flex-col gap-2">
+                            {d.unbilled_count > 0 && (
+                              <div className="flex items-center gap-2 rounded-md border border-dashed border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                                <FilePlus2 className="size-3.5 shrink-0" />
+                                {d.unbilled_count} closed order{d.unbilled_count > 1 ? 's' : ''} · {peso(d.unbilled_cents)} not yet on a statement — generate an SOA to bill.
+                              </div>
+                            )}
+                            {d.soas.length === 0 ? (
+                              <p className="text-xs font-semibold text-muted-foreground">No open statements.</p>
+                            ) : (
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="font-bold">SOA No</TableHead>
+                                    <TableHead className="font-bold">Period</TableHead>
+                                    <TableHead className="font-bold">Due</TableHead>
+                                    <TableHead className="font-bold text-right">Outstanding</TableHead>
+                                    <TableHead className="font-bold text-center">Status</TableHead>
+                                    <TableHead className="w-44" />
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {d.soas.map((s) => (
+                                    <TableRow key={s.id}>
+                                      <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
+                                      <TableCell className="tabular text-muted-foreground text-sm">{s.period_from} → {s.period_to}</TableCell>
+                                      <TableCell className="text-sm">
+                                        <span className={cn('font-medium', s.days_overdue > 0 ? 'text-destructive' : 'text-muted-foreground')}>{fmtDate(s.due_date)}</span>
+                                        {s.days_overdue > 0 && (
+                                          <Badge variant="destructive" className="ml-2 font-bold gap-1">
+                                            <AlertTriangle className="size-3" />{s.days_overdue}d
+                                          </Badge>
+                                        )}
+                                      </TableCell>
+                                      <TableCell className="tabular text-right font-bold">{peso(s.outstanding_cents)}</TableCell>
+                                      <TableCell className="text-center"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
+                                      <TableCell>
+                                        <div className="flex items-center justify-end gap-1">
+                                          <a href={`/reconciliation/soa/${s.id}/pdf`} title="Download PDF" className="rounded p-1 text-muted-foreground hover:text-primary hover:bg-accent">
+                                            <Download className="size-4" />
+                                          </a>
+                                          <SoaActions id={s.id} status={s.status} settlementType={s.settlement_type} outstandingCents={s.outstanding_cents} />
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card className="p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Date From</Label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Date To</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Billing</Label>
-            <Select items={billingItems} value={billing} onValueChange={(v) => v && setBilling(v)}>
-              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-              <SelectContent>{billingItems.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Settlement</Label>
-            <Select items={settlementItems} value={settlement} onValueChange={(v) => v && setSettlement(v)}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-              <SelectContent>{settlementItems.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Search</Label>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Order no…" className="w-44" />
-          </div>
-          <p className="ml-auto text-sm font-semibold text-muted-foreground">
-            {list.length} billing · {peso(grand)} outstanding
-          </p>
-        </div>
-      </Card>
-
-      {list.length === 0 ? (
-        <Card className="border-dashed bg-muted/30">
-          <CardContent className="py-10 text-center">
-            <Banknote className="size-8 mx-auto text-muted-foreground/50" />
-            <p className="text-sm font-semibold text-muted-foreground mt-3">No outstanding AR for these filters.</p>
-          </CardContent>
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Card className="p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Total Outstanding</p>
+          <p className="text-2xl font-extrabold tabular mt-1">{peso(ar.total_cents)}</p>
         </Card>
-      ) : (
-        list.map((g) => (
-          <Card key={g.code} className="p-0 overflow-hidden">
-            <CardHeader className="flex-row items-center justify-between border-b border-border py-3">
-              <CardTitle className="text-base font-bold flex items-center gap-2">
-                <span className="font-mono">{g.code}</span> {g.name}
-                <Badge variant="secondary" className="font-bold capitalize">{g.settlement_type.replace('_', '-')}</Badge>
-              </CardTitle>
-              <span className="text-lg font-extrabold tabular">{peso(g.outstanding)}</span>
-            </CardHeader>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="font-bold">Order No</TableHead>
-                  <TableHead className="w-40 font-bold">Service Date</TableHead>
-                  <TableHead className="w-40 font-bold text-right">Outstanding</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {g.orders.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell className="font-mono font-bold">
-                      <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link>
-                    </TableCell>
-                    <TableCell className="font-medium tabular">{o.service_date}</TableCell>
-                    <TableCell className="font-bold tabular text-right">{peso(o.outstanding)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
-        ))
-      )}
+        <Card className="p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Current</p>
+          <p className="text-2xl font-extrabold tabular mt-1">{peso(ar.current_cents)}</p>
+        </Card>
+        <Card className={cn('p-4', ar.overdue_cents > 0 && 'border-destructive/40 bg-destructive/5')}>
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+            {ar.overdue_cents > 0 && <AlertTriangle className="size-3.5 text-destructive" />} Overdue
+          </p>
+          <p className={cn('text-2xl font-extrabold tabular mt-1', ar.overdue_cents > 0 && 'text-destructive')}>{peso(ar.overdue_cents)}</p>
+        </Card>
+      </div>
+      <p className="text-xs font-medium text-muted-foreground -mt-2">
+        As of {fmtDate(ar.today)} · &quot;Overdue&quot; = third-party statements past their due date. Intercompany has no due date (settled by internal cost transfer).
+      </p>
+
+      {section('Third-party — to collect', 'Real receivables — collected via Record Payment (e.g. Elnido Go pays periodically).', thirdParty)}
+      {section('Intercompany — to settle', 'Cleared by internal cost transfer (Settle), not cash collection.', intercompany)}
     </div>
   );
 }

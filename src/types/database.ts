@@ -2740,6 +2740,7 @@ export type Database = {
       revenue_soa: {
         Row: {
           billing_to_id: string
+          branch_id: string | null
           created_at: string
           created_by: string | null
           due_date: string | null
@@ -2761,6 +2762,7 @@ export type Database = {
         }
         Insert: {
           billing_to_id: string
+          branch_id?: string | null
           created_at?: string
           created_by?: string | null
           due_date?: string | null
@@ -2782,6 +2784,7 @@ export type Database = {
         }
         Update: {
           billing_to_id?: string
+          branch_id?: string | null
           created_at?: string
           created_by?: string | null
           due_date?: string | null
@@ -2807,6 +2810,13 @@ export type Database = {
             columns: ["billing_to_id"]
             isOneToOne: false
             referencedRelation: "billing_destinations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revenue_soa_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
             referencedColumns: ["id"]
           },
         ]

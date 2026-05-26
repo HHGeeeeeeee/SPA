@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
-import { canAccessBranch } from '@/lib/branch-access';
+import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -149,6 +149,147 @@ export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
   });
 }
 
+// ─────────────────────────── AR Balance ───────────────────────────
+// Receivables ledger view: how much is still owed, by whom, and how overdue.
+// It stores nothing new — it sums open SOA outstanding + unbilled closed AR.
+
+export interface ArSoa {
+  id: string;
+  soa_no: string;
+  settlement_type: string | null;
+  period_from: string;
+  period_to: string;
+  total_cents: number;
+  outstanding_cents: number;
+  due_date: string | null;
+  status: string;
+  days_overdue: number; // >0 only for past-due third-party statements
+}
+
+export interface ArDebtor {
+  billing_id: string;
+  code: string;
+  name: string;
+  settlement_type: string; // intercompany | third_party
+  unbilled_cents: number; // closed AR not yet stated on any SOA
+  outstanding_cents: number; // billed but not fully paid (Σ open-SOA outstanding)
+  current_cents: number; // not past due (unbilled + not-overdue outstanding)
+  overdue_cents: number; // past-due outstanding
+  total_cents: number; // unbilled + outstanding
+  unbilled_count: number;
+  soas: ArSoa[];
+}
+
+export interface ArBalance {
+  today: string; // PHT yyyy-mm-dd — the as-of date for the overdue split
+  debtors: ArDebtor[];
+  total_cents: number;
+  current_cents: number;
+  overdue_cents: number;
+}
+
+function phtToday(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+/** Branch-scoped accounts-receivable balance, grouped by billing destination. */
+export async function loadArBalance(): Promise<ArBalance> {
+  const supabase = await createAuditedClient();
+  const allowed = [...(await getAllowedBranchIds())];
+  const today = phtToday();
+  const empty: ArBalance = { today, debtors: [], total_cents: 0, current_cents: 0, overdue_cents: 0 };
+  if (allowed.length === 0) return empty;
+
+  // AR billing destinations (those that bill on AR terms).
+  const { data: arMethod } = await supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle();
+  const arId = arMethod?.id ?? null;
+  const { data: bills } = await supabase
+    .from('billing_destinations')
+    .select('id, code, name, settlement_type, default_payment_method_id')
+    .eq('active', true);
+  const billInfo = new Map((bills ?? []).map((b) => [b.id, b]));
+  const arBillIds = (bills ?? []).filter((b) => arId && b.default_payment_method_id === arId).map((b) => b.id);
+
+  // Open statements in the allowed branches, plus all un-stated closed AR orders.
+  const [{ data: soas }, { data: orders }, { data: taken }] = await Promise.all([
+    supabase
+      .from('revenue_soa')
+      .select('id, soa_no, billing_to_id, settlement_type, period_from, period_to, total_cents, outstanding_cents, due_date, status, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name, settlement_type )')
+      .in('status', ['issued', 'partial_paid'])
+      .in('branch_id', allowed),
+    arBillIds.length
+      ? supabase
+          .from('orders')
+          .select('id, billing_to_id, total_cents')
+          .eq('status', 'closed')
+          .is('deleted_at', null)
+          .in('billing_to_id', arBillIds)
+          .in('branch_id', allowed)
+      : Promise.resolve({ data: [] as { id: string; billing_to_id: string | null; total_cents: number }[] }),
+    supabase.from('revenue_soa_orders').select('order_id'),
+  ]);
+  const takenIds = new Set((taken ?? []).map((t) => t.order_id));
+
+  const debtors = new Map<string, ArDebtor>();
+  const ensure = (billingId: string, code: string, name: string, settlement: string): ArDebtor => {
+    let d = debtors.get(billingId);
+    if (!d) {
+      d = {
+        billing_id: billingId, code, name, settlement_type: settlement,
+        unbilled_cents: 0, outstanding_cents: 0, current_cents: 0, overdue_cents: 0,
+        total_cents: 0, unbilled_count: 0, soas: [],
+      };
+      debtors.set(billingId, d);
+    }
+    return d;
+  };
+
+  // Open SOAs → outstanding, split current / overdue by due date.
+  for (const s of soas ?? []) {
+    const b = one(s.billing);
+    const d = ensure(s.billing_to_id, b?.code ?? '—', b?.name ?? '', b?.settlement_type ?? s.settlement_type ?? 'third_party');
+    const outstanding = s.outstanding_cents ?? s.total_cents;
+    const overdue = s.due_date != null && s.due_date < today && outstanding > 0;
+    const daysOverdue = overdue ? Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${s.due_date}T00:00:00Z`)) / 86400000) : 0;
+    d.outstanding_cents += outstanding;
+    if (overdue) d.overdue_cents += outstanding;
+    else d.current_cents += outstanding;
+    d.soas.push({
+      id: s.id, soa_no: s.soa_no, settlement_type: s.settlement_type,
+      period_from: s.period_from, period_to: s.period_to,
+      total_cents: s.total_cents, outstanding_cents: outstanding,
+      due_date: s.due_date, status: s.status, days_overdue: daysOverdue,
+    });
+  }
+
+  // Unbilled closed AR orders → current (not yet billed, no due date).
+  for (const o of orders ?? []) {
+    if (!o.billing_to_id || takenIds.has(o.id)) continue;
+    const info = billInfo.get(o.billing_to_id);
+    const d = ensure(o.billing_to_id, info?.code ?? '—', info?.name ?? '', info?.settlement_type ?? 'third_party');
+    d.unbilled_cents += o.total_cents;
+    d.current_cents += o.total_cents;
+    d.unbilled_count += 1;
+  }
+
+  const list = [...debtors.values()]
+    .map((d) => {
+      d.total_cents = d.unbilled_cents + d.outstanding_cents;
+      d.soas.sort((a, c) => (c.days_overdue - a.days_overdue) || a.soa_no.localeCompare(c.soa_no));
+      return d;
+    })
+    .filter((d) => d.total_cents > 0)
+    .sort((a, c) => (c.overdue_cents - a.overdue_cents) || (c.total_cents - a.total_cents) || a.code.localeCompare(c.code));
+
+  return {
+    today,
+    debtors: list,
+    total_cents: list.reduce((s, d) => s + d.total_cents, 0),
+    current_cents: list.reduce((s, d) => s + d.current_cents, 0),
+    overdue_cents: list.reduce((s, d) => s + d.overdue_cents, 0),
+  };
+}
+
 /**
  * Every AR billing destination with closed orders in range that aren't on any
  * SOA yet — grouped, with per-guest detail. Drives the "Generate SOA" workspace.
@@ -263,7 +404,7 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   const { data: soa, error } = await supabase
     .from('revenue_soa')
     .insert({
-      soa_no, billing_to_id, period_from, period_to,
+      soa_no, billing_to_id, branch_id, period_from, period_to,
       settlement_type: billing.settlement_type,
       subtotal_cents: subtotal, total_cents: subtotal, paid_cents: 0, outstanding_cents: subtotal,
       status: 'issued', issued_date: today, due_date: dueDate,

@@ -12,7 +12,7 @@ const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? nu
 interface PdfLine { date: string; order_no: string; guest: string; service: string; mins: number | null; net: number }
 interface PdfData {
   soa_no: string; status: string; settlement_type: string | null;
-  period_from: string; period_to: string; issued_date: string | null; due_date: string | null;
+  period_from: string; period_to: string; issued_date: string | null; due_date: string | null; term_days: number | null;
   total_cents: number; billing_code: string | null; billing_name: string | null;
   branchName: string;
   lines: PdfLine[];
@@ -70,9 +70,14 @@ async function loadSoaForPdf(soaId: string): Promise<PdfData | null> {
   }
   lines.sort((a, c) => a.date.localeCompare(c.date) || a.order_no.localeCompare(c.order_no) || a._seq - c._seq);
 
+  // Net terms = the credit window snapshotted at generation (issued → due).
+  const termDays = s.issued_date && s.due_date
+    ? Math.round((Date.parse(`${s.due_date}T00:00:00Z`) - Date.parse(`${s.issued_date}T00:00:00Z`)) / 86400000)
+    : null;
+
   return {
     soa_no: s.soa_no, status: s.status, settlement_type: s.settlement_type,
-    period_from: s.period_from, period_to: s.period_to, issued_date: s.issued_date, due_date: s.due_date,
+    period_from: s.period_from, period_to: s.period_to, issued_date: s.issued_date, due_date: s.due_date, term_days: termDays,
     total_cents: s.total_cents, billing_code: b?.code ?? null, billing_name: b?.name ?? null,
     branchName: branchNames.size === 1 ? [...branchNames][0] : branchNames.size > 1 ? [...branchNames].join(', ') : 'HHG-SPA',
     lines: lines.map(({ _seq, ...l }) => l),
@@ -117,6 +122,18 @@ function SoaDoc({ d }: { d: PdfData }) {
             <Text style={styles.metaVal}>{d.soa_no}</Text>
             <Text style={[styles.metaLabel, { marginTop: 4 }]}>Date</Text>
             <Text style={styles.metaVal}>{longDate(d.issued_date ?? todayPHT())}</Text>
+            {d.due_date && (
+              <>
+                {d.term_days != null && (
+                  <>
+                    <Text style={[styles.metaLabel, { marginTop: 4 }]}>Terms</Text>
+                    <Text style={styles.metaVal}>Net {d.term_days}</Text>
+                  </>
+                )}
+                <Text style={[styles.metaLabel, { marginTop: 4 }]}>Due Date</Text>
+                <Text style={styles.metaVal}>{longDate(d.due_date)}</Text>
+              </>
+            )}
           </View>
         </View>
 
@@ -126,7 +143,6 @@ function SoaDoc({ d }: { d: PdfData }) {
           <Text style={{ color: MUTED, marginTop: 3 }}>
             {typeLabel ? `${typeLabel.charAt(0).toUpperCase()}${typeLabel.slice(1)}` : ''}
             {`   ·   Period ${d.period_from} to ${d.period_to}`}
-            {d.due_date ? `   ·   Due ${d.due_date}` : ''}
           </Text>
         </View>
 

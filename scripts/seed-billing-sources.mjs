@@ -35,7 +35,7 @@ async function main() {
     intercompany_account: '50170',
     intercompany_sub: '000000T03',
     default_payment_method_id: pmId.ar ?? null,
-    credit_terms_days: 30,
+    credit_terms_days: 0, // intercompany settles by internal cost transfer — no customer due date
     active: true,
     ...overrides,
   });

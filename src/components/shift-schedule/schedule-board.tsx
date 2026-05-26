@@ -51,7 +51,10 @@ const PX_PER_MIN = PX_PER_HOUR / 60;
 const LANE_H = 56;
 const LABEL_W = 160;
 
-const snap15 = (min: number) => Math.round(min / 15) * 15;
+// Grid lines are 15-min for readability, but clicks/drags snap to 5-min so you
+// can place finer; the dialog's Start/End then take any exact minute.
+const SNAP_MIN = 5;
+const snapMin = (min: number) => Math.round(min / SNAP_MIN) * SNAP_MIN;
 const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 const makeIso = (day: string, min: number) => `${day}T${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}:00+08:00`;
 
@@ -137,7 +140,7 @@ function BedRow({
         style={{ height: count * LANE_H, minWidth: trackWidth }}
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
-          const min = snap15(windowStartMin + (e.clientX - rect.left) / PX_PER_MIN);
+          const min = snapMin(windowStartMin + (e.clientX - rect.left) / PX_PER_MIN);
           onEmptyClick(bed.id, min);
         }}
       >
@@ -213,7 +216,7 @@ export function ScheduleBoard({
     if (!block || !overId || !overId.startsWith('bed:')) return;
     const bedId = overId.slice(4);
     const deltaMin = Math.round(e.delta.x / PX_PER_MIN);
-    const newStart = Math.min(windowEndMin - 15, Math.max(windowStartMin, snap15(block.startMin + deltaMin)));
+    const newStart = Math.min(windowEndMin - 15, Math.max(windowStartMin, snapMin(block.startMin + deltaMin)));
     if (bedId === block.bedId && newStart === block.startMin) return; // no-op
     startTransition(async () => {
       const r = block.kind === 'reservation'
@@ -247,7 +250,7 @@ export function ScheduleBoard({
               {/* top tier: the hour, sitting on its gridline */}
               {hours.slice(0, -1).map((h) => (
                 <div key={h} className="absolute top-0 bottom-0 border-l border-border" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN, width: PX_PER_HOUR }}>
-                  <span className="absolute top-1.5 left-1.5 text-sm font-bold tabular-nums">{String(h).padStart(2, '0')}:00</span>
+                  <span className="absolute top-1.5 inset-x-0 text-center text-sm font-bold tabular-nums">{String(h).padStart(2, '0')}:00</span>
                 </div>
               ))}
               {/* bottom tier: the 15-minute marks under each hour */}
@@ -311,6 +314,14 @@ export function ScheduleBoard({
         </div>
 
       </Card>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-muted-foreground">
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/25" /> Reservation — confirmed</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-amber-500/70 bg-amber-500/15" /> Reservation — pending</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-primary/50 bg-primary/30" /> Order — scheduled</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/80" /> In service</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-muted" /> Completed</span>
+      </div>
 
       {add && synthetic && (
         <NewReservationDialog

@@ -580,22 +580,22 @@ export default async function ShiftSchedulePage({
         </Card>
       )}
 
-      <div className="flex flex-wrap gap-3 text-xs font-semibold text-muted-foreground">
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-primary/15" /> Regular</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-amber-500/15" /> Cross-branch</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/15" /> On-call</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-muted" /> Off</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-destructive/15" /> Leave</span>
-        {view === 'station' && (
-          <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-500/50 bg-zinc-400/75" /> Bed cleanup</span>
-        )}
-        {scale === 'day' && (
-          <>
-            <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-amber-500/70 bg-amber-500/15" /> Reservation — pending</span>
-            <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/20" /> Reservation — confirmed</span>
-          </>
-        )}
-      </div>
+      {/* The Station board carries its own legend; this one is for the shift views. */}
+      {!stationBoard && (
+        <div className="flex flex-wrap gap-3 text-xs font-semibold text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-primary/15" /> Regular</span>
+          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-amber-500/15" /> Cross-branch</span>
+          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/15" /> On-call</span>
+          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-muted" /> Off</span>
+          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-destructive/15" /> Leave</span>
+          {scale === 'day' && (
+            <>
+              <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-amber-500/70 bg-amber-500/15" /> Reservation — pending</span>
+              <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/20" /> Reservation — confirmed</span>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
+import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData } from '@/components/shift-schedule/schedule-board';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
@@ -198,6 +199,106 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   return { rows, windowStartMin, windowEndMin, reservations };
 }
 
+// Interactive Station board (15-min): beds as rows, with every scheduled /
+// in-service / done order item on its bed, pinned reservations as bed blocks,
+// and unplaced reservations in the "To place" lane (drag onto a bed).
+async function fetchStationBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number }> {
+  const supabase = createServiceClient();
+  const [bedsRes, itemsRes, resvRes, graceMin] = await Promise.all([
+    supabase.from('resources').select('id, resource_name').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
+    supabase
+      .from('order_items')
+      .select('id, status, resource_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date )')
+      .in('status', ['scheduled', 'in_service', 'completed'])
+      .not('resource_id', 'is', null),
+    supabase
+      .from('reservations')
+      .select('id, status, guest_name, pax, desired_service_start, desired_service_end, customer_sources ( code ), reservation_service_categories ( service_categories ( name ) ), reservation_resources ( resource_id )')
+      .eq('branch_id', branchId).in('status', ['reserved', 'confirmed']).is('deleted_at', null)
+      .gte('desired_service_start', `${day}T00:00:00+08:00`).lte('desired_service_start', `${day}T23:59:59+08:00`).order('desired_service_start'),
+    getReservationGraceMinutes(),
+  ]);
+
+  const beds: BoardBed[] = (bedsRes.data ?? []).map((b) => ({ id: b.id, name: b.resource_name }));
+  const blocks: BoardBlock[] = [];
+  const mins: number[] = [];
+
+  for (const it of itemsRes.data ?? []) {
+    const ord = one(it.order);
+    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || !it.resource_id) continue;
+    const dur = it.duration_minutes ?? 60;
+    let startMin: number;
+    let endMin: number;
+    let variant: BlockVariant;
+    let draggable = false;
+    if (it.status === 'scheduled') {
+      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      if (!sIso) continue; // no planned time → can't place it on the axis
+      startMin = tsToMin(sIso); endMin = startMin + dur; variant = 'scheduled'; draggable = true;
+    } else {
+      if (!it.actual_start) continue;
+      startMin = tsToMin(it.actual_start);
+      endMin = it.actual_end ? tsToMin(it.actual_end) : startMin + dur;
+      variant = it.status === 'completed' ? 'completed' : 'in_service';
+    }
+    blocks.push({
+      key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: it.resource_id,
+      line1: one(it.service)?.name ?? 'Service', line2: one(it.therapist)?.name ?? undefined,
+      startMin, endMin, durationMin: dur, variant, draggable, orderId: ord.id,
+    });
+    mins.push(startMin, endMin);
+  }
+
+  for (const r of resvRes.data ?? []) {
+    const cats = (r.reservation_service_categories ?? []).map((l) => one(l.service_categories)?.name).filter(Boolean).join(' + ');
+    const src = one(r.customer_sources)?.code;
+    const startMin = tsToMin(r.desired_service_start);
+    const endMin = Math.max(startMin + 15, tsToMin(r.desired_service_end));
+    const dur = Math.max(15, endMin - startMin);
+    const pinnedIds = (r.reservation_resources ?? []).map((x) => x.resource_id);
+    const pending = r.status === 'reserved';
+    const overdue = isReservationOverdue({ desiredStartIso: r.desired_service_start, graceMin });
+    const line2 = [cats || 'Service', src, r.pax > 1 ? `${r.pax}p` : null].filter(Boolean).join(' · ');
+    const floating = pending || pinnedIds.length === 0 || overdue;
+    if (floating) {
+      blocks.push({ key: `res:${r.id}`, kind: 'reservation', refId: r.id, bedId: null, line1: r.guest_name ?? 'Guest', line2, startMin, endMin, durationMin: dur, variant: pending ? 'pending' : 'confirmed', draggable: true });
+    } else {
+      for (const rid of pinnedIds) {
+        blocks.push({ key: `res:${r.id}:${rid}`, kind: 'reservation', refId: r.id, bedId: rid, line1: r.guest_name ?? 'Guest', line2, startMin, endMin, durationMin: dur, variant: 'confirmed', draggable: true });
+      }
+    }
+    mins.push(startMin, endMin);
+  }
+
+  const windowStartMin = mins.length ? Math.min(540, Math.floor(Math.min(...mins) / 60) * 60) : 540;
+  const windowEndMin = mins.length ? Math.max(1320, Math.ceil(Math.max(...mins) / 60) * 60) : 1320;
+  return { beds, blocks, windowStartMin, windowEndMin };
+}
+
+// Option lists for the board's click-to-add (reuses NewReservationDialog).
+async function fetchBoardDialogData(): Promise<BoardDialogData> {
+  const supabase = createServiceClient();
+  const allowed = await getAllowedBranchIds();
+  const [br, src, cat, si] = await Promise.all([
+    supabase.from('branches').select('id, code, name, branch_business_units ( business_unit_id )').eq('active', true).order('code'),
+    supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
+    supabase.from('service_categories').select('id, code, name, required_resource_type, service_category_business_units ( business_unit_id )').eq('active', true).order('code'),
+    supabase.from('service_items').select('id, name, service_group, service_category_id, duration_minutes').eq('active', true).order('service_group'),
+  ]);
+  const branches = (br.data ?? []).filter((b) => allowed.has(b.id)).map((b) => ({
+    id: b.id, code: b.code, name: b.name, businessUnitIds: (b.branch_business_units ?? []).map((x) => x.business_unit_id),
+  }));
+  const serviceCategories = (cat.data ?? []).map((c) => ({
+    id: c.id, code: c.code, name: c.name,
+    businessUnitIds: (c.service_category_business_units ?? []).map((x) => x.business_unit_id),
+    requiredResourceType: c.required_resource_type,
+  }));
+  const serviceItems = (si.data ?? [])
+    .filter((s) => s.service_group)
+    .map((s) => ({ id: s.id, name: s.name, group: s.service_group as string, categoryId: s.service_category_id as string, durationMinutes: s.duration_minutes ?? null }));
+  return { branches, sources: src.data ?? [], serviceCategories, serviceItems };
+}
+
 interface ShiftRow {
   employee_id: string;
   shift_date: string;
@@ -356,7 +457,10 @@ export default async function ShiftSchedulePage({
   const scale: ShiftScale = view === 'station' ? 'day' : sp.scale === 'day' ? 'day' : 'week';
   const day = sp.day || todayISO();
   const { branches, branchId, monday, days, employees, shifts } = await fetchData(sp.branch, sp.week);
-  const dayData = scale === 'day' && branchId ? await fetchDayData(view, branchId, day) : null;
+  // Station+day → the interactive 15-min board; Therapist+day → the read-only timeline.
+  const stationBoard = view === 'station' && scale === 'day' && branchId ? await fetchStationBoard(branchId, day) : null;
+  const boardDialog = stationBoard ? await fetchBoardDialogData() : null;
+  const dayData = view === 'employee' && scale === 'day' && branchId ? await fetchDayData('employee', branchId, day) : null;
   // Live walk-in capacity snapshot — shown above both views, always for "now".
   const availability = branchId ? await computeNowAvailability(branchId) : null;
 
@@ -374,7 +478,7 @@ export default async function ShiftSchedulePage({
           <h2 className="text-3xl font-bold tracking-tight">Shift Schedule</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
             {scale === 'day'
-              ? `${day} · hourly · ${view === 'station' ? 'live bed occupancy (from orders)' : 'therapist hours & services'}`
+              ? `${day} · ${view === 'station' ? '15-min board · click a slot to add · drag a booking onto a bed' : 'hourly · therapist hours & services'}`
               : `Week of ${monday} · home-branch therapists · click a cell to set a shift`}
           </p>
         </div>
@@ -411,8 +515,19 @@ export default async function ShiftSchedulePage({
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           Create a branch first.
         </Card>
+      ) : stationBoard ? (
+        <ScheduleBoard
+          branchId={branchId}
+          day={day}
+          beds={stationBoard.beds}
+          blocks={stationBoard.blocks}
+          windowStartMin={stationBoard.windowStartMin}
+          windowEndMin={stationBoard.windowEndMin}
+          nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null}
+          dialog={boardDialog!}
+        />
       ) : scale === 'day' ? (
-        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel={view === 'station' ? 'Station' : 'Therapist'} nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} reservations={dayData!.reservations} />
+        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel="Therapist" nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} reservations={dayData!.reservations} />
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           No active therapists for this branch (or its sharing group).

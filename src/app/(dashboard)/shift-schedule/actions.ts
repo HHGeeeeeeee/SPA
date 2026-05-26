@@ -4,8 +4,161 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
+import { canAccessBranch } from '@/lib/branch-access';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
+
+const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
+
+// Minute-of-day for an ISO timestamp, read in Manila wall time.
+function isoMinPHT(iso: string): number {
+  const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
+  const h = Number(p.find((x) => x.type === 'hour')?.value ?? 0);
+  const m = Number(p.find((x) => x.type === 'minute')?.value ?? 0);
+  return h * 60 + m;
+}
+function datePHT(iso: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+// A Manila wall-clock timestamp for `day` at `min` minutes past midnight.
+function makeIso(day: string, min: number): string {
+  const hh = String(Math.floor(min / 60)).padStart(2, '0');
+  const mm = String(min % 60).padStart(2, '0');
+  return `${day}T${hh}:${mm}:00+08:00`;
+}
+const overlaps = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1;
+
+// Is `bedId` already taken on `day` during [startMin, endMin)? Checks confirmed
+// pinned reservations and live/scheduled order items on that bed (excluding self).
+async function bedHasConflict(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  bedId: string,
+  day: string,
+  startMin: number,
+  endMin: number,
+  exclude: { reservationId?: string; itemId?: string },
+): Promise<boolean> {
+  const { data: rr } = await supabase
+    .from('reservation_resources')
+    .select('reservation:reservations ( id, status, desired_service_start, desired_service_end, deleted_at )')
+    .eq('resource_id', bedId);
+  for (const row of rr ?? []) {
+    const r = one(row.reservation) as { id: string; status: string; desired_service_start: string; desired_service_end: string; deleted_at: string | null } | null;
+    if (!r || r.deleted_at || r.status !== 'confirmed') continue;
+    if (exclude.reservationId && r.id === exclude.reservationId) continue;
+    if (datePHT(r.desired_service_start) !== day) continue;
+    if (overlaps(startMin, endMin, isoMinPHT(r.desired_service_start), isoMinPHT(r.desired_service_end))) return true;
+  }
+  const { data: oi } = await supabase
+    .from('order_items')
+    .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
+    .eq('resource_id', bedId)
+    .in('status', ['scheduled', 'in_service']);
+  for (const it of oi ?? []) {
+    if (one(it.order)?.service_date !== day) continue;
+    if (exclude.itemId && it.id === exclude.itemId) continue;
+    const startIso = it.actual_start ?? it.scheduled_start ?? it.service_start ?? it.slot_start;
+    if (!startIso) continue;
+    const s = isoMinPHT(startIso);
+    const e = it.actual_end ? isoMinPHT(it.actual_end) : s + (it.duration_minutes ?? 60);
+    if (overlaps(startMin, endMin, s, e)) return true;
+  }
+  return false;
+}
+
+const placeSchema = z.object({
+  reservation_id: z.string().uuid(),
+  bed_id: z.string().uuid(),
+  start_min: z.number().int().min(0).max(1439),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+/**
+ * Drag a reservation onto a bed's time slot: pin that bed, set the desired
+ * window to [start, start+duration], and commit it (confirmed, on-site). Keeps
+ * the original span length. Rejects if the bed is already taken in that window.
+ */
+export async function placeReservationOnBed(input: unknown): Promise<ActionResult> {
+  const parsed = placeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { reservation_id, bed_id, start_min, day } = parsed.data;
+  const supabase = await createAuditedClient();
+
+  const { data: r } = await supabase
+    .from('reservations')
+    .select('branch_id, status, desired_service_start, desired_service_end')
+    .eq('id', reservation_id)
+    .single();
+  if (!r) return { ok: false, error: 'Reservation not found' };
+  if (!(await canAccessBranch(r.branch_id))) return { ok: false, error: 'No access to this branch' };
+
+  const spanMs = Date.parse(r.desired_service_end) - Date.parse(r.desired_service_start);
+  const durationMin = spanMs > 0 ? Math.round(spanMs / 60000) : 60;
+  const endMin = start_min + durationMin;
+  if (await bedHasConflict(supabase, bed_id, day, start_min, endMin, { reservationId: reservation_id })) {
+    return { ok: false, error: 'That bed is already booked for this time' };
+  }
+
+  const startIso = makeIso(day, start_min);
+  const endIso = new Date(Date.parse(startIso) + durationMin * 60000).toISOString();
+  const upd = await supabase
+    .from('reservations')
+    .update({ desired_service_start: startIso, desired_service_end: endIso, status: 'confirmed', service_location_type: 'on_site' })
+    .eq('id', reservation_id);
+  if (upd.error) return { ok: false, error: upd.error.message };
+
+  await supabase.from('reservation_resources').delete().eq('reservation_id', reservation_id);
+  const ins = await supabase.from('reservation_resources').insert({ reservation_id, resource_id: bed_id });
+  if (ins.error) return { ok: false, error: ins.error.message };
+
+  revalidatePath('/shift-schedule');
+  return { ok: true };
+}
+
+const moveSchema = z.object({
+  item_id: z.string().uuid(),
+  bed_id: z.string().uuid(),
+  start_min: z.number().int().min(0).max(1439),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+/**
+ * Drag a not-yet-started (scheduled) order item to a new bed/time. Once a
+ * service is in-service or done its bed is locked, so this only moves scheduled
+ * items. Rejects on a bed/time clash.
+ */
+export async function moveScheduledOrderItem(input: unknown): Promise<ActionResult> {
+  const parsed = moveSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { item_id, bed_id, start_min, day } = parsed.data;
+  const supabase = await createAuditedClient();
+
+  const { data: it } = await supabase
+    .from('order_items')
+    .select('status, duration_minutes, order:orders!order_items_order_id_fkey ( branch_id )')
+    .eq('id', item_id)
+    .single();
+  if (!it) return { ok: false, error: 'Order item not found' };
+  if (it.status !== 'scheduled') return { ok: false, error: 'Service already started — its bed is locked' };
+  const branchId = one(it.order)?.branch_id;
+  if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
+
+  const durationMin = it.duration_minutes ?? 60;
+  const endMin = start_min + durationMin;
+  if (await bedHasConflict(supabase, bed_id, day, start_min, endMin, { itemId: item_id })) {
+    return { ok: false, error: 'That bed is already booked for this time' };
+  }
+
+  const startIso = makeIso(day, start_min);
+  const endIso = new Date(Date.parse(startIso) + durationMin * 60000).toISOString();
+  const { error } = await supabase
+    .from('order_items')
+    .update({ resource_id: bed_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso })
+    .eq('id', item_id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/shift-schedule');
+  return { ok: true };
+}
 
 const schema = z.object({
   employee_id: z.string().uuid(),

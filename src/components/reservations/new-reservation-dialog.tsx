@@ -72,6 +72,9 @@ interface Props {
   // Walk-in mode: a streamlined flow that books the soonest available slot and
   // hides the manual Start/End + Location fields.
   walkIn?: boolean;
+  // Create the reservation as confirmed without the walk-in auto-find flow — used
+  // by the schedule board's "Walk-in here" on a hand-picked bed/time.
+  prefillConfirmed?: boolean;
 }
 
 const LOCATION_TYPES = [
@@ -98,6 +101,7 @@ export function NewReservationDialog({
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   walkIn = false,
+  prefillConfirmed = false,
 }: Props) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -173,7 +177,7 @@ export function NewReservationDialog({
         branch_id: branchId,
         start: new Date(start).toISOString(),
         end: new Date(end).toISOString(),
-        exclude_id: reservation?.id ?? null,
+        exclude_id: isEdit ? (reservation?.id ?? null) : null,
       });
       if (r.ok && r.data) setAvail(r.data.byType);
     }, 350);
@@ -189,7 +193,7 @@ export function NewReservationDialog({
         branch_id: branchId,
         start: new Date(start).toISOString(),
         end: new Date(end).toISOString(),
-        exclude_id: reservation?.id ?? null,
+        exclude_id: isEdit ? (reservation?.id ?? null) : null,
       });
       if (r.ok && r.data) setBeds(r.data.beds);
     }, 350);
@@ -330,7 +334,7 @@ export function NewReservationDialog({
       note: note || null,
       resource_ids: locationType === 'external_hotel' ? [] : pinnedBeds,
       seat_together: locationType === 'external_hotel' ? false : seatTogether && paxNum > 1,
-      confirmed: walkIn, // walk-in guest is present → established, not pending
+      confirmed: walkIn || prefillConfirmed, // walk-in / desk-placed → confirmed, holds the bed
       service_item_id: specificItemId || null, // optional specific service
     };
     startTransition(async () => {

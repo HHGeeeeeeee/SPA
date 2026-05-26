@@ -30,6 +30,8 @@ export interface BoardBlock {
   startMin: number;
   endMin: number;
   durationMin: number;
+  prepMin: number; // bed turnover before the service (drawn as a buffer)
+  cleanupMin: number; // bed turnover after the service
   variant: BlockVariant;
   draggable: boolean;
   orderId?: string;
@@ -128,7 +130,9 @@ function BedRow({
   onEmptyClick: (bedId: string, min: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bed:${bed.id}` });
-  const { lanes, count } = assignLanes(blocks);
+  // Pack lanes by the bed-occupied span (service + cleanup tail) so a block's
+  // turnover doesn't get covered by the next booking.
+  const { lanes, count } = assignLanes(blocks.map((b) => ({ startMin: b.startMin, endMin: b.endMin + b.cleanupMin })));
   return (
     <div className="flex border-b border-border last:border-0">
       <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center sticky left-0 z-20 bg-card">
@@ -152,6 +156,20 @@ function BedRow({
         )))}
         {blocks.map((b, i) => (
           <div key={b.key} className="absolute inset-x-0" style={{ top: lanes[i] * LANE_H }}>
+            {b.prepMin > 0 && (
+              <div
+                className="absolute rounded-l-sm border border-dashed border-zinc-400/50 bg-zinc-400/20"
+                style={{ left: (b.startMin - b.prepMin - windowStartMin) * PX_PER_MIN, width: b.prepMin * PX_PER_MIN, top: 3, height: LANE_H - 6 }}
+                title={`Prep ${b.prepMin}m`}
+              />
+            )}
+            {b.cleanupMin > 0 && (
+              <div
+                className="absolute rounded-r-sm border border-dashed border-zinc-400/50 bg-zinc-400/20"
+                style={{ left: (b.endMin - windowStartMin) * PX_PER_MIN, width: b.cleanupMin * PX_PER_MIN, top: 3, height: LANE_H - 6 }}
+                title={`Cleanup ${b.cleanupMin}m`}
+              />
+            )}
             <BlockView block={b} windowStartMin={windowStartMin} onOpen={onOpen} />
           </div>
         ))}
@@ -321,6 +339,7 @@ export function ScheduleBoard({
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-primary/50 bg-primary/30" /> Order — scheduled</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/80" /> In service</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-muted" /> Completed</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-400/60 bg-zinc-400/20" /> Prep / cleanup</span>
       </div>
 
       {add && synthetic && (

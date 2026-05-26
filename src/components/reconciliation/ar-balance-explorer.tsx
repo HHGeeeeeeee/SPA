@@ -1,9 +1,12 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { ChevronRight, ChevronDown, FilePlus2, Wallet, AlertTriangle } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
@@ -15,7 +18,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { SoaActions } from '@/components/reconciliation/soa-actions';
-import type { ArBalance, ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
+import { settleSOABatch, type ArBalance, type ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -37,9 +40,23 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = 
  * on the SOA (Record Payment / Settle) — this view is the ledger, not a new ledger.
  */
 export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
+  const router = useRouter();
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [settling, startSettle] = useTransition();
   const toggle = (id: string) =>
     setOpen((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSel = (id: string) =>
+    setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  function doSettle() {
+    const ids = [...sel];
+    if (!ids.length) return;
+    startSettle(async () => {
+      const r = await settleSOABatch(ids);
+      if (r.ok) { toast.success(`Settled ${r.data?.settled} SOA${(r.data?.settled ?? 0) > 1 ? 's' : ''}`); setSel(new Set()); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
 
   if (ar.debtors.length === 0) {
     return (
@@ -55,9 +72,13 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
   const thirdParty = ar.debtors.filter((d) => d.settlement_type === 'third_party');
   const intercompany = ar.debtors.filter((d) => d.settlement_type === 'intercompany');
 
-  function section(title: string, hint: string, debtors: ArDebtor[]) {
+  function section(title: string, hint: string, debtors: ArDebtor[], settleable = false) {
     if (debtors.length === 0) return null;
     const subtotal = debtors.reduce((s, d) => s + d.total_cents, 0);
+    // Only intercompany statements settle in bulk (cost transfer); third-party
+    // is collected per-payment, so no select-all there.
+    const soaIds = settleable ? debtors.flatMap((d) => d.soas.map((x) => x.id)) : [];
+    const allSel = soaIds.length > 0 && soaIds.every((id) => sel.has(id));
     return (
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
@@ -65,7 +86,25 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
             <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{title}</h3>
             <p className="text-xs font-medium text-muted-foreground/80">{hint}</p>
           </div>
-          <span className="text-sm font-bold tabular">{peso(subtotal)}</span>
+          <div className="flex items-center gap-3">
+            {settleable && soaIds.length > 0 && (
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="size-4 cursor-pointer accent-primary"
+                  checked={allSel}
+                  onChange={() => setSel((p) => {
+                    const n = new Set(p);
+                    if (allSel) soaIds.forEach((id) => n.delete(id));
+                    else soaIds.forEach((id) => n.add(id));
+                    return n;
+                  })}
+                />
+                Select all
+              </label>
+            )}
+            <span className="text-sm font-bold tabular">{peso(subtotal)}</span>
+          </div>
         </div>
         <Card className="p-0 overflow-hidden">
           <Table className="table-fixed">
@@ -147,7 +186,15 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                       <TableCell className="tabular text-right font-bold">{peso(s.outstanding_cents)}</TableCell>
                                       <TableCell className="text-center"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
                                       <TableCell>
-                                        <div className="flex items-center justify-end gap-1">
+                                        <div className="flex items-center justify-end gap-2">
+                                          {settleable && (
+                                            <input
+                                              type="checkbox"
+                                              className="size-4 cursor-pointer accent-primary"
+                                              checked={sel.has(s.id)}
+                                              onChange={() => toggleSel(s.id)}
+                                            />
+                                          )}
                                           <SoaActions id={s.id} status={s.status} settlementType={s.settlement_type} outstandingCents={s.outstanding_cents} allowVoid={false} />
                                         </div>
                                       </TableCell>
@@ -192,8 +239,17 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
         As of {fmtDate(ar.today)} · &quot;Overdue&quot; = third-party statements past their due date. Intercompany has no due date (settled by internal cost transfer).
       </p>
 
+      {sel.size > 0 && (
+        <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-primary/40 bg-card px-4 py-2.5 shadow-sm">
+          <span className="text-sm font-bold">{sel.size} intercompany statement{sel.size > 1 ? 's' : ''} selected</span>
+          <Button size="sm" onClick={doSettle} disabled={settling}>
+            {settling ? 'Settling…' : `Settle & post (${sel.size})`}
+          </Button>
+        </div>
+      )}
+
       {section('Third-party — to collect', 'Real receivables — collected via Record Payment (e.g. Elnido Go pays periodically).', thirdParty)}
-      {section('Intercompany — to settle', 'Cleared by internal cost transfer (Settle), not cash collection.', intercompany)}
+      {section('Intercompany — to settle', 'Cleared by internal cost transfer (Settle), not cash collection.', intercompany, true)}
     </div>
   );
 }

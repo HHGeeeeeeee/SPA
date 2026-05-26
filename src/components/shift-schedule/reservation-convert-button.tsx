@@ -29,6 +29,9 @@ export function ReservationConvertButton({
   style,
   title,
   children,
+  open: controlledOpen,
+  onOpenChange,
+  triggerless = false,
 }: {
   reservationId: string;
   guest: string;
@@ -36,10 +39,16 @@ export function ReservationConvertButton({
   className?: string;
   style?: React.CSSProperties;
   title?: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  // Controlled / trigger-less mode — the schedule board opens it on a block tap.
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  triggerless?: boolean;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [busy, start] = useTransition();
 
   function doConfirm() {
@@ -69,9 +78,11 @@ export function ReservationConvertButton({
 
   return (
     <>
-      <button type="button" className={className} style={style} title={title} onClick={() => setOpen(true)}>
-        {children}
-      </button>
+      {!triggerless && (
+        <button type="button" className={className} style={style} title={title} onClick={() => setOpen(true)}>
+          {children}
+        </button>
+      )}
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

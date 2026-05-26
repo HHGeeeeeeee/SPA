@@ -15,6 +15,7 @@ import {
 
 import { Card } from '@/components/ui/card';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
+import { ReservationConvertButton } from '@/components/shift-schedule/reservation-convert-button';
 import { placeReservationOnBed, moveScheduledOrderItem } from '@/app/(dashboard)/shift-schedule/actions';
 
 export interface BoardBed { id: string; name: string }
@@ -180,6 +181,8 @@ export function ScheduleBoard({
   const [menu, setMenu] = useState<{ bedId: string; min: number; left: number; top: number } | null>(null);
   const [addKey, setAddKey] = useState(0);
   const [add, setAdd] = useState<{ bedId: string; min: number; confirmed: boolean } | null>(null);
+  // Tap a reservation block → confirm / convert it (seat the guest).
+  const [convert, setConvert] = useState<{ reservationId: string; guest: string; pending: boolean } | null>(null);
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -194,6 +197,7 @@ export function ScheduleBoard({
 
   function openBlock(b: BoardBlock) {
     if (b.kind === 'order' && b.orderId) router.push(`/sales-orders/${b.orderId}`);
+    else if (b.kind === 'reservation') setConvert({ reservationId: b.refId, guest: b.line1, pending: b.variant === 'pending' });
   }
 
   function onEmptyClick(bedId: string, min: number, clientX: number, trackLeft: number) {
@@ -342,6 +346,17 @@ export function ScheduleBoard({
           prefillConfirmed={add.confirmed}
           open
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
+        />
+      )}
+
+      {convert && (
+        <ReservationConvertButton
+          triggerless
+          reservationId={convert.reservationId}
+          guest={convert.guest}
+          pending={convert.pending}
+          open
+          onOpenChange={(o) => { if (!o) setConvert(null); }}
         />
       )}
     </DndContext>

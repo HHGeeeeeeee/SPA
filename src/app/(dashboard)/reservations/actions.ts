@@ -729,6 +729,10 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
     }
   }
 
+  // Keep the booked time on the new lines so they stay on the schedule board
+  // (positioned + movable) until the service actually starts. No-op if no lines.
+  await supabase.from('order_items').update({ scheduled_start: r.desired_service_start }).eq('order_id', order.id);
+
   await supabase.from('reservations').update({ status: 'converted' }).eq('id', id);
 
   revalidatePath('/reservations');

@@ -12,7 +12,8 @@ function defaultRange(): { from: string; to: string } {
 export default async function RevenueSoaPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
   const { from, to } = defaultRange();
   const view = (await searchParams)?.view;
-  const initialView = view === 'ar' ? 'ar' : view === 'history' ? 'history' : 'generate';
+  // AR Balance is the default landing view; ?view=generate / history opt into the others.
+  const initialView = view === 'generate' ? 'generate' : view === 'history' ? 'history' : 'ar';
   const [groups, history, arBalance] = await Promise.all([
     loadSoaWorkspace(from, to),
     loadSoaHistory(),

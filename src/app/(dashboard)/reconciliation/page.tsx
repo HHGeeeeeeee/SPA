@@ -41,14 +41,14 @@ export default async function ReconciliationHubPage() {
       attention: s.unsettledCommissionLines > 0,
     },
     {
-      href: '/reconciliation/soa?view=ar', label: 'AR Balance', icon: Wallet,
+      href: '/reconciliation/soa', label: 'Accounts Receivable', icon: Wallet,
       desc: 'Outstanding receivables — open statements + un-stated closed AR, by billing destination.',
       metric: s.arOutstandingCents > 0 ? `${peso(s.arOutstandingCents)} outstanding` : 'Nothing outstanding',
       attention: s.arOutstandingCents > 0,
     },
     {
-      href: '/reconciliation/soa', label: 'Revenue SOA', icon: FileText,
-      desc: 'Statements of account for AR billings — intercompany vs third-party.',
+      href: '/reconciliation/soa?view=generate', label: 'Generate SOA', icon: FileText,
+      desc: 'Bill closed AR into statements — intercompany vs third-party.',
       metric: s.soaUnstated > 0 ? `${s.soaUnstated} closed AR order(s) un-stated` : 'All AR stated',
       attention: s.soaUnstated > 0,
     },

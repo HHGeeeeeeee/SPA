@@ -56,7 +56,7 @@ export const mainNavItems: NavItem[] = [
       { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm' },
       { label: 'Tip Settlement', href: '/reconciliation/tips' },
       { label: 'Commission Settlement', href: '/reconciliation/commission' },
-      { label: 'Revenue SOA', href: '/reconciliation/soa' },
+      { label: 'Accounts Receivable', href: '/reconciliation/soa' },
     ],
   },
   { label: 'Reports', href: '/reports', icon: BarChart3 },

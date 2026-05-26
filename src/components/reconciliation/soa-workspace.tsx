@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronDown, FileText, FilePlus2, CalendarClock, Download } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, FilePlus2, CalendarClock, Download, Wallet } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,7 +41,7 @@ export function SoaWorkspace({
   initialGroups,
   history,
   arBalance,
-  initialView = 'generate',
+  initialView = 'ar',
 }: {
   initialFrom: string;
   initialTo: string;
@@ -138,14 +138,21 @@ export function SoaWorkspace({
         <div>
           <Link href="/reconciliation" className="text-xs font-semibold text-muted-foreground hover:text-foreground">Reconciliation</Link>
           <h2 className="text-3xl font-bold tracking-tight mt-1 flex items-center gap-2">
-            <FileText className="size-6 text-primary" /> Revenue SOA
+            <Wallet className="size-6 text-primary" /> Accounts Receivable
           </h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
-            Closed AR orders not yet on a statement · intercompany vs third-party
+            Outstanding receivables by billing destination · generate statements · collect &amp; settle
           </p>
         </div>
-        {/* segmented toggle */}
+        {/* segmented toggle — AR Balance is the default landing view */}
         <div className="inline-flex rounded-lg border border-border bg-card p-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setTab('ar')}
+            className={cn('rounded-md px-4 py-1.5 text-sm font-bold transition-colors', tab === 'ar' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent')}
+          >
+            AR Balance
+          </button>
           <button
             type="button"
             onClick={() => setTab('generate')}
@@ -159,13 +166,6 @@ export function SoaWorkspace({
             className={cn('rounded-md px-4 py-1.5 text-sm font-bold transition-colors', tab === 'history' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent')}
           >
             SOA History
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('ar')}
-            className={cn('rounded-md px-4 py-1.5 text-sm font-bold transition-colors', tab === 'ar' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent')}
-          >
-            AR Balance
           </button>
         </div>
       </div>

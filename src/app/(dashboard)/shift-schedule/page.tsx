@@ -264,12 +264,17 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     const line2 = [cats || 'Service', src, r.pax > 1 ? `${r.pax}p` : null].filter(Boolean).join(' · ');
     const prepMin = one(r.service)?.prep_before_minutes ?? 0;
     const cleanupMin = one(r.service)?.cleanup_after_minutes ?? 0;
-    const floating = pending || pinnedIds.length === 0 || overdue;
+    // A confirmed booking pinned to a bed STAYS on that bed even if it's past
+    // its grace window — staff put it there on purpose; show it (with a late
+    // mark) rather than yanking it to the "To place" lane. Only pending or
+    // un-pinned reservations live in the lane.
+    const guest = `${overdue ? '⚠ ' : ''}${r.guest_name ?? 'Guest'}`;
+    const floating = pending || pinnedIds.length === 0;
     if (floating) {
-      blocks.push({ key: `res:${r.id}`, kind: 'reservation', refId: r.id, bedId: null, line1: r.guest_name ?? 'Guest', line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: pending ? 'pending' : 'confirmed', draggable: true });
+      blocks.push({ key: `res:${r.id}`, kind: 'reservation', refId: r.id, bedId: null, line1: guest, line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: pending ? 'pending' : 'confirmed', draggable: true });
     } else {
       for (const rid of pinnedIds) {
-        blocks.push({ key: `res:${r.id}:${rid}`, kind: 'reservation', refId: r.id, bedId: rid, line1: r.guest_name ?? 'Guest', line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: 'confirmed', draggable: true });
+        blocks.push({ key: `res:${r.id}:${rid}`, kind: 'reservation', refId: r.id, bedId: rid, line1: guest, line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: 'confirmed', draggable: true });
       }
     }
     mins.push(startMin, endMin);

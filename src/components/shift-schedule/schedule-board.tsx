@@ -122,7 +122,7 @@ function BedRow({
   hours: number[];
   nowMin: number | null;
   onOpen: (b: BoardBlock) => void;
-  onEmptyClick: (bedId: string, min: number, clientX: number, trackLeft: number) => void;
+  onEmptyClick: (bedId: string, min: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bed:${bed.id}` });
   const { lanes, count } = assignLanes(blocks);
@@ -138,14 +138,14 @@ function BedRow({
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const min = snap15(windowStartMin + (e.clientX - rect.left) / PX_PER_MIN);
-          onEmptyClick(bed.id, min, e.clientX, rect.left);
+          onEmptyClick(bed.id, min);
         }}
       >
         {hours.map((h) => (
-          <div key={h} className="absolute top-0 bottom-0 border-l border-border/60" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN }} />
+          <div key={h} className="absolute top-0 bottom-0 border-l border-border" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN }} />
         ))}
         {hours.slice(0, -1).flatMap((h) => [15, 30, 45].map((q) => (
-          <div key={`${h}-${q}`} className="absolute top-0 bottom-0 border-l border-border/20" style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }} />
+          <div key={`${h}-${q}`} className={`absolute top-0 bottom-0 border-l ${q === 30 ? 'border-border/60' : 'border-border/35 border-dashed'}`} style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }} />
         )))}
         {blocks.map((b, i) => (
           <div key={b.key} className="absolute inset-x-0" style={{ top: lanes[i] * LANE_H }}>
@@ -177,10 +177,10 @@ export function ScheduleBoard({
   const suppressClick = useRef(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  // Click-to-add: a small menu at the clicked cell, then the prefilled dialog.
-  const [menu, setMenu] = useState<{ bedId: string; min: number; left: number; top: number } | null>(null);
+  // Click an empty slot → open the prefilled New Reservation dialog directly
+  // (confirmed, so it holds the clicked bed/time). Walk-ins use the same flow.
   const [addKey, setAddKey] = useState(0);
-  const [add, setAdd] = useState<{ bedId: string; min: number; confirmed: boolean } | null>(null);
+  const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
   // Tap a reservation block → confirm / convert it (seat the guest).
   const [convert, setConvert] = useState<{ reservationId: string; guest: string; pending: boolean } | null>(null);
 
@@ -200,9 +200,10 @@ export function ScheduleBoard({
     else if (b.kind === 'reservation') setConvert({ reservationId: b.refId, guest: b.line1, pending: b.variant === 'pending' });
   }
 
-  function onEmptyClick(bedId: string, min: number, clientX: number, trackLeft: number) {
+  function onEmptyClick(bedId: string, min: number) {
     if (Date.now() - suppressClick.current < 250) return; // a drag just ended
-    setMenu({ bedId, min, left: clientX - trackLeft + LABEL_W, top: 0 });
+    setAdd({ bedId, min });
+    setAddKey((k) => k + 1);
   }
 
   function onDragEnd(e: DragEndEvent) {
@@ -236,7 +237,7 @@ export function ScheduleBoard({
     : undefined;
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd} onDragStart={() => setMenu(null)}>
+    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
       <Card className="relative p-0 overflow-auto max-h-[calc(100vh-16rem)]">
         <div style={{ minWidth: LABEL_W + trackWidth }}>
           {/* hour + 15-min ruler */}
@@ -253,7 +254,13 @@ export function ScheduleBoard({
                 </div>
               ))}
               {hours.slice(0, -1).flatMap((h) => [15, 30, 45].map((q) => (
-                <div key={`${h}-${q}`} className="absolute bottom-0 h-2 border-l border-border/30" style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }} />
+                <div
+                  key={`${h}-${q}`}
+                  className={`absolute bottom-0 border-l ${q === 30 ? 'h-4 border-border/60' : 'h-2 border-border/35'}`}
+                  style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }}
+                >
+                  {q === 30 && <span className="absolute -top-3.5 left-0.5 text-[8px] font-semibold text-muted-foreground/70 tabular-nums">30</span>}
+                </div>
               )))}
               {nowMin != null && nowMin >= windowStartMin && (
                 <div className="absolute top-0 bottom-0 z-10 -translate-x-1/2 flex flex-col items-center" style={{ left: (nowMin - windowStartMin) * PX_PER_MIN }}>
@@ -305,34 +312,6 @@ export function ScheduleBoard({
           )}
         </div>
 
-        {/* click-to-add menu */}
-        {menu && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} />
-            <div
-              className="absolute z-50 rounded-lg border border-border bg-card p-1 shadow-lg flex flex-col"
-              style={{ left: Math.min(menu.left, LABEL_W + trackWidth - 160), top: 44 }}
-            >
-              <div className="px-2 py-1 text-[11px] font-bold text-muted-foreground">
-                {beds.find((b) => b.id === menu.bedId)?.name} · {hhmm(menu.min)}
-              </div>
-              <button
-                type="button"
-                className="rounded px-3 py-1.5 text-left text-sm font-semibold hover:bg-accent"
-                onClick={() => { setAdd({ bedId: menu.bedId, min: menu.min, confirmed: false }); setAddKey((k) => k + 1); setMenu(null); }}
-              >
-                New reservation
-              </button>
-              <button
-                type="button"
-                className="rounded px-3 py-1.5 text-left text-sm font-semibold hover:bg-accent"
-                onClick={() => { setAdd({ bedId: menu.bedId, min: menu.min, confirmed: true }); setAddKey((k) => k + 1); setMenu(null); }}
-              >
-                Walk-in (confirmed)
-              </button>
-            </div>
-          </>
-        )}
       </Card>
 
       {add && synthetic && (
@@ -343,7 +322,7 @@ export function ScheduleBoard({
           serviceCategories={dialog.serviceCategories}
           serviceItems={dialog.serviceItems}
           reservation={synthetic}
-          prefillConfirmed={add.confirmed}
+          prefillConfirmed
           open
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
         />

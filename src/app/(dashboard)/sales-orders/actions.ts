@@ -1118,6 +1118,31 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     return { ok: false, error: `Amount exceeds the balance due (₱${(due / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })})` };
   }
 
+  // Per-guest cap (Pay separately): a payment tagged to one guest can't exceed
+  // that guest's own balance. Without this, one guest could be over-collected
+  // while another is left short even though the order total still nets — strictly
+  // no over/under per scope. Manager Collect more carries no order_customer_id, so
+  // it stays at order scope (the sanctioned exception path) and skips this check.
+  if (d.order_customer_id) {
+    const { data: custItems } = await supabase
+      .from('order_items')
+      .select('final_amount_cents')
+      .eq('order_id', d.order_id)
+      .eq('order_customer_id', d.order_customer_id)
+      .neq('status', 'cancelled');
+    const custSubtotal = (custItems ?? []).reduce((s, i) => s + i.final_amount_cents, 0);
+    const { data: custPays } = await supabase
+      .from('payments')
+      .select('amount_cents')
+      .eq('order_id', d.order_id)
+      .eq('order_customer_id', d.order_customer_id);
+    const custPaid = (custPays ?? []).reduce((s, p) => s + p.amount_cents, 0);
+    const custDue = Math.max(0, custSubtotal - custPaid);
+    if (amountCents > custDue) {
+      return { ok: false, error: `Amount exceeds this guest's balance due (₱${(custDue / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })})` };
+    }
+  }
+
   const { data: method } = await supabase
     .from('payment_methods')
     .select('code')

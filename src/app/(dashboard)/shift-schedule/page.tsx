@@ -44,11 +44,11 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   const supabase = createServiceClient();
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('id, therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name, employee_code ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date )')
+    .select('id, therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name, employee_code ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
     .not('actual_start', 'is', null);
   const dayItems = (itemData ?? []).filter((it) => {
     const ord = one(it.order);
-    return ord && ord.branch_id === branchId && ord.service_date === day && it.actual_start;
+    return ord && ord.branch_id === branchId && ord.service_date === day && ord.status !== 'void' && it.actual_start;
   });
 
   // Upcoming reservations (not yet converted to an order) for this branch/day.
@@ -211,7 +211,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     supabase.from('resources').select('id, resource_name').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
-      .select('id, status, resource_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, order_customers ( id ) )')
+      .select('id, status, resource_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, order_customers ( id ) )')
       .in('status', ['scheduled', 'in_service', 'service_completed', 'feedback_done', 'interrupted'])
       .not('resource_id', 'is', null),
     supabase
@@ -229,7 +229,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
 
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
-    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || !it.resource_id) continue;
+    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || ord.status === 'void' || !it.resource_id) continue;
     const dur = it.duration_minutes ?? 60;
     let startMin: number;
     let endMin: number;
@@ -409,7 +409,7 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
     supabase.from('employee_shifts').select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
     supabase
       .from('order_items')
-      .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
+      .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
       .not('actual_start', 'is', null),
     supabase
       .from('reservations')
@@ -420,7 +420,7 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
   ]);
 
   const bedIds = new Set((bedsRes.data ?? []).map((b) => b.id));
-  const items = (itemsRes.data ?? []).filter((it) => { const o = one(it.order); return o && o.branch_id === branchId && o.service_date === day && it.actual_start; });
+  const items = (itemsRes.data ?? []).filter((it) => { const o = one(it.order); return o && o.branch_id === branchId && o.service_date === day && o.status !== 'void' && it.actual_start; });
 
   // Beds busy this minute: an active service ([prep .. end (+cleanup)]) or a
   // confirmed, non-overdue pinned reservation whose window covers now.

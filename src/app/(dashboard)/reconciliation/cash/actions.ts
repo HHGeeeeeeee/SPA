@@ -63,7 +63,7 @@ export async function setCashShiftConfig(input: { open: number; shifts: { name: 
 
   if (input.branchId) {
     const { error } = await supabase.from('settings').upsert(
-      { key: CASH_SHIFT_CONFIG_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'json', description: 'Cash shift config (branch override)' },
+      { key: CASH_SHIFT_CONFIG_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'string', description: 'Cash shift config (branch override)' },
       { onConflict: 'key,branch_id' },
     );
     if (error) return { ok: false, error: error.message };
@@ -71,7 +71,7 @@ export async function setCashShiftConfig(input: { open: number; shifts: { name: 
     // Global row has branch_id IS NULL; Postgres treats NULLs as distinct so
     // onConflict can't dedupe it — update the existing one or insert a new one.
     const { data: existing } = await supabase.from('settings').select('id').eq('key', CASH_SHIFT_CONFIG_KEY).is('branch_id', null).maybeSingle();
-    const payload = { value, scope: 'global', value_type: 'json', description: 'Cash shift config (all branches)' };
+    const payload = { value, scope: 'global', value_type: 'string', description: 'Cash shift config (all branches)' };
     const { error } = existing
       ? await supabase.from('settings').update(payload).eq('id', existing.id)
       : await supabase.from('settings').insert({ key: CASH_SHIFT_CONFIG_KEY, branch_id: null, ...payload });

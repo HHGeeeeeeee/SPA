@@ -11,7 +11,6 @@ import {
   KeyRound,
   LogOut,
   Users,
-  UserCheck,
   Building2,
   Database,
   CircleAlert,
@@ -42,7 +41,6 @@ export const mainNavItems: NavItem[] = [
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarClock },
   { label: 'Reservations', href: '/reservations', icon: CalendarDays },
   { label: 'Customers', href: '/customers', icon: Users },
-  { label: 'Availability', href: '/availability', icon: UserCheck },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the
   // page/route stays but is off the nav.
   { label: 'Stored Value Cards', href: '/stored-value-cards', icon: CreditCard },

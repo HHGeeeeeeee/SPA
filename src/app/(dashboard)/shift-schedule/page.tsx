@@ -1,4 +1,4 @@
-import { BedDouble, Users } from 'lucide-react';
+import { BedDouble } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData } from '@/components/shift-schedule/schedule-board';
+import { TherapistsNowCard } from '@/components/shift-schedule/therapists-now-card';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
@@ -342,11 +343,21 @@ function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
+interface TherapistNow {
+  id: string;
+  name: string;
+  code: string;
+  shiftType: string;
+  free: boolean;
+  serviceName: string | null;
+  since: string | null;
+}
 interface NowAvailability {
   bedsFree: number;
   bedsTotal: number;
   therapistsFree: number;
   therapistsOnShift: number;
+  therapists: TherapistNow[];
   nowMin: number;
 }
 
@@ -361,10 +372,10 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
 
   const [bedsRes, shiftRes, itemsRes, resvRes, graceMin] = await Promise.all([
     supabase.from('resources').select('id').eq('branch_id', branchId).eq('resource_type', 'massage_bed').eq('status', 'active'),
-    supabase.from('employee_shifts').select('employee_id, shift_start, shift_end').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
+    supabase.from('employee_shifts').select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
     supabase
       .from('order_items')
-      .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
+      .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date )')
       .not('actual_start', 'is', null),
     supabase
       .from('reservations')
@@ -402,23 +413,33 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
     if (nowMin >= start && nowMin < occEnd) for (const x of r.reservation_resources ?? []) if (bedIds.has(x.resource_id)) busyBeds.add(x.resource_id);
   }
 
-  // Therapists rostered (timed shift covering now) minus those mid-service.
+  // Therapists rostered (timed shift covering now). On-duty = rostered (the
+  // roster is the source of truth — no punch-clock); free = not mid-service.
   const onShift = new Set<string>();
+  const meta = new Map<string, { name: string; code: string; shiftType: string }>();
   for (const s of shiftRes.data ?? []) {
+    const e = one(s.employees);
+    meta.set(s.employee_id, { name: e?.name ?? '—', code: e?.employee_code ?? '', shiftType: s.shift_type });
     const ss = timeToMin(s.shift_start), se = timeToMin(s.shift_end);
     if (ss != null && se != null && nowMin >= ss && nowMin < se) onShift.add(s.employee_id);
   }
   const busyTh = new Set<string>();
+  const busyInfo = new Map<string, { serviceName: string; since: number }>();
   for (const it of items) {
     if (!it.therapist_id) continue;
     const s0 = tsToMin(it.actual_start!);
     const end = it.actual_end ? tsToMin(it.actual_end) : s0 + (it.duration_minutes ?? 60);
-    if (nowMin >= s0 && nowMin < end) busyTh.add(it.therapist_id);
+    if (nowMin >= s0 && nowMin < end) { busyTh.add(it.therapist_id); busyInfo.set(it.therapist_id, { serviceName: one(it.service)?.name ?? 'Service', since: s0 }); }
   }
-  let therapistsFree = 0;
-  for (const id of onShift) if (!busyTh.has(id)) therapistsFree++;
+  const therapists: TherapistNow[] = [...onShift]
+    .map((id) => {
+      const m = meta.get(id);
+      const b = busyInfo.get(id);
+      return { id, name: m?.name ?? '—', code: m?.code ?? '', shiftType: m?.shiftType ?? 'regular', free: !busyTh.has(id), serviceName: b?.serviceName ?? null, since: b ? hm(b.since) : null };
+    })
+    .sort((a, b) => Number(a.free) - Number(b.free) || a.code.localeCompare(b.code));
 
-  return { bedsFree: Math.max(0, bedIds.size - busyBeds.size), bedsTotal: bedIds.size, therapistsFree, therapistsOnShift: onShift.size, nowMin };
+  return { bedsFree: Math.max(0, bedIds.size - busyBeds.size), bedsTotal: bedIds.size, therapistsFree: therapists.filter((t) => t.free).length, therapistsOnShift: onShift.size, therapists, nowMin };
 }
 
 async function fetchData(branchParam?: string, weekParam?: string) {
@@ -498,7 +519,7 @@ export default async function ShiftSchedulePage({
       {/* Live walk-in capacity — open beds + free therapists this minute. Sits
           above both views, always reflecting "now" regardless of the day shown. */}
       {availability && (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <Card className="flex min-w-[180px] flex-1 items-center justify-between gap-3 p-3 sm:max-w-[220px]">
             <div>
               <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground leading-tight">Beds open now</div>
@@ -508,16 +529,8 @@ export default async function ShiftSchedulePage({
             </div>
             <BedDouble className="size-6 shrink-0 text-muted-foreground/50" />
           </Card>
-          <Card className="flex min-w-[180px] flex-1 items-center justify-between gap-3 p-3 sm:max-w-[220px]">
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground leading-tight">Therapists free now</div>
-              <div className={`mt-0.5 text-2xl font-extrabold tabular ${availability.therapistsFree === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`}>
-                {availability.therapistsFree}<span className="text-base font-semibold text-muted-foreground"> / {availability.therapistsOnShift} on shift</span>
-              </div>
-            </div>
-            <Users className="size-6 shrink-0 text-muted-foreground/50" />
-          </Card>
-          <span className="text-xs font-semibold text-muted-foreground">Live · as of {hm(availability.nowMin)} PHT</span>
+          <TherapistsNowCard free={availability.therapistsFree} onShift={availability.therapistsOnShift} therapists={availability.therapists} />
+          <span className="self-center text-xs font-semibold text-muted-foreground">Live · as of {hm(availability.nowMin)} PHT</span>
         </div>
       )}
 

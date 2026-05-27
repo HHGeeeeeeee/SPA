@@ -382,21 +382,24 @@ export function NewReservationDialog({
               <div className="col-span-2 flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
                 <span className="text-base">📍</span>
                 <div className="text-sm">
-                  <span className="font-bold">Station · {lockedBed.name}</span>
+                  <span className="font-bold">{branches.find((b) => b.id === branchId)?.code ?? 'Branch'} · {lockedBed.name}</span>
                   {start && <span className="text-muted-foreground"> · {start.slice(5, 10)} {start.slice(11, 16)}</span>}
                 </div>
                 <span className="ml-auto text-[11px] font-bold uppercase tracking-wide text-primary">Bed locked</span>
               </div>
             )}
-            <div className={`flex flex-col gap-2${walkIn ? ' col-span-2' : ''}`}>
-              <Label className="font-semibold">Branch *</Label>
-              <Select items={branchOptions} value={branchId} onValueChange={(v) => v && pickBranch(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
+            {/* Branch is fixed to the clicked bed's branch when locked from the board. */}
+            {!lockedBed && (
+              <div className={`flex flex-col gap-2${walkIn ? ' col-span-2' : ''}`}>
+                <Label className="font-semibold">Branch *</Label>
+                <Select items={branchOptions} value={branchId} onValueChange={(v) => v && pickBranch(v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            )}
             {!walkIn && (
-              <div className="flex flex-col gap-2">
+              <div className={`flex flex-col gap-2${lockedBed ? ' col-span-2' : ''}`}>
                 <Label className="font-semibold">Source *</Label>
                 <Select items={sourceOptions} value={sourceId} onValueChange={(v) => v && setSourceId(v)}>
                   <SelectTrigger><SelectValue placeholder="Pick a source" /></SelectTrigger>

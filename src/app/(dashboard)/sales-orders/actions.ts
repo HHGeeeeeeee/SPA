@@ -118,6 +118,47 @@ export async function createDraftOrder(input: unknown): Promise<ActionResult<{ i
   return { ok: true, data: { id: data.id } };
 }
 
+// Normalize a possibly-array Supabase to-one join down to the method code.
+function methodCode(method: unknown): string | null {
+  const m = Array.isArray(method) ? method[0] : method;
+  return (m as { code?: string } | null)?.code ?? null;
+}
+
+// Refund a stored-value redemption back onto its card before its payment row is
+// deleted: clear the consume row's link to the payment (that FK is NO ACTION, so
+// it would otherwise block the delete), restore the balance, and write a reversal
+// ledger row. No-op for any non-stored-value payment.
+async function refundStoredValuePayment(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  payment: { id: string; amount_cents: number; stored_value_card_id: string | null; code: string | null },
+  orderId: string,
+  staffId: string | null,
+  note: string,
+): Promise<void> {
+  if (payment.code !== 'stored_value_card' || !payment.stored_value_card_id) return;
+  await supabase.from('stored_value_transactions').update({ related_payment_id: null }).eq('related_payment_id', payment.id);
+  const { data: card } = await supabase
+    .from('stored_value_cards')
+    .select('current_balance_cents, branch_id')
+    .eq('id', payment.stored_value_card_id)
+    .single();
+  if (!card) return;
+  const balanceAfter = card.current_balance_cents + payment.amount_cents;
+  await supabase.from('stored_value_cards')
+    .update({ current_balance_cents: balanceAfter, status: 'active' })
+    .eq('id', payment.stored_value_card_id);
+  await supabase.from('stored_value_transactions').insert({
+    card_id: payment.stored_value_card_id,
+    branch_id: card.branch_id,
+    type: 'refund',
+    amount_cents: payment.amount_cents,
+    balance_after_cents: balanceAfter,
+    related_order_id: orderId,
+    approved_by_user_id: staffId,
+    note,
+  });
+}
+
 export async function voidOrder(id: string, reason: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required to void' };
@@ -141,37 +182,20 @@ export async function voidOrder(id: string, reason: string): Promise<ActionResul
     return { ok: false, error: 'A tip on this order is already settled — reverse the settlement before voiding.' };
   }
 
-  // Stored-value redemptions are refunded back onto their cards (with a reversal
-  // ledger row), and the consume row's link to the payment is cleared so the
-  // payment can be deleted without tripping its foreign key.
+  // Stored-value redemptions are refunded back onto their cards before the
+  // payments are removed (see refundStoredValuePayment).
   const { data: pays } = await supabase
     .from('payments')
     .select('id, amount_cents, stored_value_card_id, method:payment_methods ( code )')
     .eq('order_id', id);
   for (const p of pays ?? []) {
-    const code = Array.isArray(p.method) ? p.method[0]?.code : (p.method as { code?: string } | null)?.code;
-    if (code !== 'stored_value_card' || !p.stored_value_card_id) continue;
-    await supabase.from('stored_value_transactions').update({ related_payment_id: null }).eq('related_payment_id', p.id);
-    const { data: card } = await supabase
-      .from('stored_value_cards')
-      .select('current_balance_cents, branch_id')
-      .eq('id', p.stored_value_card_id)
-      .single();
-    if (!card) continue;
-    const balanceAfter = card.current_balance_cents + p.amount_cents;
-    await supabase.from('stored_value_cards')
-      .update({ current_balance_cents: balanceAfter, status: 'active' })
-      .eq('id', p.stored_value_card_id);
-    await supabase.from('stored_value_transactions').insert({
-      card_id: p.stored_value_card_id,
-      branch_id: card.branch_id,
-      type: 'refund',
-      amount_cents: p.amount_cents,
-      balance_after_cents: balanceAfter,
-      related_order_id: id,
-      approved_by_user_id: session!.staffUserId,
-      note: 'Order voided',
-    });
+    await refundStoredValuePayment(
+      supabase,
+      { id: p.id, amount_cents: p.amount_cents, stored_value_card_id: p.stored_value_card_id, code: methodCode(p.method) },
+      id,
+      session!.staffUserId,
+      'Order voided',
+    );
   }
 
   await supabase.from('tips').delete().eq('order_id', id);
@@ -1145,8 +1169,9 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
-// Reverse a recorded payment: drop it (and its open tips), refund the order's
-// paid total, and step a fully-paid order back to completed if it no longer is.
+// Reverse a recorded payment: drop it (and its open tips), refund a stored-value
+// redemption back onto its card, refund the order's paid total, and step a
+// fully-paid order back to completed if it no longer is.
 export async function voidPayment(paymentId: string, orderId: string): Promise<ActionResult> {
   const supabase = await createAuditedClient();
   const { data: order, error: oe } = await supabase
@@ -1170,6 +1195,23 @@ export async function voidPayment(paymentId: string, orderId: string): Promise<A
     .not('settlement_id', 'is', null);
   if (settled && settled.length > 0) {
     return { ok: false, error: 'A tip on this payment is already settled; cannot void it' };
+  }
+
+  // Stored-value redemption → refund the card before its payment row is removed.
+  const { data: pay } = await supabase
+    .from('payments')
+    .select('amount_cents, stored_value_card_id, method:payment_methods ( code )')
+    .eq('id', paymentId)
+    .single();
+  if (pay) {
+    const session = await currentSession();
+    await refundStoredValuePayment(
+      supabase,
+      { id: paymentId, amount_cents: pay.amount_cents, stored_value_card_id: pay.stored_value_card_id, code: methodCode(pay.method) },
+      orderId,
+      session?.staffUserId ?? null,
+      'Payment reversed',
+    );
   }
 
   await supabase.from('tips').delete().eq('payment_id', paymentId);

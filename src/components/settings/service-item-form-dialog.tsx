@@ -65,6 +65,9 @@ interface Props {
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  // Defaults for a NEW item's prep/cleanup, from the global massage settings.
+  defaultPrep?: number;
+  defaultCleanup?: number;
 }
 
 const NONE = '__none__';
@@ -78,6 +81,8 @@ export function ServiceItemFormDialog({
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
+  defaultPrep = 10,
+  defaultCleanup = 15,
 }: Props) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -89,8 +94,8 @@ export function ServiceItemFormDialog({
   const [serviceGroup, setServiceGroup] = useState(item?.service_group ?? '');
   const [categoryId, setCategoryId] = useState(item?.service_category_id ?? categories[0]?.id ?? '');
   const [duration, setDuration] = useState(String(item?.duration_minutes ?? 60));
-  const [prep, setPrep] = useState(String(item?.prep_before_minutes ?? 10));
-  const [cleanup, setCleanup] = useState(String(item?.cleanup_after_minutes ?? 15));
+  const [prep, setPrep] = useState(String(item?.prep_before_minutes ?? defaultPrep));
+  const [cleanup, setCleanup] = useState(String(item?.cleanup_after_minutes ?? defaultCleanup));
   const [resourceType, setResourceType] = useState(item?.required_resource_type ?? 'massage_bed');
   const [pricingModel, setPricingModel] = useState<ServiceItemRecord['pricing_model']>(
     item?.pricing_model ?? 'per_session',

@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [items, categories, businessUnits] = await Promise.all([
+  const [items, categories, businessUnits, settingsRes] = await Promise.all([
     supabase
       .from('service_items')
       .select(`
@@ -25,21 +25,27 @@ async function fetchData() {
       .order('duration_minutes'),
     supabase.from('service_categories').select('id, code, name').eq('active', true).order('code'),
     supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('settings').select('key, value').is('branch_id', null).in('key', ['default_prep_minutes_massage', 'default_cleanup_minutes_massage']),
   ]);
   if (items.error) throw new Error(items.error.message);
   if (categories.error) throw new Error(categories.error.message);
   if (businessUnits.error) throw new Error(businessUnits.error.message);
   const groups = [...new Set((items.data ?? []).map((i) => i.service_group).filter(Boolean) as string[])].sort();
+  // New massage items default their prep/cleanup from these global settings.
+  const setMap = new Map((settingsRes.data ?? []).map((s) => [s.key, Number(s.value)]));
+  const num = (k: string, fallback: number) => (Number.isFinite(setMap.get(k)) ? (setMap.get(k) as number) : fallback);
   return {
     items: items.data ?? [],
     categories: categories.data ?? [],
     businessUnits: businessUnits.data ?? [],
     groups,
+    defaultPrep: num('default_prep_minutes_massage', 10),
+    defaultCleanup: num('default_cleanup_minutes_massage', 15),
   };
 }
 
 export default async function ServiceItemsPage() {
-  const { items, categories, businessUnits, groups } = await fetchData();
+  const { items, categories, businessUnits, groups, defaultPrep, defaultCleanup } = await fetchData();
   const activeCount = items.filter((i) => i.active).length;
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
@@ -110,6 +116,8 @@ export default async function ServiceItemsPage() {
           categories={categories}
           businessUnits={businessUnits}
           groups={groups}
+          defaultPrep={defaultPrep}
+          defaultCleanup={defaultCleanup}
           trigger={
             <Button>
               <Plus className="size-4" />

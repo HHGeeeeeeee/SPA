@@ -6,15 +6,13 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { confirmReservation, convertReservationToOrder } from '@/app/(dashboard)/reservations/actions';
 
 // A reservation block on the Shift Schedule. Clicking opens a dialog: a pending
@@ -86,19 +84,19 @@ export function ReservationConvertButton({
           {children}
         </button>
       )}
-      <AlertDialog open={open} onOpenChange={setOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{pending ? 'Pending reservation' : 'Convert reservation to an order?'}</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-bold">{pending ? 'Pending reservation' : 'Convert reservation to an order?'}</DialogTitle>
+            <DialogDescription className="font-medium">
               {guest}
               {pending
                 ? ' — Confirm to establish it, or convert straight to a draft Sales Order.'
                 : ' — this creates a draft Sales Order (with the guest) and marks the reservation converted.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button>
             {onEdit && (
               <Button variant="outline" disabled={busy} onClick={onEdit}>
                 Edit
@@ -109,12 +107,12 @@ export function ReservationConvertButton({
                 {busy ? 'Working…' : 'Confirm'}
               </Button>
             )}
-            <AlertDialogAction onClick={doConvert} disabled={busy}>
+            <Button onClick={doConvert} disabled={busy}>
               {busy ? 'Working…' : 'Convert & open'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

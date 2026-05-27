@@ -75,11 +75,11 @@ function assignLanes(blocks: { startMin: number; endMin: number }[]): { lanes: n
 }
 
 const VARIANT_CLASS: Record<BlockVariant, string> = {
-  pending: 'border border-dashed border-amber-500/70 bg-amber-500/15 text-amber-950 dark:text-amber-100',
+  pending: 'border border-dashed border-amber-500 bg-amber-400/45 text-amber-950 dark:text-amber-100',
   confirmed: 'border border-dashed border-violet-500/70 bg-violet-500/25 text-violet-950 dark:text-violet-100',
   scheduled: 'border border-primary/50 bg-primary/30 text-foreground',
   in_service: 'bg-blue-500/80 text-white',
-  completed: 'bg-muted text-muted-foreground line-through',
+  completed: 'bg-zinc-400/70 text-white line-through dark:bg-zinc-500/70',
 };
 
 function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock) => void }) {
@@ -165,14 +165,14 @@ function BedRow({
           <div key={b.key} className="absolute inset-x-0" style={{ top: lanes[i] * LANE_H }}>
             {b.prepMin > 0 && (
               <div
-                className="absolute rounded-l-sm border border-dashed border-zinc-400/50 bg-zinc-400/20"
+                className="absolute rounded-l-sm border border-dashed border-zinc-500/70 bg-zinc-400/25"
                 style={{ left: (b.startMin - b.prepMin - windowStartMin) * PX_PER_MIN, width: b.prepMin * PX_PER_MIN, top: 3, height: LANE_H - 6 }}
                 title={`Prep ${b.prepMin}m`}
               />
             )}
             {b.cleanupMin > 0 && (
               <div
-                className="absolute rounded-r-sm border border-dashed border-zinc-400/50 bg-zinc-400/20"
+                className="absolute rounded-r-sm border border-dashed border-zinc-500/70 bg-zinc-400/25"
                 style={{ left: (b.endMin - windowStartMin) * PX_PER_MIN, width: b.cleanupMin * PX_PER_MIN, top: 3, height: LANE_H - 6 }}
                 title={`Cleanup ${b.cleanupMin}m`}
               />
@@ -386,11 +386,11 @@ export function ScheduleBoard({
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-muted-foreground">
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/25" /> Reservation — confirmed</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-amber-500/70 bg-amber-500/15" /> Reservation — pending</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-amber-500 bg-amber-400/45" /> Reservation — pending</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-primary/50 bg-primary/30" /> Order — scheduled</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/80" /> In service</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-muted" /> Completed</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-400/60 bg-zinc-400/20" /> Prep / cleanup</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-zinc-400/70 dark:bg-zinc-500/70" /> Completed</span>
+        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-500/70 bg-zinc-400/25" /> Prep / cleanup</span>
       </div>
 
       {add && synthetic && (

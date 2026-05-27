@@ -765,6 +765,27 @@ export async function redoOrderItem(itemId: string, orderId: string): Promise<Ac
   });
 }
 
+// Switch an in-service service to a different one: stop the current line with no
+// charge (it's being replaced), then the desk picks the new service in the add
+// panel. Reopens the order if the stop auto-completed it. Front-desk action.
+export async function switchService(itemId: string, orderId: string): Promise<ActionResult> {
+  const supabase = await createAuditedClient();
+  const { data: ord } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
+  if (!ord) return { ok: false, error: 'Order not found' };
+  if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
+
+  const r = await interruptOrderItem({ item_id: itemId, order_id: orderId, reason: 'Switched to another service', handling: 'no_charge' });
+  if (!r.ok) return r;
+
+  const { data: order } = await supabase.from('orders').select('status').eq('id', orderId).single();
+  if (order?.status === 'completed') {
+    const re = await supabase.from('orders').update({ status: 'open' }).eq('id', orderId);
+    if (re.error) return { ok: false, error: re.error.message };
+    revalidatePath(`/sales-orders/${orderId}`);
+  }
+  return { ok: true };
+}
+
 const feedbackSchema = z.object({
   order_id: z.string().uuid(),
   order_item_id: z.string().uuid(),

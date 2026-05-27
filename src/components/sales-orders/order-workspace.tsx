@@ -42,6 +42,7 @@ import {
   finishOrderItem,
   skipOrderItem,
   redoOrderItem,
+  switchService,
   releaseBed,
   voidPayment,
 } from '@/app/(dashboard)/sales-orders/actions';
@@ -433,6 +434,20 @@ export function OrderWorkspace({
     });
   }
 
+  // Switch an in-service line to a different service: stop it (no charge) and
+  // open the add panel for that guest to pick the replacement.
+  function doSwitchItem(it: OrderItem) {
+    startTransition(async () => {
+      const r = await switchService(it.id, order.id);
+      if (r.ok) {
+        toast.success('Stopped (no charge) — pick the new service');
+        setEditingItemId(null);
+        setActiveCustomer(it.order_customer_id);
+        setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
+      } else toast.error(r.error);
+    });
+  }
+
   function doReleaseBed(id: string) {
     startTransition(async () => {
       const r = await releaseBed(id);
@@ -673,6 +688,7 @@ export function OrderWorkspace({
                       {canRunService && it.status === 'in_service' && (
                         <>
                           <Button size="sm" onClick={() => doFinishItem(it)} disabled={pending}>Finish</Button>
+                          <Button size="sm" variant="ghost" onClick={() => doSwitchItem(it)} disabled={pending}>Switch</Button>
                           <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</Button>
                         </>
                       )}

@@ -567,7 +567,7 @@ export function OrderWorkspace({
         <TabsContent value="guests" className="flex flex-col gap-4">
       {/* section header: pax count + add customer */}
       {/* Same column grid as the service rows so "Start all" lands above the Action column. */}
-      <div className="grid grid-cols-[11rem_10rem_6rem_15rem_10rem_1fr] items-end gap-x-3 px-4">
+      <div className="grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-end gap-x-3 px-4">
         <div className="col-span-4 flex flex-wrap items-end gap-3">
           <div className="flex items-center gap-2">
             <h3 className="text-xl font-bold">Guests</h3>
@@ -660,7 +660,7 @@ export function OrderWorkspace({
             </CardHeader>
             <CardContent>
               {itemsByCustomer(c.id).length > 0 && (
-                <div className="grid grid-cols-[11rem_10rem_6rem_15rem_10rem_1fr] items-center gap-x-3 border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                <div className="grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-center gap-x-3 border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                   <span>Service</span>
                   <span>Therapist</span>
                   <span>Status</span>
@@ -693,15 +693,28 @@ export function OrderWorkspace({
                     : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
                     : null;
                   return (
-                  <li key={it.id} className={`grid grid-cols-[11rem_10rem_6rem_15rem_10rem_1fr] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                  <li key={it.id} className={`grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
                     <span className="font-semibold truncate">{it.service_name}</span>
                     <span className="font-medium text-muted-foreground truncate">
                       {it.therapist_name ?? 'Unassigned'}
                       {it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
                     </span>
-                    <span className="text-[10px] font-bold uppercase tracking-wide truncate">
-                      {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
-                    </span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] font-bold uppercase tracking-wide truncate">
+                        {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
+                      </span>
+                      {isCleaning && (
+                        <ActionBtn
+                          tip="Free the bed now, before the cleanup buffer ends."
+                          variant="outline"
+                          className="border-teal-500/60 text-teal-700 hover:bg-teal-50 hover:text-teal-800 dark:text-teal-400 dark:hover:bg-teal-500/10"
+                          onClick={() => doReleaseBed(it.id)}
+                          disabled={pending}
+                        >
+                          Ready now
+                        </ActionBtn>
+                      )}
+                    </div>
                     <span className="text-xs font-medium text-muted-foreground tabular truncate">
                       {detailParts.join(' · ')}
                     </span>
@@ -757,17 +770,7 @@ export function OrderWorkspace({
                           </ActionBtn>
                         </>
                       )}
-                      {isCleaning && (
-                        <ActionBtn
-                          tip="Free the bed now, before the cleanup buffer ends."
-                          variant="outline"
-                          className="border-teal-500/60 text-teal-700 hover:bg-teal-50 hover:text-teal-800 dark:text-teal-400 dark:hover:bg-teal-500/10"
-                          onClick={() => doReleaseBed(it.id)}
-                          disabled={pending}
-                        >
-                          Ready now
-                        </ActionBtn>
-                      )}
+                      {/* "Ready now" lives next to the Cleaning status, not here. */}
                       {['service_completed', 'feedback_done'].includes(it.status) && it.feedback_score == null && (
                         <ActionBtn
                           tip="Record the guest's feedback — a score is required."

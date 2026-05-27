@@ -89,7 +89,7 @@ interface OrderCustomer {
   subtotal_cents: number;
   paid_cents: number;
 }
-interface Opt { id: string; code: string; name: string; gender?: string | null }
+interface Opt { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
 interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
@@ -341,13 +341,14 @@ export function OrderWorkspace({
       !takenTherapists.has(e.id)
       && canPerformGroup(capabilityByEmployee[e.id] ?? [], neededGroup)
       && matchesGender(e.gender, genderPref);
-    // Own-branch therapists first; only borrow from the sharing group if none of
-    // ours is free.
-    const ownFree = employees.find(matchTherapist);
-    const borrowedFree = ownFree ? undefined : borrowableEmployees.find(matchTherapist);
-    const freeTherapist = ownFree ?? borrowedFree;
-    const borrowedCode = !ownFree && borrowedFree?.homeBranchCode ? borrowedFree.homeBranchCode : null;
-    const note = borrowedCode ? ` (borrowed · ${borrowedCode})` : '';
+    // Priority: this branch's own (home) therapists → others on a cross-branch
+    // shift here → borrow from the sharing group. A home therapist is always
+    // preferred over someone just visiting or borrowed.
+    const ownHomeFree = employees.find((e) => !e.visiting && matchTherapist(e));
+    const ownVisitingFree = ownHomeFree ? undefined : employees.find((e) => e.visiting && matchTherapist(e));
+    const borrowedFree = ownHomeFree || ownVisitingFree ? undefined : borrowableEmployees.find(matchTherapist);
+    const freeTherapist = ownHomeFree ?? ownVisitingFree ?? borrowedFree;
+    const note = ownVisitingFree ? ' (visiting)' : borrowedFree?.homeBranchCode ? ` (borrowed · ${borrowedFree.homeBranchCode})` : '';
     const neededType = serviceItems.find((s) => s.id === svcId)?.required_resource_type ?? null;
     const freeStation = resources.find(
       (r) => !takenStations.has(r.id) && (!neededType || r.resource_type === neededType),

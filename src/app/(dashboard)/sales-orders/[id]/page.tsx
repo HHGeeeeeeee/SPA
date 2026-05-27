@@ -147,7 +147,9 @@ async function fetchData(id: string) {
   const rosteredHere = (e: { id: string }) => scheduledIds.has(e.id);
   const thisBranchEmployees = allEmployees
     .filter(rosteredHere)
-    .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender }));
+    // visiting = on a cross-branch shift here but home is elsewhere; auto-assign
+    // prefers home therapists over these.
+    .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, visiting: e.homeBranchId !== order.branch_id }));
   const borrowableEmployees = allEmployees
     .filter((e) => !rosteredHere(e) && e.homeBranchId !== order.branch_id && e.homeBranchId !== null && shareBranchIds.has(e.homeBranchId))
     .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, homeBranchCode: e.homeBranchCode }));

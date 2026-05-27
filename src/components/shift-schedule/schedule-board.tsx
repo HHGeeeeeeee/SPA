@@ -156,7 +156,7 @@ function BedRow({
           return (
             <div
               key={`${h}-${q}`}
-              className={`absolute top-0 bottom-0 border-l ${q === 30 ? 'border-border/60' : quarter ? 'border-border/35 border-dashed' : 'border-border/12'}`}
+              className={`absolute top-0 bottom-0 border-l ${q === 30 ? 'border-border/75' : quarter ? 'border-border/55 border-dashed' : 'border-border/25'}`}
               style={{ left: (h * 60 + q - windowStartMin) * PX_PER_MIN }}
             />
           );

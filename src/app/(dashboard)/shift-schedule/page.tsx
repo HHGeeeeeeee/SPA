@@ -204,9 +204,9 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
 // Interactive Station board (15-min): beds as rows, with every scheduled /
 // in-service / done order item on its bed, pinned reservations as bed blocks,
 // and unplaced reservations in the "To place" lane (drag onto a bed).
-async function fetchStationBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number }> {
+async function fetchStationBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; shiftWindows: { startMin: number; endMin: number }[] }> {
   const supabase = createServiceClient();
-  const [bedsRes, itemsRes, resvRes, graceMin] = await Promise.all([
+  const [bedsRes, itemsRes, resvRes, shiftRes, graceMin] = await Promise.all([
     supabase.from('resources').select('id, resource_name').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
@@ -218,6 +218,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
       .select('id, status, guest_name, pax, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ), customer_sources ( code ), reservation_service_categories ( service_categories ( name ) ), reservation_resources ( resource_id )')
       .eq('branch_id', branchId).in('status', ['reserved', 'confirmed']).is('deleted_at', null)
       .gte('desired_service_start', `${day}T00:00:00+08:00`).lte('desired_service_start', `${day}T23:59:59+08:00`).order('desired_service_start'),
+    supabase.from('employee_shifts').select('shift_start, shift_end').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     getReservationGraceMinutes(),
   ]);
 
@@ -284,7 +285,10 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
 
   const windowStartMin = mins.length ? Math.min(540, Math.floor(Math.min(...mins) / 60) * 60) : 540;
   const windowEndMin = mins.length ? Math.max(1320, Math.ceil(Math.max(...mins) / 60) * 60) : 1320;
-  return { beds, blocks, windowStartMin, windowEndMin };
+  const shiftWindows = (shiftRes.data ?? [])
+    .map((s) => ({ startMin: timeToMin(s.shift_start), endMin: timeToMin(s.shift_end) }))
+    .filter((w): w is { startMin: number; endMin: number } => w.startMin != null && w.endMin != null);
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, shiftWindows };
 }
 
 // Option lists for the board's click-to-add (reuses NewReservationDialog).
@@ -547,6 +551,8 @@ export default async function ShiftSchedulePage({
           blocks={stationBoard.blocks}
           windowStartMin={stationBoard.windowStartMin}
           windowEndMin={stationBoard.windowEndMin}
+          bedCount={stationBoard.bedCount}
+          shiftWindows={stationBoard.shiftWindows}
           nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null}
           dialog={boardDialog!}
         />

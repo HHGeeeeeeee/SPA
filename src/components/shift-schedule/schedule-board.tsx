@@ -189,7 +189,7 @@ function BedRow({
 }
 
 export function ScheduleBoard({
-  branchId, day, beds, blocks, windowStartMin, windowEndMin, nowMin, dialog,
+  branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, shiftWindows, nowMin, dialog,
 }: {
   branchId: string;
   day: string;
@@ -197,6 +197,8 @@ export function ScheduleBoard({
   blocks: BoardBlock[];
   windowStartMin: number;
   windowEndMin: number;
+  bedCount: number;
+  shiftWindows: { startMin: number; endMin: number }[];
   nowMin: number | null;
   dialog: BoardDialogData;
 }) {
@@ -222,6 +224,14 @@ export function ScheduleBoard({
   const floating = blocks.filter((b) => b.bedId === null);
   const blocksByBed = new Map<string, BoardBlock[]>();
   for (const b of blocks) if (b.bedId) blocksByBed.set(b.bedId, [...(blocksByBed.get(b.bedId) ?? []), b]);
+
+  // Scrub the timeline: availability at the hovered minute (beds free from the
+  // placed blocks incl. prep/cleanup; therapists on shift from the roster).
+  const [hoverMin, setHoverMin] = useState<number | null>(null);
+  const hoverBedsFree = hoverMin == null ? null
+    : bedCount - new Set(blocks.filter((b) => b.bedId && hoverMin >= b.startMin - b.prepMin && hoverMin < b.endMin + b.cleanupMin).map((b) => b.bedId)).size;
+  const hoverOnShift = hoverMin == null ? null
+    : shiftWindows.filter((w) => hoverMin >= w.startMin && hoverMin < w.endMin).length;
 
   function openBlock(b: BoardBlock) {
     if (b.kind === 'order' && b.orderId) router.push(`/sales-orders/${b.orderId}`);
@@ -267,7 +277,16 @@ export function ScheduleBoard({
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
       <Card className="relative p-0 overflow-auto max-h-[calc(100vh-16rem)]">
-        <div style={{ minWidth: LABEL_W + trackWidth }}>
+        <div
+          className="relative"
+          style={{ minWidth: LABEL_W + trackWidth }}
+          onMouseMove={(e) => {
+            const x = e.clientX - e.currentTarget.getBoundingClientRect().left - LABEL_W;
+            if (x < 0) { setHoverMin(null); return; }
+            setHoverMin(Math.min(windowEndMin, Math.max(windowStartMin, snapMin(windowStartMin + x / PX_PER_MIN))));
+          }}
+          onMouseLeave={() => setHoverMin(null)}
+        >
           {/* hour + 15-min ruler */}
           <div className="flex border-b border-border sticky top-0 z-30 bg-muted">
             <div className="w-40 shrink-0 p-2 flex items-center justify-center text-center text-xs font-bold text-muted-foreground sticky left-0 z-40 bg-muted">Station</div>
@@ -304,6 +323,13 @@ export function ScheduleBoard({
               {nowMin != null && nowMin >= windowStartMin && (
                 <div className="absolute top-0 bottom-0 z-10 -translate-x-1/2 flex flex-col items-center" style={{ left: (nowMin - windowStartMin) * PX_PER_MIN }}>
                   <span className="rounded bg-red-500 px-1 text-[9px] font-bold leading-tight text-white">{hhmm(nowMin)}</span>
+                </div>
+              )}
+              {hoverMin != null && (
+                <div className="absolute top-0.5 z-40 -translate-x-1/2 pointer-events-none" style={{ left: (hoverMin - windowStartMin) * PX_PER_MIN }}>
+                  <span className="rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-tight text-primary-foreground whitespace-nowrap shadow">
+                    {hhmm(hoverMin)} · {hoverBedsFree} bed{hoverBedsFree === 1 ? '' : 's'} · {hoverOnShift} on shift
+                  </span>
                 </div>
               )}
             </div>
@@ -348,6 +374,11 @@ export function ScheduleBoard({
                 onEmptyClick={onEmptyClick}
               />
             ))
+          )}
+
+          {/* scrub cursor — follows the pointer, marks the time the readout shows */}
+          {hoverMin != null && (
+            <div className="absolute top-0 bottom-0 z-20 w-px bg-primary/70 pointer-events-none" style={{ left: LABEL_W + (hoverMin - windowStartMin) * PX_PER_MIN }} />
           )}
         </div>
 

@@ -506,21 +506,24 @@ async function resolvePinnedBeds(
   excludeReservationId?: string | null,
 ): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
   if (locationType === 'external_hotel' || resourceIds.length === 0) return { ok: true, ids: [] };
-  if (resourceIds.length > pax) return { ok: false, error: `Can't pin more beds (${resourceIds.length}) than pax (${pax})` };
+  // One bed per guest: if more beds are pinned than pax (e.g. pax was lowered on
+  // an edit), keep the first `pax` rather than rejecting.
+  const ids = resourceIds.slice(0, Math.max(0, pax));
+  if (ids.length === 0) return { ok: true, ids: [] };
   const supabase = await createAuditedClient();
   const { data: rows } = await supabase
     .from('resources')
     .select('id, resource_name')
     .eq('branch_id', branchId)
     .eq('status', 'active')
-    .in('id', resourceIds);
+    .in('id', ids);
   const found = new Map((rows ?? []).map((r) => [r.id, r.resource_name]));
-  const missing = resourceIds.filter((id) => !found.has(id));
+  const missing = ids.filter((id) => !found.has(id));
   if (missing.length) return { ok: false, error: 'A pinned bed is not an active resource of this branch' };
   const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
-  const taken = resourceIds.filter((id) => busy.has(id)).map((id) => found.get(id));
+  const taken = ids.filter((id) => busy.has(id)).map((id) => found.get(id));
   if (taken.length) return { ok: false, error: `Already taken for this window: ${taken.join(', ')}` };
-  return { ok: true, ids: resourceIds };
+  return { ok: true, ids };
 }
 
 const bedNum = (name: string): number => { const m = name.match(/(\d+)/); return m ? Number(m[1]) : 9999; };

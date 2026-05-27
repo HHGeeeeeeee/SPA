@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+import { cn } from '@/lib/utils';
 import { takePayment } from '@/app/(dashboard)/sales-orders/actions';
 
 function peso(cents: number): string {
@@ -83,11 +84,15 @@ export function CustomerPaymentCard({
   const amountCents = Math.round((Number(amount) || 0) * 100);
   const tipCents = Math.round(tipTotalPesos * 100);
   const chargeTotalCents = amountCents + tipCents;
+  // No over-collection: the bill amount can't exceed this scope's balance due
+  // (the server enforces the same). Tips ride on top and don't count here.
+  const overDue = amountCents > dueCents;
 
   function record() {
     const amt = Number(amount);
     if (!method) return toast.error('Pick a payment method');
     if (!amt || amt <= 0) return toast.error('Enter an amount');
+    if (overDue) return toast.error(`Cannot exceed the balance due (${peso(dueCents)})`);
     if (showCard && !cardId) return toast.error('Select a stored value card');
     if (refRequired && !ref.trim()) return toast.error('Reference is required for PAYMAYA');
     const tipRows = showTips
@@ -137,14 +142,25 @@ export function CustomerPaymentCard({
         <div className="flex flex-col gap-1">
           <Label className="text-xs font-semibold">Amount (₱)</Label>
           {/* Editable so a bill can be split across methods (e.g. cash part +
-              PAYMAYA part). Defaults to the full due; tips stay separate. */}
-          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-28 text-right" />
+              PAYMAYA part). Defaults to the full due; tips stay separate.
+              Can't exceed the due — over-collection is blocked. */}
+          <Input
+            type="number"
+            min="0"
+            max={(dueCents / 100).toFixed(2)}
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            aria-invalid={overDue}
+            className={cn('w-28 text-right', overDue && 'border-destructive ring-1 ring-destructive')}
+          />
+          {overDue && <span className="text-[11px] font-medium text-destructive">Max {peso(dueCents)}</span>}
         </div>
         <div className="flex flex-col gap-1">
           <Label className="text-xs font-semibold">Reference {refRequired && <span className="text-destructive">*</span>}</Label>
           <Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="auth / ref" className="w-32" />
         </div>
-        <Button size="sm" onClick={record} disabled={pending}>Record</Button>
+        <Button size="sm" onClick={record} disabled={pending || overDue}>Record</Button>
         {showTips && (
           <div className="ml-auto flex flex-col gap-1">
             <Label className="text-xs font-semibold text-muted-foreground">Tip (PAYMAYA)</Label>

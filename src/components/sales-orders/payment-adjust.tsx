@@ -63,10 +63,15 @@ export function PaymentAdjust({
   const codeOf = (id: string) => methods.find((m) => m.id === id)?.code;
   const cIsSvc = codeOf(cMethod) === 'stored_value_card';
   const rIsSvc = codeOf(rMethod) === 'stored_value_card';
+  // No over-collection / over-refund: Collect can't exceed what's outstanding,
+  // Refund can't exceed what's been collected (the server enforces the same).
+  const cOver = Math.round((Number(cAmount) || 0) * 100) > dueCents;
+  const rOver = Math.round((Number(rAmount) || 0) * 100) > paidCents;
 
   function doCollect() {
     const amt = Number(cAmount || 0);
     if (amt <= 0) return toast.error('Enter an amount');
+    if (cOver) return toast.error(`Cannot exceed the outstanding (${peso(dueCents)})`);
     if (cIsSvc && !cCard) return toast.error('Select a stored value card');
     start(async () => {
       const r = await takePayment({ order_id: orderId, payment_method_id: cMethod, amount: amt, payment_ref: cRef || null, stored_value_card_id: cIsSvc ? cCard : null });
@@ -77,6 +82,7 @@ export function PaymentAdjust({
   function doRefund() {
     const amt = Number(rAmount || 0);
     if (amt <= 0) return toast.error('Enter an amount');
+    if (rOver) return toast.error(`Refund cannot exceed collected (${peso(paidCents)})`);
     if (rIsSvc && !rCard) return toast.error('Select a stored value card');
     start(async () => {
       const r = await recordRefund({ order_id: orderId, payment_method_id: rMethod, amount: amt, payment_ref: rRef || null, stored_value_card_id: rIsSvc ? rCard : null });
@@ -104,7 +110,8 @@ export function PaymentAdjust({
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <Label className="text-xs font-semibold">Amount (₱)</Label>
-                <Input type="number" min="0" step="0.01" value={cAmount} onChange={(e) => setCAmount(e.target.value)} />
+                <Input type="number" min="0" max={(dueCents / 100).toFixed(2)} step="0.01" value={cAmount} onChange={(e) => setCAmount(e.target.value)} aria-invalid={cOver} className={cOver ? 'border-destructive ring-1 ring-destructive' : undefined} />
+                {cOver && <span className="text-[11px] font-medium text-destructive">Max {peso(dueCents)}</span>}
               </div>
               <div className="flex flex-col gap-1">
                 <Label className="text-xs font-semibold">Method</Label>
@@ -130,7 +137,7 @@ export function PaymentAdjust({
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setCollectOpen(false)} disabled={pending}>Cancel</Button>
-            <Button type="button" onClick={doCollect} disabled={pending}>{pending ? 'Saving…' : 'Record'}</Button>
+            <Button type="button" onClick={doCollect} disabled={pending || cOver}>{pending ? 'Saving…' : 'Record'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -152,7 +159,8 @@ export function PaymentAdjust({
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <Label className="text-xs font-semibold">Amount (₱)</Label>
-                <Input type="number" min="0" step="0.01" value={rAmount} onChange={(e) => setRAmount(e.target.value)} />
+                <Input type="number" min="0" max={(paidCents / 100).toFixed(2)} step="0.01" value={rAmount} onChange={(e) => setRAmount(e.target.value)} aria-invalid={rOver} className={rOver ? 'border-destructive ring-1 ring-destructive' : undefined} />
+                {rOver && <span className="text-[11px] font-medium text-destructive">Max {peso(paidCents)}</span>}
               </div>
               <div className="flex flex-col gap-1">
                 <Label className="text-xs font-semibold">Method</Label>
@@ -178,7 +186,7 @@ export function PaymentAdjust({
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setRefundOpen(false)} disabled={pending}>Cancel</Button>
-            <Button type="button" className="bg-destructive text-white hover:bg-destructive/90" onClick={doRefund} disabled={pending}>{pending ? 'Saving…' : 'Refund'}</Button>
+            <Button type="button" className="bg-destructive text-white hover:bg-destructive/90" onClick={doRefund} disabled={pending || rOver}>{pending ? 'Saving…' : 'Refund'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

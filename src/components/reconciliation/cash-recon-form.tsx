@@ -82,7 +82,7 @@ export function CashReconForm({ branchId, date, shift, canReopen }: Props) {
     return (
       <div className="rounded-lg border border-border p-4 flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <span className="font-bold">{shift.label}</span>
+          <span className="font-bold">{shift.label}<span className="ml-2 text-xs font-medium text-muted-foreground tabular">{shift.windowLabel}</span></span>
           <Badge className="font-bold">Closed</Badge>
         </div>
         {rows}
@@ -122,7 +122,7 @@ export function CashReconForm({ branchId, date, shift, canReopen }: Props) {
 
   return (
     <div className="rounded-lg border border-border p-4 flex flex-col gap-3">
-      <span className="font-bold">{shift.label}</span>
+      <span className="font-bold">{shift.label}<span className="ml-2 text-xs font-medium text-muted-foreground tabular">{shift.windowLabel}</span></span>
       {rows}
       <div className="flex flex-col gap-2">
         <Label className="font-semibold">Counted cash (₱)</Label>

@@ -6,7 +6,11 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager, isAdmin } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
-import { SHIFT_LABELS, WINDOW, CASH_SHIFTS_SETTING_KEY as SETTING_KEY, type ShiftLabel, type ShiftStatus } from './shifts';
+import {
+  SHIFT_LABELS, SHIFT_ORDER, CASH_SHIFTS_SETTING_KEY as SETTING_KEY, CASH_WINDOWS_SETTING_KEY,
+  DEFAULT_AM_PM_CUT, DEFAULT_PM_NIGHT_CUT, buildWindows, hhmmToMin, minToHHMM, formatWindow,
+  type ShiftLabel, type ShiftStatus,
+} from './shifts';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -37,7 +41,50 @@ export async function getBranchShifts(branchId: string): Promise<ShiftLabel[]> {
   const raw = value?.split(',').map((s) => s.trim()).filter(Boolean) as ShiftLabel[] | undefined;
   const valid = (raw ?? []).filter((s) => SHIFT_LABELS.includes(s));
   const shifts = valid.length ? valid : (['FullDay'] as ShiftLabel[]);
-  return shifts.sort((a, b) => WINDOW[a][0] - WINDOW[b][0]);
+  return shifts.sort((a, b) => SHIFT_ORDER[a] - SHIFT_ORDER[b]);
+}
+
+/** A branch's shift cut points → per-label [start, end) windows.
+ *  Resolution: branch override → global default → built-in 14:00 / 18:00. */
+export async function getBranchShiftWindows(branchId: string): Promise<Record<ShiftLabel, [number, number]>> {
+  const supabase = await createAuditedClient();
+  const { data: rows } = await supabase
+    .from('settings').select('value, branch_id').eq('key', CASH_WINDOWS_SETTING_KEY)
+    .or(`branch_id.eq.${branchId},branch_id.is.null`);
+  const value = (rows ?? []).find((r) => r.branch_id === branchId)?.value
+    ?? (rows ?? []).find((r) => r.branch_id === null)?.value;
+  const [c1, c2] = (value ?? '').split(',').map((s) => hhmmToMin(s));
+  if (c1 != null && c2 != null && c1 > 0 && c1 < c2 && c2 < 1440) return buildWindows(c1, c2);
+  return buildWindows(DEFAULT_AM_PM_CUT, DEFAULT_PM_NIGHT_CUT);
+}
+
+/** Save the AM→PM / PM→Night cut points. branchId=null sets the global default;
+ *  a branchId writes an override for just that branch. */
+export async function setCashShiftWindows(input: { am_pm_cut: string; pm_night_cut: string; branchId: string | null }): Promise<ActionResult> {
+  if (!isAdmin(await currentSession())) return { ok: false, error: 'Admin permission required' };
+  const c1 = hhmmToMin(input.am_pm_cut);
+  const c2 = hhmmToMin(input.pm_night_cut);
+  if (c1 == null || c2 == null) return { ok: false, error: 'Enter valid times' };
+  if (!(c1 > 0 && c1 < c2 && c2 < 1440)) return { ok: false, error: 'AM→PM must be before PM→Night, both within the day' };
+  const supabase = await createAuditedClient();
+  const value = `${minToHHMM(c1)},${minToHHMM(c2)}`;
+
+  if (input.branchId) {
+    const { error } = await supabase.from('settings').upsert(
+      { key: CASH_WINDOWS_SETTING_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'string', description: 'Cash shift window cut points (branch override)' },
+      { onConflict: 'key,branch_id' },
+    );
+    if (error) return { ok: false, error: error.message };
+  } else {
+    const { data: existing } = await supabase.from('settings').select('id').eq('key', CASH_WINDOWS_SETTING_KEY).is('branch_id', null).maybeSingle();
+    const payload = { value, scope: 'global', value_type: 'string', description: 'Cash shift window cut points (all branches)' };
+    const { error } = existing
+      ? await supabase.from('settings').update(payload).eq('id', existing.id)
+      : await supabase.from('settings').insert({ key: CASH_WINDOWS_SETTING_KEY, branch_id: null, ...payload });
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath('/reconciliation/cash');
+  return { ok: true };
 }
 
 /** Save the cash-recon shifts. branchId=null sets the global default for every
@@ -72,10 +119,10 @@ export async function setCashShifts(input: { shifts: string[]; branchId: string 
 /** Cash received during a shift window on a date (by payment time, PHT). Counts
  * both counter payments (orders) and third-party AR collections taken in cash —
  * both physically land in the till. */
-async function cashReceivedCents(branchId: string, date: string, label: ShiftLabel): Promise<number> {
+async function cashReceivedCents(branchId: string, date: string, win: [number, number]): Promise<number> {
   const supabase = await createAuditedClient();
   const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
-  const [ws, we] = WINDOW[label];
+  const [ws, we] = win;
   const from = `${date}T00:00:00+08:00`;
   const to = `${nextDate(date)}T00:00:00+08:00`;
   const inWindow = (iso: string) => { const mod = minuteOfDayPHT(iso); return mod >= ws && mod < we; };
@@ -114,6 +161,7 @@ async function cashReceivedCents(branchId: string, date: string, label: ShiftLab
 export async function loadDayShifts(branchId: string, date: string): Promise<ShiftStatus[]> {
   const supabase = await createAuditedClient();
   const shifts = await getBranchShifts(branchId);
+  const windows = await getBranchShiftWindows(branchId);
   const { data: rows } = await supabase
     .from('cash_reconciliations')
     .select('shift_label, closing_count_cents, variance_cents, variance_reason, status')
@@ -123,11 +171,13 @@ export async function loadDayShifts(branchId: string, date: string): Promise<Shi
   const out: ShiftStatus[] = [];
   let prevClosing = 0;
   for (const label of shifts) {
-    const received = await cashReceivedCents(branchId, date, label);
+    const win = windows[label];
+    const received = await cashReceivedCents(branchId, date, win);
     const opening = label === 'FullDay' ? 0 : prevClosing;
     const row = closedByLabel.get(label);
     out.push({
-      label, openingCents: opening, receivedCents: received, expectedCents: opening + received,
+      label, windowLabel: formatWindow(label, win),
+      openingCents: opening, receivedCents: received, expectedCents: opening + received,
       closed: row ? { actualCents: row.closing_count_cents ?? 0, varianceCents: row.variance_cents ?? 0, reason: row.variance_reason } : null,
     });
     if (row) prevClosing = row.closing_count_cents ?? 0;

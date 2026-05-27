@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Settings2 } from 'lucide-react';
+import { Settings2, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -16,45 +16,70 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-import { setCashShifts, setCashShiftWindows } from '@/app/(dashboard)/reconciliation/cash/actions';
+import { setCashShiftConfig } from '@/app/(dashboard)/reconciliation/cash/actions';
+import { DAY_END, hhmmToMin, minToHHMM, type CashShiftConfig } from '@/app/(dashboard)/reconciliation/cash/shifts';
 
-const OPTIONS = ['AM', 'PM', 'Night', 'FullDay'];
 type Scope = 'all' | 'branch';
+interface Row { name: string; end: string } // end is HH:MM; the last row always ends at midnight
 
-export function CashShiftConfig({ branchId, current, currentTimes }: { branchId: string; current: string[]; currentTimes: [string, string, string] }) {
+function toRows(cfg: CashShiftConfig): { open: string; rows: Row[] } {
+  return {
+    open: minToHHMM(cfg.open),
+    rows: cfg.shifts.map((s) => ({ name: s.name, end: minToHHMM(s.end) })),
+  };
+}
+
+export function CashShiftConfig({ branchId, config }: { branchId: string; config: CashShiftConfig }) {
+  const initial = toRows(config);
   const [open, setOpen] = useState(false);
-  const [sel, setSel] = useState<string[]>(current);
   const [scope, setScope] = useState<Scope>('all');
-  const [dayStart, setDayStart] = useState(currentTimes[0]);
-  const [amPm, setAmPm] = useState(currentTimes[1]);
-  const [pmNight, setPmNight] = useState(currentTimes[2]);
+  const [dayOpen, setDayOpen] = useState(initial.open);
+  const [rows, setRows] = useState<Row[]>(initial.rows);
   const [pending, startTransition] = useTransition();
 
-  // Window cut points only matter for the AM/PM/Night split, not a single FullDay.
-  const splitShifts = !sel.includes('FullDay');
-  // HH:MM is zero-padded 24h, so a string compare orders the boundaries.
-  const validTimes = !splitShifts || (!!dayStart && !!amPm && !!pmNight && dayStart < amPm && amPm < pmNight);
-
-  function toggle(s: string) {
-    setSel((prev) => {
-      // FullDay is exclusive of the AM/PM/Night set.
-      if (s === 'FullDay') return prev.includes('FullDay') ? [] : ['FullDay'];
-      const without = prev.filter((x) => x !== 'FullDay');
-      return without.includes(s) ? without.filter((x) => x !== s) : [...without, s];
-    });
+  function reset() {
+    const r = toRows(config);
+    setScope('all');
+    setDayOpen(r.open);
+    setRows(r.rows);
   }
 
+  // Each row starts where the previous ended (continuous). The last row always
+  // ends at midnight (24:00); only interior boundaries are editable.
+  const startOf = (i: number) => (i === 0 ? dayOpen : rows[i - 1].end);
+
+  const setName = (i: number, name: string) => setRows((p) => p.map((r, idx) => (idx === i ? { ...r, name } : r)));
+  const setEnd = (i: number, end: string) => setRows((p) => p.map((r, idx) => (idx === i ? { ...r, end } : r)));
+
+  function addShift() {
+    setRows((p) => {
+      const prevLastStart = hhmmToMin(p.length <= 1 ? dayOpen : p[p.length - 2].end) ?? 0;
+      const boundary = Math.min(DAY_END - 60, prevLastStart + 180);
+      const updated = [...p];
+      updated[updated.length - 1] = { ...updated[updated.length - 1], end: minToHHMM(boundary) };
+      updated.push({ name: `Shift ${updated.length + 1}`, end: minToHHMM(DAY_END) });
+      return updated;
+    });
+  }
+  function removeShift(i: number) {
+    setRows((p) => (p.length <= 1 ? p : p.filter((_, idx) => idx !== i)));
+  }
+
+  // Validate: names present + unique; boundaries strictly increasing open→…→24:00.
+  const names = rows.map((r) => r.name.trim());
+  const namesOk = names.every((n) => n.length > 0) && new Set(names.map((n) => n.toLowerCase())).size === names.length;
+  const bounds: (number | null)[] = [hhmmToMin(dayOpen), ...rows.slice(0, -1).map((r) => hhmmToMin(r.end)), DAY_END];
+  const boundsOk = bounds.every((b, i) => b != null && (i === 0 || ((bounds[i - 1] as number) < (b as number))));
+  const valid = rows.length >= 1 && namesOk && boundsOk;
+
   function save() {
+    if (!valid) return;
+    const target = scope === 'all' ? null : branchId;
+    const shifts = rows.map((r, i) => ({ name: r.name.trim(), end: i === rows.length - 1 ? DAY_END : (hhmmToMin(r.end) ?? 0) }));
     startTransition(async () => {
-      const target = scope === 'all' ? null : branchId;
-      const r = await setCashShifts({ shifts: sel, branchId: target });
-      if (!r.ok) { toast.error(r.error); return; }
-      if (splitShifts) {
-        const rw = await setCashShiftWindows({ day_start: dayStart, am_pm_cut: amPm, pm_night_cut: pmNight, branchId: target });
-        if (!rw.ok) { toast.error(rw.error); return; }
-      }
-      toast.success(scope === 'all' ? 'Default shifts updated for all branches' : 'Branch override saved');
-      setOpen(false);
+      const res = await setCashShiftConfig({ open: hhmmToMin(dayOpen) ?? 0, shifts, branchId: target });
+      if (res.ok) { toast.success(scope === 'all' ? 'Default shifts updated for all branches' : 'Branch override saved'); setOpen(false); }
+      else toast.error(res.error);
     });
   }
 
@@ -63,14 +88,16 @@ export function CashShiftConfig({ branchId, current, currentTimes }: { branchId:
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => { setSel(current); setScope('all'); setDayStart(currentTimes[0]); setAmPm(currentTimes[1]); setPmNight(currentTimes[2]); setOpen(true); }}>
+      <Button size="sm" variant="outline" onClick={() => { reset(); setOpen(true); }}>
         <Settings2 className="size-4" /> Shifts
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-bold">Cash shifts</DialogTitle>
-            <DialogDescription className="font-medium">Pick which shifts get counted each day.</DialogDescription>
+            <DialogDescription className="font-medium">
+              Define the drawer-count shifts for each day. They run back-to-back from open to midnight.
+            </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3 py-3">
             <div className="flex gap-2">
@@ -82,56 +109,61 @@ export function CashShiftConfig({ branchId, current, currentTimes }: { branchId:
                 ? 'Sets the default for every branch that has no override of its own.'
                 : 'Overrides just this branch; other branches keep the default.'}
             </p>
-            <div className="flex flex-wrap gap-2">
-              {OPTIONS.map((o) => (
-                <button
-                  key={o}
-                  type="button"
-                  onClick={() => toggle(o)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${sel.includes(o) ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent'}`}
-                >
-                  {o}
-                </button>
-              ))}
+
+            <div className="flex items-center gap-2">
+              <Label className="text-xs font-semibold w-20">Opens at</Label>
+              <Input type="time" value={dayOpen} onChange={(e) => setDayOpen(e.target.value)} className="w-36" />
             </div>
 
-            {splitShifts && (
-              <div className="flex flex-col gap-2 border-t border-border pt-3">
-                <Label className="text-xs font-semibold">Shift times</Label>
-                <div className="flex flex-col gap-1.5">
-                  {/* Each shift's start mirrors the previous shift's end (continuous,
-                      no gaps). AM opens the day (editable); Night runs to midnight. */}
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="w-12 font-bold">AM</span>
-                    <Input type="time" value={dayStart} onChange={(e) => setDayStart(e.target.value)} className="w-36" />
+            <div className="flex flex-col gap-1.5">
+              {rows.map((r, i) => {
+                const isLast = i === rows.length - 1;
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={r.name}
+                      onChange={(e) => setName(i, e.target.value)}
+                      placeholder={`Shift ${i + 1}`}
+                      className="w-32"
+                    />
+                    <span className="w-14 text-center text-xs font-semibold text-muted-foreground tabular">{startOf(i)}</span>
                     <span className="text-muted-foreground">→</span>
-                    <Input type="time" value={amPm} onChange={(e) => setAmPm(e.target.value)} className="w-36" />
+                    {isLast ? (
+                      <span className="w-36 text-center text-sm font-semibold text-muted-foreground tabular">24:00</span>
+                    ) : (
+                      <Input type="time" value={r.end} onChange={(e) => setEnd(i, e.target.value)} className="w-36" />
+                    )}
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => removeShift(i)}
+                      disabled={rows.length <= 1}
+                      title="Remove shift"
+                    >
+                      <Trash2 className="size-4 text-destructive" />
+                    </Button>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="w-12 font-bold">PM</span>
-                    <Input type="time" value={amPm} disabled className="w-36 opacity-60" />
-                    <span className="text-muted-foreground">→</span>
-                    <Input type="time" value={pmNight} onChange={(e) => setPmNight(e.target.value)} className="w-36" />
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="w-12 font-bold">Night</span>
-                    <Input type="time" value={pmNight} disabled className="w-36 opacity-60" />
-                    <span className="text-muted-foreground">→</span>
-                    <span className="w-36 text-center font-semibold text-muted-foreground tabular">24:00</span>
-                  </div>
-                </div>
-                {!validTimes && (
-                  <p className="text-[11px] font-bold text-destructive">Times must run in order: open &lt; AM→PM &lt; PM→Night.</p>
-                )}
-                <p className="text-[11px] font-medium text-muted-foreground">
-                  Shifts are continuous — each ends where the next begins. AM opens the day; Night runs to midnight (24:00).
-                </p>
-              </div>
+                );
+              })}
+            </div>
+
+            <Button type="button" size="sm" variant="outline" className="self-start" onClick={addShift}>
+              <Plus className="size-4" /> Add shift
+            </Button>
+
+            {!valid && (
+              <p className="text-[11px] font-bold text-destructive">
+                Each shift needs a unique name, and times must run in order from open to midnight.
+              </p>
             )}
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Shifts are continuous — each begins where the previous ends. The last runs to midnight (24:00), so the whole day is covered.
+            </p>
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
-            <Button type="button" onClick={save} disabled={pending || sel.length === 0 || !validTimes}>{pending ? 'Saving…' : 'Save'}</Button>
+            <Button type="button" onClick={save} disabled={pending || !valid}>{pending ? 'Saving…' : 'Save'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,22 +1,26 @@
-// Plain module (no 'use server') for cash-shift constants and types so they can
+// Plain module (no 'use server') for cash-shift config types/helpers so they can
 // be imported by both server actions and client components.
+//
+// A branch's cash-count day is an `open` time plus an ordered list of named
+// shifts. The shifts are continuous: the first starts at `open`, each one starts
+// where the previous ended, and the last ends at midnight (24:00). So a payment
+// always falls into exactly one shift. Any number of shifts, any names — e.g.
+// one "Full day", or "Day 09:00–17:00" + "Evening 17:00–24:00".
 
-export const SHIFT_LABELS = ['AM', 'PM', 'Night', 'FullDay'] as const;
-export type ShiftLabel = (typeof SHIFT_LABELS)[number];
+export const CASH_SHIFT_CONFIG_KEY = 'cash_shift_config';
+export const DAY_END = 1440; // minutes of day = 24:00 (midnight)
 
-export const CASH_SHIFTS_SETTING_KEY = 'cash_recon_shifts';
-// AM→PM and PM→Night cut points (configurable in settings; stored "HH:MM,HH:MM").
-export const CASH_WINDOWS_SETTING_KEY = 'cash_shift_windows';
+export interface CashShift {
+  name: string;
+  end: number; // minutes of day; the last shift's end is DAY_END
+}
+export interface CashShiftConfig {
+  open: number; // first shift's start, minutes of day
+  shifts: CashShift[];
+}
 
-// Default day open (AM start) and cut points (minutes of day, PHT): open 00:00,
-// AM→PM at 14:00, PM→Night at 18:00. Night always runs to day end (24:00 = 1440).
-export const DEFAULT_DAY_START = 0;
-export const DEFAULT_AM_PM_CUT = 840;
-export const DEFAULT_PM_NIGHT_CUT = 1080;
-export const DAY_END = 1440;
-
-// Canonical display/sort order, independent of the configurable cut points.
-export const SHIFT_ORDER: Record<ShiftLabel, number> = { AM: 0, PM: 1, Night: 2, FullDay: 0 };
+// Default when a branch has no config of its own: a single whole-day shift.
+export const DEFAULT_CONFIG: CashShiftConfig = { open: 0, shifts: [{ name: 'Full day', end: DAY_END }] };
 
 export function hhmmToMin(s: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
@@ -32,30 +36,61 @@ export function minToHHMM(min: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
-// Build the per-label [start, end) windows from the day open + the two cut
-// points. Night always runs to day end (24:00); FullDay is the whole day.
-export function buildWindows(dayStart: number, amPmCut: number, pmNightCut: number): Record<ShiftLabel, [number, number]> {
-  return {
-    AM: [dayStart, amPmCut],
-    PM: [amPmCut, pmNightCut],
-    Night: [pmNightCut, DAY_END],
-    FullDay: [0, DAY_END],
-  };
+// Like minToHHMM but renders day-end (1440) as "24:00" rather than "00:00".
+export function formatMin(min: number): string {
+  return min >= DAY_END ? '24:00' : minToHHMM(min);
 }
 
-// Default windows — fallback when no (valid) setting exists.
-export const WINDOW: Record<ShiftLabel, [number, number]> = buildWindows(DEFAULT_DAY_START, DEFAULT_AM_PM_CUT, DEFAULT_PM_NIGHT_CUT);
+export interface ShiftWindow { name: string; start: number; end: number }
 
-// "00:00–14:00" style label for a window; FullDay → "All day".
-export function formatWindow(label: ShiftLabel, win: [number, number]): string {
-  if (label === 'FullDay') return 'All day';
-  const end = win[1] >= 1440 ? '24:00' : minToHHMM(win[1]);
-  return `${minToHHMM(win[0])}–${end}`;
+// Resolve a config into its continuous per-shift windows.
+export function windowsFromConfig(cfg: CashShiftConfig): ShiftWindow[] {
+  const out: ShiftWindow[] = [];
+  let start = cfg.open;
+  for (const s of cfg.shifts) {
+    out.push({ name: s.name, start, end: s.end });
+    start = s.end;
+  }
+  return out;
+}
+
+export function formatWindow(start: number, end: number): string {
+  return `${formatMin(start)}–${formatMin(end)}`;
+}
+
+// Validate/normalize a raw config (from JSON or client input). Returns null when
+// invalid: shifts must be non-empty, named (unique), strictly increasing, start
+// after `open`, and end exactly at midnight.
+export function parseConfig(raw: unknown): CashShiftConfig | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as { open?: unknown; shifts?: unknown };
+  const open = typeof o.open === 'number' ? o.open : null;
+  const shiftsRaw = Array.isArray(o.shifts) ? o.shifts : null;
+  if (open == null || open < 0 || open >= DAY_END || !shiftsRaw || shiftsRaw.length === 0) return null;
+
+  const shifts: CashShift[] = [];
+  const names = new Set<string>();
+  let prev = open;
+  for (const s of shiftsRaw) {
+    if (!s || typeof s !== 'object') return null;
+    const name = typeof (s as { name?: unknown }).name === 'string' ? (s as { name: string }).name.trim() : '';
+    const end = typeof (s as { end?: unknown }).end === 'number' ? (s as { end: number }).end : null;
+    if (!name || end == null) return null;
+    if (end <= prev || end > DAY_END) return null;
+    const key = name.toLowerCase();
+    if (names.has(key)) return null;
+    names.add(key);
+    shifts.push({ name, end });
+    prev = end;
+  }
+  if (shifts[shifts.length - 1].end !== DAY_END) return null;
+  return { open, shifts };
 }
 
 export interface ShiftStatus {
-  label: ShiftLabel;
-  windowLabel: string;
+  label: string;       // shift name
+  windowLabel: string; // e.g. "09:00–17:00"
+  firstOfDay: boolean; // first shift opens with no handover float
   openingCents: number;
   receivedCents: number;
   expectedCents: number;

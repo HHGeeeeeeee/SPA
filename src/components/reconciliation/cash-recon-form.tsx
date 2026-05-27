@@ -61,7 +61,7 @@ export function CashReconForm({ branchId, date, shift, canReopen }: Props) {
 
   const rows = (
     <div className="flex flex-col gap-1 text-sm">
-      {shift.label !== 'FullDay' && (
+      {!shift.firstOfDay && (
         <div className="flex items-center justify-between">
           <span className="font-medium text-muted-foreground">Opening float (handover)</span>
           <span className="font-bold tabular">{peso(shift.openingCents)}</span>

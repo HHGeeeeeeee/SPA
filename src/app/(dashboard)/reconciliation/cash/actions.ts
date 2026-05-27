@@ -7,9 +7,8 @@ import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager, isAdmin } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
 import {
-  SHIFT_LABELS, SHIFT_ORDER, CASH_SHIFTS_SETTING_KEY as SETTING_KEY, CASH_WINDOWS_SETTING_KEY,
-  DEFAULT_DAY_START, DEFAULT_AM_PM_CUT, DEFAULT_PM_NIGHT_CUT, buildWindows, hhmmToMin, minToHHMM, formatWindow,
-  type ShiftLabel, type ShiftStatus,
+  CASH_SHIFT_CONFIG_KEY, DEFAULT_CONFIG, windowsFromConfig, parseConfig, formatWindow,
+  type CashShiftConfig, type ShiftStatus,
 } from './shifts';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -29,92 +28,53 @@ function nextDate(date: string): string {
   return dt.toISOString().slice(0, 10);
 }
 
-/** Which shifts a branch runs (ordered by start). Resolution order:
- *  branch-specific override → global default → single FullDay. */
-export async function getBranchShifts(branchId: string): Promise<ShiftLabel[]> {
+/** A branch's cash-shift config (open time + ordered named shifts).
+ *  Resolution: branch override → global default → built-in single Full day. */
+export async function getBranchShiftConfig(branchId: string): Promise<CashShiftConfig> {
   const supabase = await createAuditedClient();
   const { data: rows } = await supabase
-    .from('settings').select('value, branch_id').eq('key', SETTING_KEY)
+    .from('settings').select('value, branch_id').eq('key', CASH_SHIFT_CONFIG_KEY)
     .or(`branch_id.eq.${branchId},branch_id.is.null`);
   const value = (rows ?? []).find((r) => r.branch_id === branchId)?.value
     ?? (rows ?? []).find((r) => r.branch_id === null)?.value;
-  const raw = value?.split(',').map((s) => s.trim()).filter(Boolean) as ShiftLabel[] | undefined;
-  const valid = (raw ?? []).filter((s) => SHIFT_LABELS.includes(s));
-  const shifts = valid.length ? valid : (['FullDay'] as ShiftLabel[]);
-  return shifts.sort((a, b) => SHIFT_ORDER[a] - SHIFT_ORDER[b]);
-}
-
-/** A branch's day open + cut points → per-label [start, end) windows.
- *  Resolution: branch override → global default → built-in 00:00 / 14:00 / 18:00.
- *  Stored as "open,amPm,pmNight"; a legacy 2-value "amPm,pmNight" opens at 00:00. */
-export async function getBranchShiftWindows(branchId: string): Promise<Record<ShiftLabel, [number, number]>> {
-  const supabase = await createAuditedClient();
-  const { data: rows } = await supabase
-    .from('settings').select('value, branch_id').eq('key', CASH_WINDOWS_SETTING_KEY)
-    .or(`branch_id.eq.${branchId},branch_id.is.null`);
-  const value = (rows ?? []).find((r) => r.branch_id === branchId)?.value
-    ?? (rows ?? []).find((r) => r.branch_id === null)?.value;
-  const parts = (value ?? '').split(',').map((s) => hhmmToMin(s));
-  const [start, c1, c2] = parts.length >= 3 ? parts : [0, parts[0], parts[1]];
-  if (start != null && c1 != null && c2 != null && start >= 0 && start < c1 && c1 < c2 && c2 < 1440) {
-    return buildWindows(start, c1, c2);
+  if (value) {
+    try {
+      const cfg = parseConfig(JSON.parse(value));
+      if (cfg) return cfg;
+    } catch { /* fall through to default */ }
   }
-  return buildWindows(DEFAULT_DAY_START, DEFAULT_AM_PM_CUT, DEFAULT_PM_NIGHT_CUT);
+  return DEFAULT_CONFIG;
 }
 
-/** Save the day open + AM→PM / PM→Night cut points. branchId=null sets the
- *  global default; a branchId writes an override for just that branch. */
-export async function setCashShiftWindows(input: { day_start: string; am_pm_cut: string; pm_night_cut: string; branchId: string | null }): Promise<ActionResult> {
+/** The branch's shift names, in order (for headers/summaries). */
+export async function getBranchShifts(branchId: string): Promise<string[]> {
+  const cfg = await getBranchShiftConfig(branchId);
+  return cfg.shifts.map((s) => s.name);
+}
+
+/** Save a branch's shift config. branchId=null sets the global default; a
+ *  branchId writes an override for just that branch. */
+export async function setCashShiftConfig(input: { open: number; shifts: { name: string; end: number }[]; branchId: string | null }): Promise<ActionResult> {
   if (!isAdmin(await currentSession())) return { ok: false, error: 'Admin permission required' };
-  const start = hhmmToMin(input.day_start);
-  const c1 = hhmmToMin(input.am_pm_cut);
-  const c2 = hhmmToMin(input.pm_night_cut);
-  if (start == null || c1 == null || c2 == null) return { ok: false, error: 'Enter valid times' };
-  if (!(start >= 0 && start < c1 && c1 < c2 && c2 < 1440)) return { ok: false, error: 'Open < AM→PM < PM→Night, all before midnight' };
+  const cfg = parseConfig({ open: input.open, shifts: input.shifts });
+  if (!cfg) return { ok: false, error: 'Each shift needs a unique name; times must run in order and end at midnight.' };
   const supabase = await createAuditedClient();
-  const value = `${minToHHMM(start)},${minToHHMM(c1)},${minToHHMM(c2)}`;
+  const value = JSON.stringify(cfg);
 
   if (input.branchId) {
     const { error } = await supabase.from('settings').upsert(
-      { key: CASH_WINDOWS_SETTING_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'string', description: 'Cash shift window cut points (branch override)' },
-      { onConflict: 'key,branch_id' },
-    );
-    if (error) return { ok: false, error: error.message };
-  } else {
-    const { data: existing } = await supabase.from('settings').select('id').eq('key', CASH_WINDOWS_SETTING_KEY).is('branch_id', null).maybeSingle();
-    const payload = { value, scope: 'global', value_type: 'string', description: 'Cash shift window cut points (all branches)' };
-    const { error } = existing
-      ? await supabase.from('settings').update(payload).eq('id', existing.id)
-      : await supabase.from('settings').insert({ key: CASH_WINDOWS_SETTING_KEY, branch_id: null, ...payload });
-    if (error) return { ok: false, error: error.message };
-  }
-  revalidatePath('/reconciliation/cash');
-  return { ok: true };
-}
-
-/** Save the cash-recon shifts. branchId=null sets the global default for every
- *  branch; a branchId writes an override for just that branch. */
-export async function setCashShifts(input: { shifts: string[]; branchId: string | null }): Promise<ActionResult> {
-  if (!isAdmin(await currentSession())) return { ok: false, error: 'Admin permission required' };
-  const valid = input.shifts.filter((s): s is ShiftLabel => (SHIFT_LABELS as readonly string[]).includes(s));
-  if (valid.length === 0) return { ok: false, error: 'Pick at least one shift' };
-  const supabase = await createAuditedClient();
-  const value = valid.join(',');
-
-  if (input.branchId) {
-    const { error } = await supabase.from('settings').upsert(
-      { key: SETTING_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'string', description: 'Cash reconciliation shifts (branch override)' },
+      { key: CASH_SHIFT_CONFIG_KEY, branch_id: input.branchId, scope: 'branch', value, value_type: 'json', description: 'Cash shift config (branch override)' },
       { onConflict: 'key,branch_id' },
     );
     if (error) return { ok: false, error: error.message };
   } else {
     // Global row has branch_id IS NULL; Postgres treats NULLs as distinct so
     // onConflict can't dedupe it — update the existing one or insert a new one.
-    const { data: existing } = await supabase.from('settings').select('id').eq('key', SETTING_KEY).is('branch_id', null).maybeSingle();
-    const payload = { value, scope: 'global', value_type: 'string', description: 'Cash reconciliation shifts (all branches)' };
+    const { data: existing } = await supabase.from('settings').select('id').eq('key', CASH_SHIFT_CONFIG_KEY).is('branch_id', null).maybeSingle();
+    const payload = { value, scope: 'global', value_type: 'json', description: 'Cash shift config (all branches)' };
     const { error } = existing
       ? await supabase.from('settings').update(payload).eq('id', existing.id)
-      : await supabase.from('settings').insert({ key: SETTING_KEY, branch_id: null, ...payload });
+      : await supabase.from('settings').insert({ key: CASH_SHIFT_CONFIG_KEY, branch_id: null, ...payload });
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath('/reconciliation/cash');
@@ -165,8 +125,8 @@ async function cashReceivedCents(branchId: string, date: string, win: [number, n
  * previous closed shift. */
 export async function loadDayShifts(branchId: string, date: string): Promise<ShiftStatus[]> {
   const supabase = await createAuditedClient();
-  const shifts = await getBranchShifts(branchId);
-  const windows = await getBranchShiftWindows(branchId);
+  const cfg = await getBranchShiftConfig(branchId);
+  const windows = windowsFromConfig(cfg);
   const { data: rows } = await supabase
     .from('cash_reconciliations')
     .select('shift_label, closing_count_cents, variance_cents, variance_reason, status')
@@ -175,13 +135,13 @@ export async function loadDayShifts(branchId: string, date: string): Promise<Shi
 
   const out: ShiftStatus[] = [];
   let prevClosing = 0;
-  for (const label of shifts) {
-    const win = windows[label];
-    const received = await cashReceivedCents(branchId, date, win);
-    const opening = label === 'FullDay' ? 0 : prevClosing;
-    const row = closedByLabel.get(label);
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i];
+    const received = await cashReceivedCents(branchId, date, [w.start, w.end]);
+    const opening = i === 0 ? 0 : prevClosing; // first shift has no handover float
+    const row = closedByLabel.get(w.name);
     out.push({
-      label, windowLabel: formatWindow(label, win),
+      label: w.name, windowLabel: formatWindow(w.start, w.end), firstOfDay: i === 0,
       openingCents: opening, receivedCents: received, expectedCents: opening + received,
       closed: row ? { actualCents: row.closing_count_cents ?? 0, varianceCents: row.variance_cents ?? 0, reason: row.variance_reason } : null,
     });
@@ -199,7 +159,7 @@ export async function isDayCashClosed(branchId: string, date: string): Promise<b
 const schema = z.object({
   branch_id: z.string().uuid(),
   date: z.string().min(1),
-  shift_label: z.enum(SHIFT_LABELS),
+  shift_label: z.string().min(1),
   actual_count: z.coerce.number().min(0),
   variance_reason: z.string().max(300).optional().nullable(),
 });
@@ -207,7 +167,7 @@ const schema = z.object({
 const reopenSchema = z.object({
   branch_id: z.string().uuid(),
   date: z.string().min(1),
-  shift_label: z.enum(SHIFT_LABELS),
+  shift_label: z.string().min(1),
   reason: z.string().min(3, 'A reason is required').max(300),
 });
 

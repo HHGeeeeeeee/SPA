@@ -8,8 +8,7 @@ import { cn } from '@/lib/utils';
 import { CashReconForm } from '@/components/reconciliation/cash-recon-form';
 import { CashShiftConfig } from '@/components/reconciliation/cash-shift-config';
 import { ReconDatePicker } from '@/components/reconciliation/recon-date-picker';
-import { loadDayShifts, getBranchShifts, getBranchShiftWindows } from './actions';
-import { minToHHMM } from './shifts';
+import { loadDayShifts, getBranchShifts, getBranchShiftConfig } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,11 +33,7 @@ export default async function CashReconciliationPage({
 
   const shifts = branchId ? await loadDayShifts(branchId, date) : [];
   const configured = branchId ? await getBranchShifts(branchId) : [];
-  const windows = branchId ? await getBranchShiftWindows(branchId) : null;
-  // Day open (AM start) + cut points (PM start, Night start) as HH:MM.
-  const currentTimes: [string, string, string] = windows
-    ? [minToHHMM(windows.AM[0]), minToHHMM(windows.PM[0]), minToHHMM(windows.Night[0])]
-    : ['00:00', '14:00', '18:00'];
+  const shiftConfig = branchId ? await getBranchShiftConfig(branchId) : null;
   const allClosed = shifts.length > 0 && shifts.every((s) => s.closed);
 
   return (
@@ -63,7 +58,7 @@ export default async function CashReconciliationPage({
         <div className="ml-auto">
           <ReconDatePicker basePath="/reconciliation/cash" branchId={branchId} date={date} />
         </div>
-        {branchId && admin && <CashShiftConfig branchId={branchId} current={configured} currentTimes={currentTimes} />}
+        {branchId && admin && shiftConfig && <CashShiftConfig branchId={branchId} config={shiftConfig} />}
       </div>
 
       {!branchId ? (

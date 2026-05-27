@@ -337,11 +337,17 @@ export function OrderWorkspace({
       });
 
     const neededGroup = serviceItems.find((s) => s.id === svcId)?.group ?? groupSel;
-    const freeTherapist = employees.find(
-      (e) => !takenTherapists.has(e.id)
-        && canPerformGroup(capabilityByEmployee[e.id] ?? [], neededGroup)
-        && matchesGender(e.gender, genderPref),
-    );
+    const matchTherapist = (e: { id: string; gender?: string | null }) =>
+      !takenTherapists.has(e.id)
+      && canPerformGroup(capabilityByEmployee[e.id] ?? [], neededGroup)
+      && matchesGender(e.gender, genderPref);
+    // Own-branch therapists first; only borrow from the sharing group if none of
+    // ours is free.
+    const ownFree = employees.find(matchTherapist);
+    const borrowedFree = ownFree ? undefined : borrowableEmployees.find(matchTherapist);
+    const freeTherapist = ownFree ?? borrowedFree;
+    const borrowedCode = !ownFree && borrowedFree?.homeBranchCode ? borrowedFree.homeBranchCode : null;
+    const note = borrowedCode ? ` (borrowed · ${borrowedCode})` : '';
     const neededType = serviceItems.find((s) => s.id === svcId)?.required_resource_type ?? null;
     const freeStation = resources.find(
       (r) => !takenStations.has(r.id) && (!neededType || r.resource_type === neededType),
@@ -351,13 +357,13 @@ export function OrderWorkspace({
     if (freeStation) setResourceId(freeStation.id);
 
     if (freeTherapist && freeStation) {
-      toast.success(`Auto-assigned ${freeTherapist.name} · ${freeStation.name}`);
+      toast.success(`Auto-assigned ${freeTherapist.name}${note} · ${freeStation.name}`);
     } else if (!freeTherapist && !freeStation) {
-      toast.error('No free therapist at this branch or station — borrow a therapist manually if needed');
+      toast.error('No free therapist (own or borrowable) or station');
     } else if (!freeTherapist) {
-      toast.warning(`Station ${freeStation!.name} set — no free therapist here, borrow one manually`);
+      toast.warning(`Station ${freeStation!.name} set — no free therapist (own or borrowable)`);
     } else {
-      toast.warning(`${freeTherapist!.name} set — no free station${neededType ? ` (${neededType})` : ''}`);
+      toast.warning(`${freeTherapist.name}${note} set — no free station${neededType ? ` (${neededType})` : ''}`);
     }
   }
 

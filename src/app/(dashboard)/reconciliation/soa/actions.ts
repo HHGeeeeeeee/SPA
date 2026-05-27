@@ -431,8 +431,9 @@ export async function settleSOA(id: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = await createAuditedClient();
-  const { data: soa } = await supabase.from('revenue_soa').select('status, total_cents, settlement_type').eq('id', id).single();
+  const { data: soa } = await supabase.from('revenue_soa').select('status, total_cents, settlement_type, branch_id').eq('id', id).single();
   if (!soa) return { ok: false, error: 'SOA not found' };
+  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (soa.settlement_type !== 'intercompany') return { ok: false, error: 'Third-party statements are settled via Record Payment' };
   if (soa.status !== 'issued') return { ok: false, error: 'Only an issued statement can be settled' };
   const { error } = await supabase
@@ -484,10 +485,11 @@ export async function recordSoaPayment(input: unknown): Promise<ActionResult> {
   const supabase = await createAuditedClient();
   const { data: soa } = await supabase
     .from('revenue_soa')
-    .select('status, total_cents, paid_cents, settlement_type')
+    .select('status, total_cents, paid_cents, settlement_type, branch_id')
     .eq('id', soa_id)
     .single();
   if (!soa) return { ok: false, error: 'SOA not found' };
+  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (soa.settlement_type !== 'third_party') return { ok: false, error: 'Record Payment is for third-party statements; intercompany uses Settle' };
   if (!['issued', 'partial_paid'].includes(soa.status)) return { ok: false, error: 'This statement is not open for payment' };
 
@@ -526,6 +528,17 @@ export async function voidSOA(id: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = await createAuditedClient();
+  const { data: soa } = await supabase.from('revenue_soa').select('status, branch_id').eq('id', id).single();
+  if (!soa) return { ok: false, error: 'SOA not found' };
+  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
+  // Only an issued statement (no payments, not yet settled) can be plain-voided.
+  // An `issued` SOA always has paid_cents = 0 — a payment flips it to
+  // partial_paid/settled — so once money or a cost-transfer is on it, voiding
+  // would orphan those records and double-count the released orders. Those need
+  // a reversal/adjustment instead.
+  if (soa.status !== 'issued') {
+    return { ok: false, error: 'Only an issued statement with no payments can be voided; a settled or partly-paid statement needs a reversal/adjustment.' };
+  }
   // Release the orders so they can be re-stated.
   await supabase.from('revenue_soa_orders').delete().eq('soa_id', id);
   const { error } = await supabase.from('revenue_soa').update({ status: 'void' }).eq('id', id);

@@ -35,6 +35,7 @@ export interface BoardBlock {
   variant: BlockVariant;
   draggable: boolean;
   orderId?: string;
+  editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
 }
 // Option data forwarded to NewReservationDialog for click-to-add.
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
@@ -211,8 +212,9 @@ export function ScheduleBoard({
   // (confirmed, so it holds the clicked bed/time). Walk-ins use the same flow.
   const [addKey, setAddKey] = useState(0);
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
-  // Tap a reservation block → confirm / convert it (seat the guest).
-  const [convert, setConvert] = useState<{ reservationId: string; guest: string; pending: boolean } | null>(null);
+  // Tap a reservation block → confirm / convert it (seat the guest), or Edit it.
+  const [convert, setConvert] = useState<{ reservationId: string; guest: string; pending: boolean; editData?: ReservationItem } | null>(null);
+  const [editRes, setEditRes] = useState<ReservationItem | null>(null);
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -235,7 +237,7 @@ export function ScheduleBoard({
 
   function openBlock(b: BoardBlock) {
     if (b.kind === 'order' && b.orderId) router.push(`/sales-orders/${b.orderId}`);
-    else if (b.kind === 'reservation') setConvert({ reservationId: b.refId, guest: b.line1, pending: b.variant === 'pending' });
+    else if (b.kind === 'reservation') setConvert({ reservationId: b.refId, guest: b.line1, pending: b.variant === 'pending', editData: b.editData });
   }
 
   function onEmptyClick(bedId: string, min: number) {
@@ -416,6 +418,20 @@ export function ScheduleBoard({
           pending={convert.pending}
           open
           onOpenChange={(o) => { if (!o) setConvert(null); }}
+          onEdit={convert.editData ? () => { const ed = convert.editData!; setConvert(null); setEditRes(ed); } : undefined}
+        />
+      )}
+
+      {editRes && (
+        <NewReservationDialog
+          mode="edit"
+          branches={dialog.branches}
+          sources={dialog.sources}
+          serviceCategories={dialog.serviceCategories}
+          serviceItems={dialog.serviceItems}
+          reservation={editRes}
+          open
+          onOpenChange={(o) => { if (!o) { setEditRes(null); router.refresh(); } }}
         />
       )}
     </DndContext>

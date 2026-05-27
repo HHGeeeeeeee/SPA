@@ -32,6 +32,7 @@ export function ReservationConvertButton({
   open: controlledOpen,
   onOpenChange,
   triggerless = false,
+  onEdit,
 }: {
   reservationId: string;
   guest: string;
@@ -44,6 +45,8 @@ export function ReservationConvertButton({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   triggerless?: boolean;
+  // When set, show an "Edit" action (opens the reservation's edit dialog).
+  onEdit?: () => void;
 }) {
   const router = useRouter();
   const [internalOpen, setInternalOpen] = useState(false);
@@ -96,6 +99,11 @@ export function ReservationConvertButton({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            {onEdit && (
+              <Button variant="outline" disabled={busy} onClick={onEdit}>
+                Edit
+              </Button>
+            )}
             {pending && (
               <Button variant="outline" disabled={busy} onClick={doConfirm}>
                 {busy ? 'Working…' : 'Confirm'}

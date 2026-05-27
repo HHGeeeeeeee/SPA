@@ -7,6 +7,7 @@ import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type 
 import { TherapistsNowCard } from '@/components/shift-schedule/therapists-now-card';
 import { BedsNowCard } from '@/components/shift-schedule/beds-now-card';
 import { BulkShiftDialog } from '@/components/shift-schedule/bulk-shift-dialog';
+import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
@@ -214,7 +215,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
       .not('resource_id', 'is', null),
     supabase
       .from('reservations')
-      .select('id, status, guest_name, pax, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ), customer_sources ( code ), reservation_service_categories ( service_categories ( name ) ), reservation_resources ( resource_id )')
+      .select('id, status, branch_id, source_id, guest_name, guest_phone, pax, gender_preference, service_location_type, note, seat_together, service_item_id, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ), customer_sources ( code ), reservation_service_categories ( service_category_id, service_categories ( name ) ), reservation_resources ( resource_id )')
       .eq('branch_id', branchId).in('status', ['reserved', 'confirmed']).is('deleted_at', null)
       .gte('desired_service_start', `${day}T00:00:00+08:00`).lte('desired_service_start', `${day}T23:59:59+08:00`).order('desired_service_start'),
     supabase.from('employee_shifts').select('shift_start, shift_end').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
@@ -266,6 +267,24 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     const line2 = [cats || 'Service', src, r.pax > 1 ? `${r.pax}p` : null].filter(Boolean).join(' · ');
     const prepMin = one(r.service)?.prep_before_minutes ?? 0;
     const cleanupMin = one(r.service)?.cleanup_after_minutes ?? 0;
+    // Full record so the board can open this reservation in the edit dialog.
+    const editData: ReservationItem = {
+      id: r.id,
+      branch_id: r.branch_id,
+      source_id: r.source_id,
+      service_category_ids: (r.reservation_service_categories ?? []).map((l) => l.service_category_id),
+      guest_name: r.guest_name ?? '',
+      guest_phone: r.guest_phone,
+      pax: r.pax,
+      gender_preference: r.gender_preference,
+      service_location_type: r.service_location_type,
+      note: r.note,
+      desired_service_start: r.desired_service_start,
+      desired_service_end: r.desired_service_end,
+      resource_ids: pinnedIds,
+      seat_together: r.seat_together,
+      service_item_id: r.service_item_id,
+    };
     // A confirmed booking pinned to a bed STAYS on that bed even if it's past
     // its grace window — staff put it there on purpose; show it (with a late
     // mark) rather than yanking it to the "To place" lane. Only pending or
@@ -273,10 +292,10 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     const guest = `${overdue ? '⚠ ' : ''}${r.guest_name ?? 'Guest'}`;
     const floating = pending || pinnedIds.length === 0;
     if (floating) {
-      blocks.push({ key: `res:${r.id}`, kind: 'reservation', refId: r.id, bedId: null, line1: guest, line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: pending ? 'pending' : 'confirmed', draggable: true });
+      blocks.push({ key: `res:${r.id}`, kind: 'reservation', refId: r.id, bedId: null, line1: guest, line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: pending ? 'pending' : 'confirmed', draggable: true, editData });
     } else {
       for (const rid of pinnedIds) {
-        blocks.push({ key: `res:${r.id}:${rid}`, kind: 'reservation', refId: r.id, bedId: rid, line1: guest, line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: 'confirmed', draggable: true });
+        blocks.push({ key: `res:${r.id}:${rid}`, kind: 'reservation', refId: r.id, bedId: rid, line1: guest, line2, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: 'confirmed', draggable: true, editData });
       }
     }
     mins.push(startMin, endMin);

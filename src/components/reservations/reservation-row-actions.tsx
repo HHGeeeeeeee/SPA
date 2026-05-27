@@ -123,14 +123,17 @@ export function ReservationRowActions({ reservation, branches, sources, serviceC
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {!terminal && (
+      {/* Mount only while open, keyed by id, so the form always initializes from
+          the current reservation (avoids stale pax/beds after an edit elsewhere). */}
+      {!terminal && editOpen && (
         <NewReservationDialog
+          key={id}
           mode="edit"
           reservation={reservation}
           branches={branches}
           sources={sources}
           serviceCategories={serviceCategories}
-          open={editOpen}
+          open
           onOpenChange={setEditOpen}
         />
       )}

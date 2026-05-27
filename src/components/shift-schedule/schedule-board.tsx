@@ -434,6 +434,7 @@ export function ScheduleBoard({
 
       {editRes && (
         <NewReservationDialog
+          key={editRes.id}
           mode="edit"
           branches={dialog.branches}
           sources={dialog.sources}

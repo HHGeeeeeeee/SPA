@@ -249,6 +249,7 @@ export function OrderWorkspace({
   const [interruptItem, setInterruptItem] = useState<OrderItem | null>(null);
   const [concurrentItem, setConcurrentItem] = useState<OrderItem | null>(null);
   const [confirmFinish, setConfirmFinish] = useState<OrderItem | null>(null);
+  const [cancelItem, setCancelItem] = useState<OrderItem | null>(null);
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
@@ -717,9 +718,9 @@ export function OrderWorkspace({
                           </ActionBtn>
                           <ActionBtn
                             tip="Cancel this service — drops it from the bill but keeps it in the record."
-                            variant="ghost"
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={() => doSkipItem(it.id)}
+                            variant="outline"
+                            className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={() => setCancelItem(it)}
                             disabled={pending}
                           >
                             Cancel
@@ -1186,6 +1187,24 @@ export function OrderWorkspace({
               onClick={() => { if (confirmFinish) finishItemNow(confirmFinish.id); setConfirmFinish(null); }}
             >
               Finish anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!cancelItem} onOpenChange={(o) => { if (!o) setCancelItem(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this service?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{cancelItem?.service_name}</strong> will be dropped from the bill and not performed.
+              It stays in the record and can be redone later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (cancelItem) doSkipItem(cancelItem.id); setCancelItem(null); }}>
+              Cancel service
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

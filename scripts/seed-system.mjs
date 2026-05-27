@@ -36,8 +36,7 @@ async function main() {
     { key: 'exception_void_threshold_per_month', value: '5', value_type: 'integer', description: 'Highlight on Dashboard when monthly Void count exceeds this' },
     { key: 'exception_dis90_threshold_per_month', value: '3', value_type: 'integer', description: 'Highlight when DIS-90 (customer-complaint 100%) usage exceeds this monthly' },
     { key: 'feedback_score_warning_threshold', value: '3', value_type: 'integer', description: 'Score ≤ this triggers manager notification on submit' },
-    { key: 'default_prep_minutes_massage', value: '10', value_type: 'integer', description: 'Default prep minutes for new Massage service items' },
-    { key: 'default_cleanup_minutes_massage', value: '15', value_type: 'integer', description: 'Default cleanup minutes for new Massage service items' },
+    // prep/cleanup live per service item (Service Items Price); new items default to 5/5 in the form — no global setting.
     { key: 'manager_pin_lockout_minutes', value: '15', value_type: 'integer', description: 'Lockout duration after 5 failed Manager PIN attempts' },
     { key: 'manager_pin_max_failed_attempts', value: '5', value_type: 'integer', description: 'Failed PIN attempts before lockout' },
   ];

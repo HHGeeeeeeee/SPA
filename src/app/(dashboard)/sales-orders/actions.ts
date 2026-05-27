@@ -491,9 +491,19 @@ export async function startOrderItem(
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, order_customer_id')
+    .select('therapist_id, resource_id, order_customer_id, service:service_items ( commission_applicable, required_resource_type )')
     .eq('id', itemId)
     .single();
+
+  // Can't start a hands-on service with nobody to do it, or a service that needs
+  // a station/bed without one assigned. (Rest-room style lines need neither.)
+  const svc = Array.isArray(item?.service) ? item?.service[0] : item?.service;
+  if (svc?.commission_applicable && !item?.therapist_id) {
+    return { ok: false, error: 'Assign a therapist before starting this service' };
+  }
+  if (svc?.required_resource_type && !item?.resource_id) {
+    return { ok: false, error: 'Assign a station/bed before starting this service' };
+  }
 
   // One guest does one service at a time unless the operator confirms a parallel
   // service (e.g. foot massage + scalp care together).

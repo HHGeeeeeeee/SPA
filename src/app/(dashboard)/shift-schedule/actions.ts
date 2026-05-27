@@ -214,6 +214,60 @@ export async function setShift(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
+const bulkSchema = z.object({
+  branch_id: z.string().uuid(),
+  employee_ids: z.array(z.string().uuid()).min(1, 'Pick at least one employee'),
+  dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1, 'Pick at least one day'),
+  shift_type: z.enum(['regular', 'cross_branch', 'on_call', 'off', 'leave']),
+  shift_start: z.string().optional().nullable(),
+  shift_end: z.string().optional().nullable(),
+  leave_type: z.enum(['sick', 'vacation', 'personal', 'unpaid']).optional().nullable(),
+  note: z.string().max(200).optional().nullable(),
+});
+
+/**
+ * Apply one shift to many employees × many dates at once (replaces whatever's
+ * in each cell) — so a week's roster isn't set cell-by-cell.
+ */
+export async function bulkSetShifts(input: unknown): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  const parsed = bulkSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
+
+  const timed = TIMED.includes(d.shift_type);
+  if (timed && (!d.shift_start || !d.shift_end)) return { ok: false, error: 'Start and end time are required for this shift type' };
+  if (timed && d.shift_end! <= d.shift_start!) return { ok: false, error: 'End time must be after start time' };
+  if (d.shift_type === 'leave' && !d.leave_type) return { ok: false, error: 'Pick a leave type' };
+
+  const supabase = await createAuditedClient();
+  // One shift per (employee, date, branch): clear the targeted cells first.
+  const del = await supabase
+    .from('employee_shifts')
+    .delete()
+    .eq('branch_id', d.branch_id)
+    .in('employee_id', d.employee_ids)
+    .in('shift_date', d.dates);
+  if (del.error) return { ok: false, error: del.error.message };
+
+  const rows = d.employee_ids.flatMap((employee_id) =>
+    d.dates.map((shift_date) => ({
+      employee_id,
+      branch_id: d.branch_id,
+      shift_date,
+      shift_type: d.shift_type,
+      shift_start: timed ? d.shift_start : null,
+      shift_end: timed ? d.shift_end : null,
+      leave_type: d.shift_type === 'leave' ? d.leave_type : null,
+      note: d.note || null,
+    })),
+  );
+  const ins = await supabase.from('employee_shifts').insert(rows);
+  if (ins.error) return { ok: false, error: ins.error.message };
+  revalidatePath('/shift-schedule');
+  return { ok: true, count: rows.length };
+}
+
 export async function clearShift(
   employeeId: string,
   branchId: string,

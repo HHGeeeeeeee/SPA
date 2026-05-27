@@ -7,6 +7,7 @@ import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cel
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData } from '@/components/shift-schedule/schedule-board';
 import { TherapistsNowCard } from '@/components/shift-schedule/therapists-now-card';
+import { BulkShiftDialog } from '@/components/shift-schedule/bulk-shift-dialog';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
@@ -556,6 +557,14 @@ export default async function ShiftSchedulePage({
           No active therapists for this branch (or its sharing group).
         </Card>
       ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex justify-end">
+            <BulkShiftDialog
+              branchId={branchId}
+              employees={employees.map((e) => ({ id: e.id, name: e.name, code: e.employee_code, visiting: e.home_branch_id !== branchId }))}
+              days={days}
+            />
+          </div>
         <Card className="p-0 overflow-auto max-h-[calc(100vh-16rem)]">
           <table className="w-full border-collapse">
             <thead>
@@ -601,6 +610,7 @@ export default async function ShiftSchedulePage({
             </tbody>
           </table>
         </Card>
+        </div>
       )}
 
       {/* The Station board carries its own legend; this one is for the shift views. */}

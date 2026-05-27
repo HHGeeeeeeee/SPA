@@ -698,12 +698,12 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
   ).select('id, seq_no');
   const firstCustomer = (createdCustomers ?? []).find((c) => c.seq_no === 1) ?? createdCustomers?.[0];
 
-  // If the booking named a specific service, pre-create order line(s) (with
-  // price/duration + pinned bed). Therapist is left for the desk to confirm
-  // (the workspace pre-filters by the reservation's gender). Reuses addOrderItem.
-  //  - "Seat together" groups: every guest gets the same service, and the pinned
-  //    beds are handed out in bed-number order (Guest 1 → lowest, Guest 2 → next).
-  //  - Otherwise only the first guest is pre-lined; the rest are set at check-in.
+  // If the booking named a specific service, pre-create a line for EVERY guest
+  // (price/duration + a reserved bed each), so a multi-pax booking lands on one
+  // bed per guest. The reserved beds are handed out in bed-number order (Guest 1
+  // → lowest, Guest 2 → next); a guest beyond the reserved beds gets no bed yet.
+  // Therapist is left for the desk to confirm; a guest wanting a different service
+  // switches it at check-in. Reuses addOrderItem.
   if (r.service_item_id && firstCustomer) {
     const { data: src } = await supabase.from('customer_sources').select('default_discount_class_id').eq('id', r.source_id ?? '').maybeSingle();
     let discountClassId = src?.default_discount_class_id ?? null;
@@ -721,7 +721,7 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
         .sort((a, b) => bedNum(a.name) - bedNum(b.name));
 
       const sortedCustomers = [...(createdCustomers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
-      const targets = r.seat_together && sortedCustomers.length > 1 ? sortedCustomers : [firstCustomer];
+      const targets = sortedCustomers.length > 0 ? sortedCustomers : [firstCustomer];
       for (let i = 0; i < targets.length; i++) {
         await addOrderItem({
           order_id: order.id,

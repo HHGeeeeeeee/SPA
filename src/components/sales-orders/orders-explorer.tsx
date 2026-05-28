@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Receipt, TriangleAlert } from 'lucide-react';
+import { Receipt } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { SERVICE_LABEL, PaymentBadge } from '@/components/sales-orders/order-badges';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -172,18 +173,15 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
                   <TableCell className="font-medium tabular text-right">{moneyCell(o.ar_cents)}</TableCell>
                   <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
                   <TableCell className="font-medium tabular text-right">{moneyCell(o.tip_cents, 'text-primary')}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={STATUS_VARIANT[o.status] ?? 'secondary'} className="font-bold capitalize">
-                      {o.status.replace('_', ' ')}
-                    </Badge>
-                    {/* Service done but money not (fully) collected — a completed
-                        counter order is by definition unpaid (full payment would
-                        have advanced it to Paid). Loud red flag so it can't slip. */}
-                    {!o.is_ar && o.status === 'completed' && o.total_cents - o.paid_cents > 0 && (
-                      <div className="mt-1 flex items-center justify-center gap-1 text-[11px] font-bold text-destructive">
-                        <TriangleAlert className="size-3 shrink-0" /> {peso(o.total_cents - o.paid_cents)} due
-                      </div>
-                    )}
+                  <TableCell>
+                    {/* Two axes: service/lifecycle badge + derived payment badge,
+                        so a green "Service done" is never read as "paid". */}
+                    <div className="flex flex-col items-center gap-1">
+                      <Badge variant={STATUS_VARIANT[o.status] ?? 'secondary'} className="font-bold">
+                        {SERVICE_LABEL[o.status] ?? o.status.replace('_', ' ')}
+                      </Badge>
+                      <PaymentBadge total_cents={o.total_cents} paid_cents={o.paid_cents} is_ar={o.is_ar} status={o.status} />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

@@ -9,6 +9,7 @@ import { canAccessBranch } from '@/lib/branch-access';
 import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 import { postToErp, type PostToErpResult } from '@/lib/erp-posting';
 import type { GLLine } from '@/lib/acumatica';
+import { assertNoBlockedClose } from '@/lib/business-day';
 
 const REVENUE_ACCOUNT = '40140'; // services revenue
 const TIPS_PAYABLE = '20500'; // tip liability — paired with PAYMAYA tip code
@@ -228,6 +229,11 @@ export async function confirmRevenue(input: unknown): Promise<ActionResult<{ clo
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const { branch_id, date } = parsed.data;
   if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
+  try {
+    await assertNoBlockedClose(branch_id);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 
   if (!(await isCashClosed(branch_id, date))) {
     return { ok: false, error: 'Close the Shift Cash Count for this branch/day first' };
@@ -282,6 +288,11 @@ export async function retryOrderRevenuePosting(orderId: string): Promise<ActionR
   if (!o) return { ok: false, error: 'Order not found' };
   if (!o.branch_id || !(await canAccessBranch(o.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (o.status === 'closed') return { ok: false, error: 'Order is already closed' };
+  try {
+    await assertNoBlockedClose(o.branch_id);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 
   // posting_status isn't in the generated DB types yet — cast read.
   const sb = supabase as unknown as {

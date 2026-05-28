@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { getAllowedBranches } from '@/lib/branch-access';
 import { isDayCashClosed } from '@/app/(dashboard)/reconciliation/cash/actions';
 import { loadArBalance } from '@/app/(dashboard)/reconciliation/soa/actions';
+import { getOldestOverdueClose, type OverdueClose } from '@/lib/business-day';
 
 const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
 
@@ -12,6 +13,8 @@ export interface ReconBranchStatus {
   cashClosed: boolean;
   pendingConfirm: number;
   pendingConfirmCents: number;
+  /** Oldest business-date at this branch with status != closed AND < today (PHT). */
+  overdueClose: OverdueClose | null;
 }
 
 export interface ReconStatus {
@@ -59,11 +62,19 @@ export async function loadReconStatus(): Promise<ReconStatus> {
     pendingByBranch.set(o.branch_id, cur);
   }
 
-  // --- Cash closed per branch (today) ---
-  const cashClosedFlags = await Promise.all(branchList.map((b) => isDayCashClosed(b.id, today)));
+  // --- Cash closed per branch (today) + oldest overdue EoD close ---
+  const [cashClosedFlags, overdueCloses] = await Promise.all([
+    Promise.all(branchList.map((b) => isDayCashClosed(b.id, today))),
+    Promise.all(branchList.map((b) => getOldestOverdueClose(b.id))),
+  ]);
   const branchStatus: ReconBranchStatus[] = branchList.map((b, i) => {
     const p = pendingByBranch.get(b.id) ?? { n: 0, cents: 0 };
-    return { id: b.id, code: b.code, name: b.name, cashClosed: cashClosedFlags[i], pendingConfirm: p.n, pendingConfirmCents: p.cents };
+    return {
+      id: b.id, code: b.code, name: b.name,
+      cashClosed: cashClosedFlags[i],
+      pendingConfirm: p.n, pendingConfirmCents: p.cents,
+      overdueClose: overdueCloses[i],
+    };
   });
 
   // --- Open tips (all branches) ---

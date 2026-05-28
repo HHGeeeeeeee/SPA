@@ -258,3 +258,60 @@ export async function isBusinessDayClosed(branchId: string, date: string): Promi
     .eq('branch_id', branchId).eq('business_date', date).eq('status', 'closed').maybeSingle();
   return !!data;
 }
+
+/**
+ * Manager force-close — overrides the 4-step pipeline and seals the day.
+ * Used to unblock operations after a day got skipped (e.g. the desk forgot to
+ * close yesterday and now 2+ days later GL writes are blocked). Reason is
+ * mandatory and recorded for accounting review. NOT a substitute for going
+ * through the proper EoD steps when possible — it's a last-resort unblock.
+ */
+export async function forceCloseBusinessDay(
+  branchId: string,
+  date: string,
+  reason: string,
+): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required to force-close' };
+  if (!(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
+  const trimmed = reason.trim();
+  if (trimmed.length < 5) return { ok: false, error: 'Reason required (5 chars+)' };
+  if (trimmed.length > 500) return { ok: false, error: 'Reason too long' };
+  const supabase = await createAuditedClient();
+  const { data: rec } = await supabase
+    .from('business_day_close')
+    .select('id, status')
+    .eq('branch_id', branchId).eq('business_date', date)
+    .maybeSingle();
+  const now = new Date().toISOString();
+  if (rec) {
+    if (rec.status === 'closed') return { ok: false, error: 'Already closed' };
+    const { error } = await (supabase.from('business_day_close') as unknown as {
+      update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => Promise<{ error: { message: string } | null }> } };
+    })
+      .update({
+        status: 'closed',
+        closed_at: now,
+        closed_by: session!.staffUserId,
+        forced_closed_at: now,
+        forced_closed_by: session!.staffUserId,
+        forced_close_reason: trimmed,
+      })
+      .eq('branch_id', branchId).eq('business_date', date);
+    if (error) return { ok: false, error: error.message };
+  } else {
+    // No row yet — open + force-close in one shot.
+    const { error } = await (supabase.from('business_day_close') as unknown as {
+      insert: (p: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+    }).insert({
+      branch_id: branchId, business_date: date,
+      status: 'closed', opened_by: session!.staffUserId, opened_at: now,
+      closed_at: now, closed_by: session!.staffUserId,
+      forced_closed_at: now, forced_closed_by: session!.staffUserId, forced_close_reason: trimmed,
+    });
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath('/reconciliation/end-of-day');
+  revalidatePath('/dashboard');
+  return { ok: true };
+}

@@ -4,6 +4,8 @@ import { Banknote, CheckCircle2, HandCoins, Percent, Wallet, FileText, ChevronRi
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { loadReconStatus } from '@/lib/recon-status';
+import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
+import { currentSession, isManager } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +14,16 @@ function peso(cents: number): string {
 }
 
 export default async function ReconciliationHubPage() {
-  const s = await loadReconStatus();
+  const [s, session] = await Promise.all([loadReconStatus(), currentSession()]);
+  const canForce = isManager(session);
+  const overdueItems = s.branches
+    .filter((b) => b.overdueClose)
+    .map((b) => ({
+      branch_id: b.id,
+      branch_code: b.code,
+      business_date: b.overdueClose!.business_date,
+      days_overdue: b.overdueClose!.days_overdue,
+    }));
 
   // tone: 'attention' = amber dot (something to do), 'clear' = green dot.
   const modules = [
@@ -62,6 +73,8 @@ export default async function ReconciliationHubPage() {
           Daily cash &amp; revenue close, tips, commission, and AR statements · live status for {s.today}.
         </p>
       </div>
+
+      <OverdueCloseBanner items={overdueItems} canForce={canForce} />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {modules.map((m) => (

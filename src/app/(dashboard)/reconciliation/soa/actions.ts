@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
+import { assertNoBlockedClose } from '@/lib/business-day';
 import { postToErp, type PostToErpResult } from '@/lib/erp-posting';
 
 // AR control account — constant for the whole SPA entity (CR side of a settle).
@@ -445,6 +446,7 @@ export async function settleSOA(id: string): Promise<ActionResult> {
   if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (soa.settlement_type !== 'intercompany') return { ok: false, error: 'Third-party statements are settled via Record Payment' };
   if (soa.status !== 'issued') return { ok: false, error: 'Only an issued statement can be settled' };
+  try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
   // Intercompany cost transfer: DR the hotel's cost account (per billing dest),
   // CR our AR. Strict posting — postToErp flips issued→settled + writes the
@@ -580,6 +582,7 @@ export async function recordSoaPayment(input: unknown): Promise<ActionResult> {
   if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (soa.settlement_type !== 'third_party') return { ok: false, error: 'Record Payment is for third-party statements; intercompany uses Settle' };
   if (!['issued', 'partial_paid'].includes(soa.status)) return { ok: false, error: 'This statement is not open for payment' };
+  try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
   const amountCents = Math.round(amount * 100);
   const outstanding = soa.total_cents - soa.paid_cents;

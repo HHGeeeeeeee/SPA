@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
+import { assertNoBlockedClose } from '@/lib/business-day';
 import { postBillToErp, type PostToErpResult } from '@/lib/erp-posting';
 import { renderTipPdf } from '@/lib/tip-pdf';
 
@@ -138,6 +139,7 @@ export async function settleTips(input: unknown): Promise<ActionResult<{ id: str
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const { branch_id, tip_ids } = parsed.data;
   if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
+  try { await assertNoBlockedClose(branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
   const supabase = await createAuditedClient();
   const { data: rows } = await supabase

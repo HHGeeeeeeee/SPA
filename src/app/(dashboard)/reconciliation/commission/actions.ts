@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
+import { assertNoBlockedClose } from '@/lib/business-day';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -171,6 +172,7 @@ export async function settleCommission(input: unknown): Promise<ActionResult<{ i
   const { branch_id, from, to, therapist_ids } = parsed.data;
   if (to < from) return { ok: false, error: 'End date must be on/after start date' };
   if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
+  try { await assertNoBlockedClose(branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
   const selectedSet = new Set(therapist_ids);
   const groups = (await computeGroups(branch_id, from, to)).filter((g) => selectedSet.has(g.therapist_id));

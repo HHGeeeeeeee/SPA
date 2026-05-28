@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { loadReconStatus } from '@/lib/recon-status';
+import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
+import { currentSession, isManager } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,8 +49,16 @@ async function fetchData() {
 }
 
 export default async function DashboardPage() {
-  const d = await fetchData();
-  const recon = await loadReconStatus();
+  const [d, recon, session] = await Promise.all([fetchData(), loadReconStatus(), currentSession()]);
+  const canForce = isManager(session);
+  const overdueItems = recon.branches
+    .filter((b) => b.overdueClose)
+    .map((b) => ({
+      branch_id: b.id,
+      branch_code: b.code,
+      business_date: b.overdueClose!.business_date,
+      days_overdue: b.overdueClose!.days_overdue,
+    }));
 
   const kpis = [
     { label: 'Bookings Today', value: String(d.bookings) },
@@ -70,6 +80,8 @@ export default async function DashboardPage() {
         <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">Today · {d.today}</p>
       </div>
+
+      <OverdueCloseBanner items={overdueItems} canForce={canForce} />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
         {kpis.map((k) => (

@@ -47,7 +47,7 @@ export function ReservationRowActions({ reservation, branches, sources, serviceC
   function set(next: 'reserved' | 'cancelled' | 'no_show') {
     startTransition(async () => {
       const r = await setReservationStatus(id, next);
-      if (r.ok) toast.success(next === 'reserved' ? 'Reopened' : `Marked ${next.replace('_', ' ')}`);
+      if (r.ok) { toast.success(next === 'reserved' ? 'Reopened' : `Marked ${next.replace('_', ' ')}`); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -57,7 +57,7 @@ export function ReservationRowActions({ reservation, branches, sources, serviceC
   function confirm() {
     startTransition(async () => {
       const r = await confirmReservation(id);
-      if (r.ok) toast.success('Reservation confirmed');
+      if (r.ok) { toast.success('Reservation confirmed'); router.refresh(); }
       else toast.error(r.error);
     });
   }

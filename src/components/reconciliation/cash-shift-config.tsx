@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { Settings2, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -36,6 +37,7 @@ export function CashShiftConfig({ branchId, config }: { branchId: string; config
   const [dayOpen, setDayOpen] = useState(initial.open);
   const [rows, setRows] = useState<Row[]>(initial.rows);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function reset() {
     const r = toRows(config);
@@ -86,7 +88,7 @@ export function CashShiftConfig({ branchId, config }: { branchId: string; config
     const shifts = rows.map((r, i) => ({ name: r.name.trim(), end: i === rows.length - 1 ? DAY_END : (hhmmToMin(r.end) ?? 0) }));
     startTransition(async () => {
       const res = await setCashShiftConfig({ open: hhmmToMin(dayOpen) ?? 0, shifts, branchId: target });
-      if (res.ok) { toast.success(scope === 'all' ? 'Default shifts updated for all branches' : 'Branch override saved'); setOpen(false); }
+      if (res.ok) { toast.success(scope === 'all' ? 'Default shifts updated for all branches' : 'Branch override saved'); setOpen(false); router.refresh(); }
       else toast.error(res.error);
     });
   }

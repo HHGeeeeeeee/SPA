@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -74,6 +75,7 @@ const TYPE_STYLE: Record<string, string> = {
 export function ShiftCell({ employeeId, employeeName, branchId, date, shift, visiting = false, readOnly = false }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   const [type, setType] = useState(shift?.shift_type ?? (visiting ? 'cross_branch' : 'regular'));
   const [start, setStart] = useState(hhmm(shift?.shift_start ?? null) || '10:00');
@@ -93,7 +95,7 @@ export function ShiftCell({ employeeId, employeeName, branchId, date, shift, vis
         shift_end: isTimed ? end : null,
         leave_type: type === 'leave' ? leaveType : null,
       });
-      if (r.ok) { toast.success('Shift saved'); setOpen(false); }
+      if (r.ok) { toast.success('Shift saved'); setOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -101,7 +103,7 @@ export function ShiftCell({ employeeId, employeeName, branchId, date, shift, vis
   function clear() {
     startTransition(async () => {
       const r = await clearShift(employeeId, branchId, date);
-      if (r.ok) { toast.success('Shift cleared'); setOpen(false); }
+      if (r.ok) { toast.success('Shift cleared'); setOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }

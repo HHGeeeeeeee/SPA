@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { CreditCard, Undo2 } from 'lucide-react';
 
@@ -44,6 +45,7 @@ export function PaymentAdjust({
   paidCents: number;
 }) {
   const [pending, start] = useTransition();
+  const router = useRouter();
   const defaultMethod = methods.find((m) => m.code === 'cash')?.id ?? methods[0]?.id ?? '';
 
   const [collectOpen, setCollectOpen] = useState(false);
@@ -75,7 +77,7 @@ export function PaymentAdjust({
     if (cIsSvc && !cCard) return toast.error('Select a stored value card');
     start(async () => {
       const r = await takePayment({ order_id: orderId, payment_method_id: cMethod, amount: amt, payment_ref: cRef || null, stored_value_card_id: cIsSvc ? cCard : null });
-      if (r.ok) { toast.success('Payment recorded'); setCollectOpen(false); setCAmount(''); setCRef(''); }
+      if (r.ok) { toast.success('Payment recorded'); setCollectOpen(false); setCAmount(''); setCRef(''); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -86,7 +88,7 @@ export function PaymentAdjust({
     if (rIsSvc && !rCard) return toast.error('Select a stored value card');
     start(async () => {
       const r = await recordRefund({ order_id: orderId, payment_method_id: rMethod, amount: amt, payment_ref: rRef || null, stored_value_card_id: rIsSvc ? rCard : null });
-      if (r.ok) { toast.success('Refund recorded'); setRefundOpen(false); setRAmount(''); setRRef(''); }
+      if (r.ok) { toast.success('Refund recorded'); setRefundOpen(false); setRAmount(''); setRRef(''); router.refresh(); }
       else toast.error(r.error);
     });
   }

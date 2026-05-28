@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -50,6 +51,7 @@ function RecordPaymentDialog({ id, outstandingCents }: { id: string; outstanding
   const [date, setDate] = useState(todayISO());
   const [file, setFile] = useState<File | null>(null);
   const [pending, start] = useTransition();
+  const router = useRouter();
   // Cash drops into today's till → its date is fixed to today and it feeds the
   // shift cash count. The server stamps the real time of entry.
   const isCash = method === 'cash';
@@ -72,7 +74,7 @@ function RecordPaymentDialog({ id, outstandingCents }: { id: string; outstanding
         paid_at: isCash ? todayISO() : date,
         proof_file_path: up.data?.path ?? null,
       });
-      if (r.ok) { toast.success('Payment recorded & posted'); setOpen(false); }
+      if (r.ok) { toast.success('Payment recorded & posted'); setOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -148,10 +150,16 @@ export function SoaActions({
 }) {
   const [pending, startTransition] = useTransition();
   const [voidOpen, setVoidOpen] = useState(false);
+  const router = useRouter();
+  // Refresh so the OTHER views on this page (AR Balance, Generate SOA) and the
+  // history list pick up the result — server actions revalidate the cache but
+  // a programmatic call from a client component needs router.refresh() to push
+  // the new server-rendered props down.
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) =>
     startTransition(async () => {
       const r = await fn();
-      if (r.ok) toast.success(ok); else toast.error(r.error ?? 'Failed');
+      if (r.ok) { toast.success(ok); router.refresh(); }
+      else toast.error(r.error ?? 'Failed');
     });
 
   // settled / void are terminal — no actions.

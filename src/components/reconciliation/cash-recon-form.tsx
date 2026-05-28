@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -39,11 +40,12 @@ export function CashReconForm({ branchId, date, shift, canReopen }: Props) {
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function reopen() {
     startTransition(async () => {
       const r = await reopenCashReconciliation({ branch_id: branchId, date, shift_label: shift.label, reason: reopenReason });
-      if (r.ok) { toast.success(`${shift.label} reopened`); setReopenOpen(false); setReopenReason(''); }
+      if (r.ok) { toast.success(`${shift.label} reopened`); setReopenOpen(false); setReopenReason(''); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -54,7 +56,7 @@ export function CashReconForm({ branchId, date, shift, canReopen }: Props) {
   function close() {
     startTransition(async () => {
       const r = await closeCashReconciliation({ branch_id: branchId, date, shift_label: shift.label, actual_count: Number(actual || 0), variance_reason: reason || null });
-      if (r.ok) toast.success(`${shift.label} reconciliation closed`);
+      if (r.ok) { toast.success(`${shift.label} reconciliation closed`); router.refresh(); }
       else toast.error(r.error);
     });
   }

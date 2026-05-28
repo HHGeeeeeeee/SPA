@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -54,6 +55,7 @@ export function CustomerPaymentCard({
   defaultMethodId,
 }: Props) {
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
   const [method, setMethod] = useState(defaultMethodId || paymentMethods[0]?.id || '');
   const [amount, setAmount] = useState((dueCents / 100).toFixed(2));
   const [ref, setRef] = useState('');
@@ -114,6 +116,7 @@ export function CustomerPaymentCard({
       });
       if (r.ok) {
         toast.success('Payment recorded');
+        router.refresh();
         setRef('');
         setTips({});
         setCardId('');

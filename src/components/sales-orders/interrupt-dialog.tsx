@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -43,12 +44,13 @@ export function InterruptDialog({ orderId, itemId, serviceName, open, onOpenChan
   const [reason, setReason] = useState('');
   const [handling, setHandling] = useState('full_charge');
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function submit() {
     if (reason.trim().length < 3) return toast.error('A reason is required');
     startTransition(async () => {
       const r = await interruptOrderItem({ item_id: itemId, order_id: orderId, reason, handling });
-      if (r.ok) { toast.success('Service interrupted'); onOpenChange(false); }
+      if (r.ok) { toast.success('Service interrupted'); onOpenChange(false); router.refresh(); }
       else toast.error(r.error);
     });
   }

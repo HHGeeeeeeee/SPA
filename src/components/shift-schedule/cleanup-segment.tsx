@@ -1,6 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { releaseBed } from '@/app/(dashboard)/sales-orders/actions';
@@ -23,11 +24,12 @@ export function CleanupSegment({
   label: string;
 }) {
   const [pending, start] = useTransition();
+  const router = useRouter();
   function release() {
     if (!itemId) return;
     start(async () => {
       const r = await releaseBed(itemId);
-      if (r.ok) toast.success('Bed marked ready');
+      if (r.ok) { toast.success('Bed marked ready'); router.refresh(); }
       else toast.error(r.error);
     });
   }

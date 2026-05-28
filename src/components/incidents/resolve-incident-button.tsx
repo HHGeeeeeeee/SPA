@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,7 @@ export function ResolveIncidentButton({ id }: { id: string }) {
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState('');
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   return (
     <>
@@ -37,7 +39,7 @@ export function ResolveIncidentButton({ id }: { id: string }) {
               type="button"
               onClick={() => startTransition(async () => {
                 const r = await resolveIncident(id, action);
-                if (r.ok) { toast.success('Resolved'); setOpen(false); } else toast.error(r.error);
+                if (r.ok) { toast.success('Resolved'); setOpen(false); router.refresh(); } else toast.error(r.error);
               })}
               disabled={pending}
             >

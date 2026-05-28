@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ interface Props {
 // header next to the status badge. Reason-gated transitions keep their dialogs.
 export function OrderStatusActions({ orderId, status, canManage, itemCount, hasPayments }: Props) {
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
   const [voidOpen, setVoidOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
@@ -31,28 +33,28 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
   function doStatus(next: string) {
     startTransition(async () => {
       const r = await setOrderStatus(orderId, next);
-      if (r.ok) toast.success(`Order ${next.replace('_', ' ')}`);
+      if (r.ok) { toast.success(`Order ${next.replace('_', ' ')}`); router.refresh(); }
       else toast.error(r.error);
     });
   }
   function doVoid(reason: string) {
     startTransition(async () => {
       const r = await voidOrder(orderId, reason);
-      if (r.ok) { toast.success('Order voided'); setVoidOpen(false); }
+      if (r.ok) { toast.success('Order voided'); setVoidOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }
   function doReopen(reason: string) {
     startTransition(async () => {
       const r = await reopenOrder(orderId, reason);
-      if (r.ok) { toast.success('Order reopened'); setReopenOpen(false); }
+      if (r.ok) { toast.success('Order reopened'); setReopenOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }
   function doAdjust(reason: string) {
     startTransition(async () => {
       const r = await requestOrderAdjustment(orderId, reason);
-      if (r.ok) { toast.success('Adjustment requested'); setAdjustOpen(false); }
+      if (r.ok) { toast.success('Adjustment requested'); setAdjustOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }

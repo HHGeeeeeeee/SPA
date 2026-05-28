@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,7 @@ export function FeedbackDialog({ orderId, orderItemId, serviceName, therapistNam
   const [email, setEmail] = useState('');
   const [comment, setComment] = useState('');
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function submit() {
     if (score == null) return toast.error('Please pick a score (1-10)');
@@ -45,7 +47,7 @@ export function FeedbackDialog({ orderId, orderItemId, serviceName, therapistNam
         email: email || null,
         comment: comment || null,
       });
-      if (r.ok) { toast.success('Feedback submitted'); onOpenChange(false); }
+      if (r.ok) { toast.success('Feedback submitted'); onOpenChange(false); router.refresh(); }
       else toast.error(r.error);
     });
   }

@@ -1,6 +1,7 @@
 'use client';
 
 import { type ComponentProps, useEffect, useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History, Play, Pencil, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -247,6 +248,7 @@ export function OrderWorkspace({
   const [confirmFinish, setConfirmFinish] = useState<OrderItem | null>(null);
   const [cancelItem, setCancelItem] = useState<OrderItem | null>(null);
   const [voidPaymentId, setVoidPaymentId] = useState<string | null>(null);
+  const router = useRouter();
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
@@ -260,7 +262,7 @@ export function OrderWorkspace({
         customer_name: custName,
         customer_phone: custPhone || null,
       });
-      if (r.ok) { setCustName(''); setCustPhone(''); toast.success('Customer added'); }
+      if (r.ok) { setCustName(''); setCustPhone(''); toast.success('Customer added'); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -284,7 +286,7 @@ export function OrderWorkspace({
         discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
         discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
       });
-      if (r.ok) { closeItemForm(); toast.success('Service added'); }
+      if (r.ok) { closeItemForm(); toast.success('Service added'); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -316,7 +318,7 @@ export function OrderWorkspace({
         discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
         discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
       });
-      if (r.ok) { closeItemForm(); toast.success('Service updated'); }
+      if (r.ok) { closeItemForm(); toast.success('Service updated'); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -381,7 +383,7 @@ export function OrderWorkspace({
         customer_name: editName,
         customer_phone: editPhone || null,
       });
-      if (r.ok) { setEditCust(null); toast.success('Guest updated'); }
+      if (r.ok) { setEditCust(null); toast.success('Guest updated'); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -396,7 +398,7 @@ export function OrderWorkspace({
   function startItemNow(id: string) {
     startTransition(async () => {
       const r = await startOrderItem(id, order.id);
-      if (r.ok) toast.success('Service started'); else toast.error(r.error);
+      if (r.ok) { toast.success('Service started'); router.refresh(); } else toast.error(r.error);
     });
   }
 
@@ -406,6 +408,7 @@ export function OrderWorkspace({
       if (r.ok) {
         const n = r.data?.started ?? 0;
         toast.success(n > 0 ? `Started ${n} service${n === 1 ? '' : 's'}` : 'Nothing to start');
+        router.refresh();
       } else toast.error(r.error);
     });
   }
@@ -419,7 +422,7 @@ export function OrderWorkspace({
   function finishItemNow(id: string) {
     startTransition(async () => {
       const r = await finishOrderItem(id, order.id);
-      if (r.ok) toast.success('Service finished'); else toast.error(r.error);
+      if (r.ok) { toast.success('Service finished'); router.refresh(); } else toast.error(r.error);
     });
   }
 
@@ -436,7 +439,7 @@ export function OrderWorkspace({
   function doSkipItem(id: string) {
     startTransition(async () => {
       const r = await skipOrderItem(id, order.id);
-      if (r.ok) toast.success('Service cancelled'); else toast.error(r.error);
+      if (r.ok) { toast.success('Service cancelled'); router.refresh(); } else toast.error(r.error);
     });
   }
 
@@ -445,7 +448,7 @@ export function OrderWorkspace({
   function doRedoItem(id: string) {
     startTransition(async () => {
       const r = await redoOrderItem(id, order.id);
-      if (r.ok) toast.success('Service re-added with the same therapist & bed — review and Start'); else toast.error(r.error);
+      if (r.ok) { toast.success('Service re-added with the same therapist & bed — review and Start'); router.refresh(); } else toast.error(r.error);
     });
   }
 
@@ -456,6 +459,7 @@ export function OrderWorkspace({
       const r = await switchService(it.id, order.id);
       if (r.ok) {
         toast.success('Stopped (no charge) — pick the new service');
+        router.refresh();
         setEditingItemId(null);
         setActiveCustomer(it.order_customer_id);
         setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
@@ -466,7 +470,7 @@ export function OrderWorkspace({
   function doReleaseBed(id: string) {
     startTransition(async () => {
       const r = await releaseBed(id);
-      if (r.ok) toast.success('Bed marked ready'); else toast.error(r.error);
+      if (r.ok) { toast.success('Bed marked ready'); router.refresh(); } else toast.error(r.error);
     });
   }
 
@@ -480,7 +484,7 @@ export function OrderWorkspace({
   function doVoidPayment(paymentId: string) {
     startTransition(async () => {
       const r = await voidPayment(paymentId, order.id);
-      if (r.ok) toast.success('Payment removed');
+      if (r.ok) { toast.success('Payment removed'); router.refresh(); }
       else toast.error(r.error);
     });
   }

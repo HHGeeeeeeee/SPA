@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Check } from 'lucide-react';
 
@@ -14,12 +15,13 @@ export function OrderNoteEditor({ orderId, initialNote }: { orderId: string; ini
   const [note, setNote] = useState(initialNote ?? '');
   const [saved, setSaved] = useState(initialNote ?? '');
   const [pending, start] = useTransition();
+  const router = useRouter();
   const dirty = note.trim() !== saved.trim();
 
   function save() {
     start(async () => {
       const r = await updateOrderNote({ order_id: orderId, note: note.trim() || null });
-      if (r.ok) { setSaved(note.trim()); toast.success('Note saved'); }
+      if (r.ok) { setSaved(note.trim()); toast.success('Note saved'); router.refresh(); }
       else toast.error(r.error);
     });
   }

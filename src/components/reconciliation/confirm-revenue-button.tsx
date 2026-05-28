@@ -1,6 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -15,11 +16,13 @@ interface Props {
 
 export function ConfirmRevenueButton({ branchId, date, count, disabled }: Props) {
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function confirm() {
     startTransition(async () => {
       const r = await confirmRevenue({ branch_id: branchId, date });
       if (r.ok) {
+        router.refresh();
         const closed = r.data?.closed ?? 0;
         const failed = r.data?.failed ?? 0;
         if (failed > 0) {

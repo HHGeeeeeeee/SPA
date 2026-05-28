@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -55,6 +56,7 @@ export function ReportIncidentDialog({ orderId, defaultCustomerName, trigger }: 
   const [severity, setSeverity] = useState('low');
   const [desc, setDesc] = useState('');
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,7 +69,7 @@ export function ReportIncidentDialog({ orderId, defaultCustomerName, trigger }: 
         severity,
         description: desc,
       });
-      if (r.ok) { toast.success('Incident logged'); setOpen(false); setDesc(''); }
+      if (r.ok) { toast.success('Incident logged'); setOpen(false); setDesc(''); router.refresh(); }
       else toast.error(r.error);
     });
   }

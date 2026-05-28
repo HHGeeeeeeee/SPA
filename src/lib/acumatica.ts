@@ -9,6 +9,11 @@
 // - Session expiry → throws AcuSessionRequiredError → frontend prompts re-login.
 
 const BASE_URL = process.env.ACUMATICA_BASE_URL;
+// Acumatica's login accepts `tenant` (multi-tenant instance) and `company`
+// (multi-company within a tenant). HHG's instance uses `tenant` — matching
+// the ENGO sibling project. `company` is kept for backward compatibility if
+// any deployment needs it instead. If both are set, both are sent.
+const TENANT = process.env.ACUMATICA_TENANT;
 const COMPANY = process.env.ACUMATICA_COMPANY;
 const BRANCH = process.env.ACUMATICA_BRANCH;
 const LEDGER_ID = process.env.ACUMATICA_LEDGER_ID ?? 'MGMT';
@@ -46,6 +51,7 @@ export async function acumaticaLogin(
   }
 
   const body: Record<string, string> = { name: username, password };
+  if (TENANT) body.tenant = TENANT;
   if (COMPANY) body.company = COMPANY;
   if (BRANCH) body.branch = BRANCH;
 

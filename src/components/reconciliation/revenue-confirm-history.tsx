@@ -78,16 +78,16 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
               </span>
             </button>
             {isOpen && (
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="font-bold">Order No</TableHead>
+                    <TableHead className="w-56 font-bold">Order No</TableHead>
                     <TableHead className="w-16 font-bold text-center">PAX</TableHead>
                     <TableHead className="w-24 font-bold">Settle</TableHead>
                     <TableHead className="font-bold">Billing</TableHead>
-                    <TableHead className="w-28 font-bold text-center">Cash</TableHead>
-                    <TableHead className="w-28 font-bold text-center">PAYMAYA</TableHead>
-                    <TableHead className="w-28 font-bold text-center">AR</TableHead>
+                    <TableHead className="w-32 font-bold text-center">Cash</TableHead>
+                    <TableHead className="w-32 font-bold text-center">PAYMAYA</TableHead>
+                    <TableHead className="w-32 font-bold text-center">AR</TableHead>
                     <TableHead className="w-32 font-bold text-right pr-4">Total</TableHead>
                   </TableRow>
                 </TableHeader>

@@ -44,7 +44,7 @@ function OrderRow({ o, showDate }: { o: ConfirmableOrder; showDate?: boolean }) 
       <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.cash_cents)}</TableCell>
       <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.paymaya_cents)}</TableCell>
       <TableCell className="font-medium tabular text-right text-muted-foreground">{moneyCell(o.isAR ? o.total_cents : 0)}</TableCell>
-      <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
+      <TableCell className="font-bold tabular text-right pr-4">{peso(o.total_cents)}</TableCell>
     </TableRow>
   );
 }
@@ -137,17 +137,21 @@ export default async function RevenueConfirmPage({
               <CardTitle className="text-base font-bold">{date} · {orders.length} order(s) · {peso(total)}</CardTitle>
               <ConfirmRevenueButton branchId={branchId} date={date} count={orders.length} disabled={!cashClosed} />
             </CardHeader>
-            <Table>
+            <Table className="table-fixed">
+              {/* Pin Order No to its content width (~22 chars) — without this
+                  it absorbs ~half the table width via auto-layout slack and
+                  leaves a huge gap to PAX. Amount columns widened so 5-digit
+                  totals (₱99,999) still have breathing room. */}
               <TableHeader>
                 <TableRow>
-                  <TableHead className="font-bold">Order No</TableHead>
+                  <TableHead className="w-56 font-bold">Order No</TableHead>
                   <TableHead className="w-16 font-bold text-center">PAX</TableHead>
                   <TableHead className="w-24 font-bold">Settle</TableHead>
                   <TableHead className="font-bold">Billing</TableHead>
-                  <TableHead className="w-28 font-bold text-center">Cash</TableHead>
-                  <TableHead className="w-28 font-bold text-center">PAYMAYA</TableHead>
-                  <TableHead className="w-28 font-bold text-center">AR</TableHead>
-                  <TableHead className="w-32 font-bold text-right">Total</TableHead>
+                  <TableHead className="w-32 font-bold text-center">Cash</TableHead>
+                  <TableHead className="w-32 font-bold text-center">PAYMAYA</TableHead>
+                  <TableHead className="w-32 font-bold text-center">AR</TableHead>
+                  <TableHead className="w-32 font-bold text-right pr-4">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -162,7 +166,7 @@ export default async function RevenueConfirmPage({
                       <TableCell className="font-bold tabular text-right">{moneyCell(cashTotal)}</TableCell>
                       <TableCell className="font-bold tabular text-right">{moneyCell(paymayaTotal)}</TableCell>
                       <TableCell className="font-bold tabular text-right">{moneyCell(arTotal)}</TableCell>
-                      <TableCell className="font-extrabold tabular text-right">{peso(total)}</TableCell>
+                      <TableCell className="font-extrabold tabular text-right pr-4">{peso(total)}</TableCell>
                     </TableRow>
                   </>
                 )}

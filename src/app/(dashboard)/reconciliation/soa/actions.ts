@@ -6,6 +6,11 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
+import { postToErp } from '@/lib/erp-posting';
+
+// AR control account — constant for the whole SPA entity (CR side of a settle).
+const AR_ACCOUNT = '10200';
+const AR_SUBACCOUNT = '000-000-000'; // dashes stripped before posting
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -431,16 +436,51 @@ export async function settleSOA(id: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = await createAuditedClient();
-  const { data: soa } = await supabase.from('revenue_soa').select('status, total_cents, settlement_type, branch_id').eq('id', id).single();
+  const { data: soa } = await supabase
+    .from('revenue_soa')
+    .select('soa_no, status, total_cents, settlement_type, branch_id, billing:billing_destinations ( intercompany_account, intercompany_sub ), branch:branches ( code )')
+    .eq('id', id)
+    .single();
   if (!soa) return { ok: false, error: 'SOA not found' };
   if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (soa.settlement_type !== 'intercompany') return { ok: false, error: 'Third-party statements are settled via Record Payment' };
   if (soa.status !== 'issued') return { ok: false, error: 'Only an issued statement can be settled' };
-  const { error } = await supabase
-    .from('revenue_soa')
-    .update({ status: 'settled', paid_cents: soa.total_cents, outstanding_cents: 0 })
-    .eq('id', id);
-  if (error) return { ok: false, error: error.message };
+
+  // Intercompany cost transfer: DR the hotel's cost account (per billing dest),
+  // CR our AR. Strict posting — postToErp flips issued→settled + writes the
+  // voucher number on success, or reverts to issued + notes the error on
+  // failure. (No-ops the GL call until Acumatica is configured.)
+  const billing = one<{ intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
+  const branchCode = one<{ code: string }>(soa.branch)?.code ?? '';
+  const amount = soa.total_cents / 100;
+  const r = await postToErp({
+    entityType: 'soa_settle',
+    table: 'revenue_soa',
+    entityId: id,
+    date: new Date().toISOString().slice(0, 10),
+    branch: branchCode,
+    description: `${soa.soa_no} intercompany settle`,
+    lines: [
+      {
+        account: billing?.intercompany_account ?? '50170',
+        sub_account: billing?.intercompany_sub ?? '000000T03',
+        debit_amount: amount,
+        credit_amount: null,
+        transaction_desc: `${soa.soa_no} intercompany cost`,
+      },
+      {
+        account: AR_ACCOUNT,
+        sub_account: AR_SUBACCOUNT,
+        debit_amount: null,
+        credit_amount: amount,
+        transaction_desc: `${soa.soa_no} AR settle`,
+      },
+    ],
+    fromStatus: 'issued',
+    toStatus: 'settled',
+    extraOnSuccess: { paid_cents: soa.total_cents, outstanding_cents: 0 },
+  });
+  if (!r.ok) return { ok: false, error: `ERP posting failed: ${r.error}` };
   revalidatePath('/reconciliation/soa');
   return { ok: true };
 }

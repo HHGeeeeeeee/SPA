@@ -24,6 +24,9 @@ interface PostToErpArgs {
   statusColumn?: string;
   fromStatus?: string; // reverted to on failure
   toStatus?: string; // advanced to on success
+  /** Extra columns to set on the row alongside the success transition
+   *  (e.g. paid_cents / outstanding_cents on a settle). */
+  extraOnSuccess?: Record<string, unknown>;
 }
 
 export type PostToErpResult =
@@ -54,9 +57,12 @@ export async function postToErp(args: PostToErpArgs): Promise<PostToErpResult> {
       .update(patch)
       .eq('id', args.entityId);
 
-  // Not wired to Acumatica yet → just do the status transition, no GL post.
+  // Not wired to Acumatica yet → just do the status transition (+ any success
+  // side-effects like paid_cents), no GL post, no batch number.
   if (!acumaticaConfigured()) {
-    if (args.toStatus) await patchRow({ [statusCol]: args.toStatus });
+    const patch: Record<string, unknown> = { ...(args.extraOnSuccess ?? {}) };
+    if (args.toStatus) patch[statusCol] = args.toStatus;
+    if (Object.keys(patch).length > 0) await patchRow(patch);
     return { ok: true, batchNbr: null, skipped: true };
   }
 
@@ -83,7 +89,7 @@ export async function postToErp(args: PostToErpArgs): Promise<PostToErpResult> {
       { date: args.date, description: args.description, currency: 'PHP', branch: args.branch, lines: args.lines },
       cookie,
     );
-    const patch: Record<string, unknown> = { posting_status: 'posted', gl_batch_nbr: res.batchNbr, posting_error: null };
+    const patch: Record<string, unknown> = { posting_status: 'posted', gl_batch_nbr: res.batchNbr, posting_error: null, ...(args.extraOnSuccess ?? {}) };
     if (args.toStatus) patch[statusCol] = args.toStatus;
     await patchRow(patch);
     if (log) {

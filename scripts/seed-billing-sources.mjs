@@ -50,7 +50,16 @@ async function main() {
     bd({ code: 'HNBV', name: 'Nacpan Beach Villa' }),
     bd({ code: 'HNBR', name: 'Nacpan Beach Resto' }),
     bd({ code: 'HNBG', name: 'Nacpan Beach Glamping' }),
-    bd({ code: 'ENGO', name: 'Elnido Go' }),
+    // ENGO is a THIRD-PARTY partner settled in cash (Record Payment → DR cash /
+    // CR AR), NOT intercompany. Must override the bd() intercompany default.
+    bd({
+      code: 'ENGO',
+      name: 'Elnido Go',
+      settlement_type: 'third_party',
+      intercompany_account: null,
+      intercompany_sub: null,
+      credit_terms_days: 30,
+    }),
     bd({
       code: 'THIRD-PARTY',
       name: 'Third-Party',

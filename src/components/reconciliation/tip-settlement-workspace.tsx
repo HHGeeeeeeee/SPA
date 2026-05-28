@@ -395,12 +395,14 @@ export function TipSettlementWorkspace({
                 {/* table-fixed: exact widths so the nested detail's Amount lines up
                     under Total (same w-32 + trailing w-24 + w-20). */}
                 <Table className="table-fixed">
+                  {/* Explicit Settlement No width so Period gets the slack
+                      instead of both columns splitting it evenly. */}
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8" />
                       <TableHead className="w-8" />
-                      <TableHead className="font-bold">Settlement No</TableHead>
-                      <TableHead className="w-16 font-bold">Branch</TableHead>
+                      <TableHead className="w-52 font-bold">Settlement No</TableHead>
+                      <TableHead className="w-20 font-bold">Branch</TableHead>
                       <TableHead className="font-bold pl-6">Period</TableHead>
                       <TableHead className="w-40 font-bold">Settle Date</TableHead>
                       <TableHead className="w-32 font-bold text-right">Total</TableHead>

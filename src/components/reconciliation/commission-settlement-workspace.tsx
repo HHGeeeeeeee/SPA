@@ -391,12 +391,14 @@ export function CommissionSettlementWorkspace({
                 {/* table-fixed: column widths are exact, so the nested detail (same
                     fixed right-side widths) lines its Commission up under this one. */}
                 <Table className="table-fixed">
+                  {/* Explicit Settlement No width so the column doesn't absorb
+                      half of the slack — Period takes the rest. */}
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8" />
                       <TableHead className="w-8" />
-                      <TableHead className="font-bold">Settlement No</TableHead>
-                      <TableHead className="w-16 font-bold">Branch</TableHead>
+                      <TableHead className="w-52 font-bold">Settlement No</TableHead>
+                      <TableHead className="w-20 font-bold">Branch</TableHead>
                       <TableHead className="font-bold pl-6">Period</TableHead>
                       <TableHead className="w-40 font-bold">Settle Date</TableHead>
                       <TableHead className="w-20 font-bold text-right">Sessions</TableHead>

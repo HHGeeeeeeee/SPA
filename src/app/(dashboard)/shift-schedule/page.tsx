@@ -4,6 +4,7 @@ import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData } from '@/components/shift-schedule/schedule-board';
+import { DispatchBoard } from '@/components/shift-schedule/dispatch-board';
 import { TherapistsNowCard } from '@/components/shift-schedule/therapists-now-card';
 import { BedsNowCard } from '@/components/shift-schedule/beds-now-card';
 import { BulkShiftDialog } from '@/components/shift-schedule/bulk-shift-dialog';
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
 
 const TIMED = ['regular', 'cross_branch', 'on_call'];
 
-type ShiftView = 'employee' | 'station';
+type ShiftView = 'employee' | 'station' | 'dispatch';
 type ShiftScale = 'week' | 'day';
 
 function todayISO(): string {
@@ -194,7 +195,10 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   }
   // Top lane: pending (never holds a bed), unpinned, and overdue reservations
   // (released beds); the Therapist view has no bed binding, so it lists them all.
-  const reservations: ReservationBlock[] = (subject === 'station' ? resvRows.filter((r) => r.pending || r.pinnedIds.length === 0 || r.overdue) : resvRows)
+  // External (hotel-dispatched) bookings are filtered out — they belong to the
+  // dedicated Dispatch view, not the in-store Station/Therapist boards.
+  const inStoreRows = resvRows.filter((r) => !r.external);
+  const reservations: ReservationBlock[] = (subject === 'station' ? inStoreRows.filter((r) => r.pending || r.pinnedIds.length === 0 || r.overdue) : inStoreRows)
     .map((r) => ({ id: r.id, guest: r.guest, line2: r.line2, startMin: r.startMin, endMin: r.endMin, external: r.external, overdue: r.overdue, pending: r.pending }));
   for (const r of reservations) allMins.push(r.startMin, r.endMin);
   const windowStartMin = allMins.length ? Math.min(540, Math.floor(Math.min(...allMins) / 60) * 60) : 540;
@@ -261,6 +265,9 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
   }
 
   for (const r of resvRes.data ?? []) {
+    // External (hotel-dispatched) reservations belong to the Dispatch view —
+    // they never get a bed, and they shouldn't clutter "To place" in Station.
+    if (r.service_location_type === 'external_hotel') continue;
     const cats = (r.reservation_service_categories ?? []).map((l) => one(l.service_categories)?.name).filter(Boolean).join(' + ');
     const src = one(r.customer_sources)?.code;
     const startMin = tsToMin(r.desired_service_start);
@@ -311,6 +318,87 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     .map((s) => ({ startMin: timeToMin(s.shift_start), endMin: timeToMin(s.shift_end) }))
     .filter((w): w is { startMin: number; endMin: number } => w.startMin != null && w.endMin != null);
   return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, shiftWindows };
+}
+
+// Dispatch view: external (hotel-dispatched) reservations for the day. They
+// don't get a bed (therapist travels), so this is a list focused on "who goes
+// where at what time" — guest, source/hotel code, room number, pax, status.
+export interface DispatchRow {
+  id: string;
+  guest_name: string;
+  guest_phone: string | null;
+  pax: number;
+  source_code: string | null;
+  external_room_no: string | null;
+  desired_service_start: string;
+  desired_service_end: string;
+  status: string;
+  note: string | null;
+  service_categories: string;
+  editData: ReservationItem;
+}
+async function fetchDispatchData(branchId: string, day: string): Promise<DispatchRow[]> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from('reservations')
+    .select('id, status, branch_id, source_id, guest_name, guest_phone, pax, gender_preference, service_location_type, note, seat_together, service_item_id, external_room_no, desired_service_start, desired_service_end, customer_sources ( code, name ), reservation_service_categories ( service_category_id, service_categories ( name ) ), reservation_resources ( resource_id )')
+    .eq('branch_id', branchId)
+    .eq('service_location_type', 'external_hotel')
+    .in('status', ['reserved', 'confirmed'])
+    .is('deleted_at', null)
+    .gte('desired_service_start', `${day}T00:00:00+08:00`)
+    .lte('desired_service_start', `${day}T23:59:59+08:00`)
+    .order('desired_service_start');
+  return (data ?? []).map((r) => {
+    const src = one(r.customer_sources);
+    const editData: ReservationItem = {
+      id: r.id,
+      branch_id: r.branch_id,
+      source_id: r.source_id,
+      service_category_ids: (r.reservation_service_categories ?? []).map((l) => l.service_category_id),
+      guest_name: r.guest_name ?? '',
+      guest_phone: r.guest_phone,
+      pax: r.pax,
+      gender_preference: r.gender_preference,
+      service_location_type: r.service_location_type,
+      note: r.note,
+      desired_service_start: r.desired_service_start,
+      desired_service_end: r.desired_service_end,
+      resource_ids: (r.reservation_resources ?? []).map((x) => x.resource_id),
+      seat_together: r.seat_together,
+      service_item_id: r.service_item_id,
+    };
+    return {
+      id: r.id,
+      guest_name: r.guest_name ?? 'Guest',
+      guest_phone: r.guest_phone,
+      pax: r.pax,
+      source_code: src?.code ?? null,
+      external_room_no: r.external_room_no,
+      desired_service_start: r.desired_service_start,
+      desired_service_end: r.desired_service_end,
+      status: r.status,
+      note: r.note,
+      service_categories: (r.reservation_service_categories ?? []).map((l) => one(l.service_categories)?.name).filter(Boolean).join(' + '),
+      editData,
+    };
+  });
+}
+
+// Quick count for the Dispatch tab badge — cheaper than fetchDispatchData when
+// the user isn't on the Dispatch tab.
+async function fetchDispatchCount(branchId: string, day: string): Promise<number> {
+  const supabase = createServiceClient();
+  const { count } = await supabase
+    .from('reservations')
+    .select('id', { count: 'exact', head: true })
+    .eq('branch_id', branchId)
+    .eq('service_location_type', 'external_hotel')
+    .in('status', ['reserved', 'confirmed'])
+    .is('deleted_at', null)
+    .gte('desired_service_start', `${day}T00:00:00+08:00`)
+    .lte('desired_service_start', `${day}T23:59:59+08:00`);
+  return count ?? 0;
 }
 
 // Option lists for the board's click-to-add (reuses NewReservationDialog).
@@ -520,8 +608,9 @@ export default async function ShiftSchedulePage({
   searchParams: Promise<{ branch?: string; week?: string; view?: string; scale?: string; day?: string }>;
 }) {
   const sp = await searchParams;
-  // Station (live bed occupancy) is the default subject; Therapist is opt-in.
-  const view: ShiftView = sp.view === 'employee' ? 'employee' : 'station';
+  // Station (live bed occupancy) is the default subject; Therapist + Dispatch are opt-in.
+  const view: ShiftView = sp.view === 'employee' ? 'employee'
+    : sp.view === 'dispatch' ? 'dispatch' : 'station';
   // The roster only plans working hours; beds are assigned dynamically when a
   // service starts. So the Station subject is a live, per-day occupancy snapshot
   // (sourced from actual orders) and is never a weekly pre-assignment grid.
@@ -531,10 +620,18 @@ export default async function ShiftSchedulePage({
   // Editing the roster (set/clear/bulk shifts) is a manager task; everyone else
   // sees it read-only. Server actions enforce this too — this just hides the UI.
   const canManageRoster = isManager(await currentSession());
-  // Station+day → the interactive 15-min board; Therapist+day → the read-only timeline.
+  // Station+day → the interactive 15-min board; Therapist+day → the read-only
+  // timeline; Dispatch → list of external (hotel-dispatched) reservations.
   const stationBoard = view === 'station' && scale === 'day' && branchId ? await fetchStationBoard(branchId, day) : null;
-  const boardDialog = stationBoard ? await fetchBoardDialogData() : null;
+  const dispatchRows = view === 'dispatch' && branchId ? await fetchDispatchData(branchId, day) : null;
+  // The dialog data is needed by both Station (click-to-add) and Dispatch (edit).
+  const boardDialog = (stationBoard || dispatchRows) ? await fetchBoardDialogData() : null;
   const dayData = view === 'employee' && scale === 'day' && branchId ? await fetchDayData('employee', branchId, day) : null;
+  // Dispatch badge — show on the tab even when not on Dispatch view, so desk
+  // doesn't need to switch tabs to spot external bookings.
+  const dispatchCount = branchId
+    ? (view === 'dispatch' ? (dispatchRows?.length ?? 0) : await fetchDispatchCount(branchId, day))
+    : 0;
   // Live walk-in capacity snapshot — shown above both views, always for "now".
   const availability = branchId ? await computeNowAvailability(branchId) : null;
 
@@ -552,11 +649,15 @@ export default async function ShiftSchedulePage({
           <h2 className="text-3xl font-bold tracking-tight">Shift Schedule</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
             {scale === 'day'
-              ? `${day} · ${view === 'station' ? '15-min board · click a slot to add · drag a booking onto a bed' : 'hourly · therapist hours & services'}`
+              ? `${day} · ${
+                  view === 'station' ? '15-min board · click a slot to add · drag a booking onto a bed'
+                  : view === 'dispatch' ? 'external (hotel) dispatches · click a row to edit'
+                  : 'hourly · therapist hours & services'
+                }`
               : `Week of ${monday} · home-branch therapists${canManageRoster ? ' · click a cell to set a shift' : ' · view only'}`}
           </p>
         </div>
-        {branchId && <ShiftControls branches={branches} branchId={branchId} weekStart={monday} day={day} view={view} scale={scale} />}
+        {branchId && <ShiftControls branches={branches} branchId={branchId} weekStart={monday} day={day} view={view} scale={scale} dispatchCount={dispatchCount} />}
       </div>
 
       {/* Live walk-in capacity — open beds + free therapists this minute. Sits
@@ -573,6 +674,8 @@ export default async function ShiftSchedulePage({
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           Create a branch first.
         </Card>
+      ) : dispatchRows ? (
+        <DispatchBoard day={day} rows={dispatchRows} dialog={boardDialog!} />
       ) : stationBoard ? (
         <ScheduleBoard
           branchId={branchId}

@@ -25,7 +25,10 @@ export interface BoardBlock {
   key: string;
   kind: 'reservation' | 'order';
   refId: string;
-  bedId: string | null; // null = floating (top lane), not yet on a bed
+  bedId: string | null; // null = floating (top lane); see also `external` below
+  /** Reservation is dispatched to a hotel room — never gets a bed. Renders in
+   *  the External lane (above To place) and can't be dragged onto a bed. */
+  external?: boolean;
   guest?: string; // booking guest name — shown at the top of the block
   pax?: number;   // group size, shown next to the guest
   line1: string;

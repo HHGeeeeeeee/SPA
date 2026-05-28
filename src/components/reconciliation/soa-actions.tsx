@@ -105,7 +105,14 @@ function RecordPaymentDialog({ id, outstandingCents }: { id: string; outstanding
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs font-semibold">Date received</Label>
-            <Input type="date" value={isCash ? todayISO() : date} onChange={(e) => setDate(e.target.value)} disabled={isCash} />
+            {/* max=today — bank remittances are dated when money landed, never in the future. */}
+            <Input
+              type="date"
+              value={isCash ? todayISO() : date}
+              max={todayISO()}
+              onChange={(e) => setDate(e.target.value)}
+              disabled={isCash}
+            />
           </div>
           <div className="flex flex-col gap-1 col-span-2">
             <Label className="text-xs font-semibold">Reference</Label>

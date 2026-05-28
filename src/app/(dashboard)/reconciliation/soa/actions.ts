@@ -511,12 +511,19 @@ export async function settleSOABatch(ids: string[]): Promise<ActionResult<{ sett
   return { ok: true, data: { settled } };
 }
 
+// PHT (Asia/Manila) today as yyyy-mm-dd — the latest acceptable paid_at.
+const todayPHT = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
 const paymentSchema = z.object({
   soa_id: z.string().uuid(),
   amount: z.coerce.number().positive(),
   payment_method: z.string().max(60).optional().nullable(),
   reference_no: z.string().max(120).optional().nullable(),
-  paid_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date').optional(),
+  paid_at: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date')
+    .refine((d) => d <= todayPHT(), 'Date received cannot be in the future')
+    .optional(),
   note: z.string().max(300).optional().nullable(),
   proof_file_path: z.string().max(400).optional().nullable(),
 });

@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { SoaActions } from '@/components/reconciliation/soa-actions';
+import { SoaPaymentsList } from '@/components/reconciliation/soa-payments-list';
 import { settleSOABatch, type ArBalance, type ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 function peso(cents: number): string {
@@ -42,10 +43,13 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = 
 export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
   const router = useRouter();
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [openSoa, setOpenSoa] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [settling, startSettle] = useTransition();
   const toggle = (id: string) =>
     setOpen((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSoa = (id: string) =>
+    setOpenSoa((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleSel = (id: string) =>
     setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   function doSettle() {
@@ -183,8 +187,16 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                 </TableHeader>
                                 <TableBody>
                                   {d.soas.map((s) => (
-                                    <TableRow key={s.id}>
-                                      <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
+                                    <Fragment key={s.id}>
+                                    <TableRow>
+                                      <TableCell className="font-mono font-bold">
+                                        {s.status === 'partial_paid' && (
+                                          <button type="button" onClick={() => toggleSoa(s.id)} className="mr-1 align-middle text-muted-foreground hover:text-foreground" aria-label="Show payments">
+                                            {openSoa.has(s.id) ? <ChevronDown className="size-3 inline" /> : <ChevronRight className="size-3 inline" />}
+                                          </button>
+                                        )}
+                                        {s.soa_no}
+                                      </TableCell>
                                       <TableCell className="tabular text-muted-foreground text-sm">{s.period_from} → {s.period_to}</TableCell>
                                       <TableCell className="text-sm">
                                         <span className={cn('font-medium', s.days_overdue > 0 ? 'text-destructive' : 'text-muted-foreground')}>{fmtDate(s.due_date)}</span>
@@ -210,6 +222,14 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                         </div>
                                       </TableCell>
                                     </TableRow>
+                                    {openSoa.has(s.id) && (
+                                      <TableRow>
+                                        <TableCell colSpan={6} className="bg-muted/20 p-3">
+                                          <SoaPaymentsList soaId={s.id} />
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    </Fragment>
                                   ))}
                                 </TableBody>
                               </Table>

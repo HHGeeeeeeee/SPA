@@ -220,3 +220,42 @@ export async function pushGLEntry(
 
   return { batchNbr, raw: created };
 }
+
+/**
+ * Attach a file to an already-posted JournalTransaction (e.g. the AR collection
+ * proof — remittance slip / cash photo). Acumatica file-attach pattern (per the
+ * sibling ENGO/ST Center projects' AP Bill flow): PUT the file body to
+ * `{entity}/{...keys}/files/{filename}` with Content-Type = mime, Cookie =
+ * user's ERP session. The journal's natural keys are Module + BatchNbr, so the
+ * URL is `/JournalTransaction/{Module}/{BatchNbr}/files/{filename}`.
+ */
+export async function attachFileToJournal(
+  opts: {
+    module?: string;
+    batchNbr: string;
+    filename: string;
+    fileBuffer: ArrayBuffer;
+    mimeType: string;
+  },
+  userCookie: string | null | undefined,
+): Promise<true> {
+  const cookie = ensureCookie(userCookie);
+  const mod = opts.module ?? 'GL';
+  const safeName = encodeURIComponent(opts.filename);
+  const url = `${api()}/JournalTransaction/${encodeURIComponent(mod)}/${encodeURIComponent(opts.batchNbr)}/files/${safeName}`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Cookie: cookie,
+      'Content-Type': opts.mimeType || 'application/octet-stream',
+      Accept: 'application/json',
+    },
+    body: opts.fileBuffer,
+  });
+  if (res.status === 401) throw new AcuSessionRequiredError();
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Attach file to journal failed (${res.status}): ${text.slice(0, 800)}`);
+  }
+  return true;
+}

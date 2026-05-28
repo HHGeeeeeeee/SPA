@@ -3,7 +3,7 @@ import 'server-only';
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession } from '@/lib/auth';
 import { readAcuSessionCookie } from '@/lib/session';
-import { pushGLEntry, type GLLine } from '@/lib/acumatica';
+import { pushGLEntry, attachFileToJournal, type GLLine } from '@/lib/acumatica';
 
 export const acumaticaConfigured = (): boolean => !!process.env.ACUMATICA_BASE_URL;
 
@@ -27,6 +27,11 @@ interface PostToErpArgs {
   /** Extra columns to set on the row alongside the success transition
    *  (e.g. paid_cents / outstanding_cents on a settle). */
   extraOnSuccess?: Record<string, unknown>;
+  /** Storage path of a proof file to attach to the posted GL entry (best
+   *  effort — the journal is already posted if this fails). Defaults to the
+   *  `ar-proofs` bucket; override with proofBucket. */
+  proofPath?: string;
+  proofBucket?: string;
 }
 
 export type PostToErpResult =
@@ -98,6 +103,35 @@ export async function postToErp(args: PostToErpArgs): Promise<PostToErpResult> {
         .update({ status: 'success', batch_nbr: res.batchNbr, erp_response: res.raw as never })
         .eq('id', log.id);
     }
+
+    // Attach the proof (remittance slip / cash photo) to the posted journal.
+    // Best effort: the GL post already succeeded; an attach failure leaves the
+    // journal correct + the file still on our side, just not on the ERP entry.
+    if (args.proofPath && res.batchNbr) {
+      try {
+        const bucket = args.proofBucket ?? 'ar-proofs';
+        const dl = await supabase.storage.from(bucket).download(args.proofPath);
+        if (dl.data) {
+          const buf = await dl.data.arrayBuffer();
+          const filename = args.proofPath.split('/').pop() ?? 'proof';
+          await attachFileToJournal(
+            { batchNbr: res.batchNbr, filename, fileBuffer: buf, mimeType: dl.data.type || 'application/octet-stream' },
+            cookie,
+          );
+        }
+      } catch (attachErr) {
+        // We keep the original on our side; surface in the log row for Retry.
+        const msg = attachErr instanceof Error ? attachErr.message : String(attachErr);
+        console.error('[ERP attach] proof attach failed:', msg);
+        if (log) {
+          await supabase
+            .from('erp_posting_log')
+            .update({ error_message: `Posted (batch ${res.batchNbr}) but proof attach failed: ${msg}` })
+            .eq('id', log.id);
+        }
+      }
+    }
+
     return { ok: true, batchNbr: res.batchNbr };
   } catch (e) {
     const error = e instanceof Error ? e.message : 'ERP posting failed';

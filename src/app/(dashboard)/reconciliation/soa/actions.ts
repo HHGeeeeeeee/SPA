@@ -595,6 +595,8 @@ export async function recordSoaPayment(input: unknown): Promise<ActionResult> {
         { account: tx.debit_account, sub_account: tx.debit_subaccount ?? '000000000', debit_amount: amount, credit_amount: null, transaction_desc: `${tag} ${methodCode} receipt`.trim() },
         { account: tx.credit_account, sub_account: tx.credit_subaccount ?? '000000000', debit_amount: null, credit_amount: amount, transaction_desc: `${tag} AR settle`.trim() },
       ],
+      // Attach the proof (remittance slip / cash photo) to the journal on success.
+      proofPath: proof_file_path || undefined,
     });
   }
 
@@ -623,6 +625,42 @@ export async function uploadArProof(formData: FormData): Promise<ActionResult<{ 
     .upload(path, buf, { contentType: file.type || 'application/octet-stream', upsert: false });
   if (error) return { ok: false, error: error.message };
   return { ok: true, data: { path } };
+}
+
+export interface SoaPaymentRow {
+  id: string;
+  amount_cents: number;
+  paid_at: string;
+  payment_method: string | null;
+  reference_no: string | null;
+  posting_status: string | null;
+  gl_batch_nbr: string | null;
+  posting_error: string | null;
+  proof_file_path: string | null;
+}
+
+/** Payments recorded against a SOA, most recent first. Carries the per-payment
+ *  GL batch / posting status + the proof attachment path. */
+export async function loadSoaPayments(soa_id: string): Promise<SoaPaymentRow[]> {
+  const supabase = await createAuditedClient();
+  const { data: soa } = await supabase.from('revenue_soa').select('branch_id').eq('id', soa_id).maybeSingle();
+  if (!soa?.branch_id || !(await canAccessBranch(soa.branch_id))) return [];
+  // The new posting / proof columns aren't in the generated DB types yet — cast.
+  const sb = supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (k: string, v: string) => {
+          order: (k: string, o?: { ascending: boolean }) => Promise<{ data: SoaPaymentRow[] | null; error: unknown }>;
+        };
+      };
+    };
+  };
+  const r = await sb
+    .from('revenue_soa_payments')
+    .select('id, amount_cents, paid_at, payment_method, reference_no, posting_status, gl_batch_nbr, posting_error, proof_file_path')
+    .eq('soa_id', soa_id)
+    .order('paid_at', { ascending: false });
+  return r.data ?? [];
 }
 
 /** Short-lived signed URL to view a stored AR proof (bucket is private). */

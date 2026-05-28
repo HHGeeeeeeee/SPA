@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronDown, Download, HandCoins } from 'lucide-react';
+import { Check, ChevronRight, ChevronDown, Download, HandCoins, RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { loadOpenTipGroups, settleTips, voidTipSettlement, type TipGroup } from '@/app/(dashboard)/reconciliation/tips/actions';
+import { loadOpenTipGroups, settleTips, voidTipSettlement, retryTipPosting, type TipGroup } from '@/app/(dashboard)/reconciliation/tips/actions';
 
 function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -45,6 +45,9 @@ export interface TipHistoryRow {
   posted_at: string | null;
   therapists: string[];
   lines: { therapist: string; service_date: string; order_no: string; amount_cents: number }[];
+  posting_status: string | null;
+  gl_batch_nbr: string | null;
+  posting_error: string | null;
 }
 
 export function TipSettlementWorkspace({
@@ -125,6 +128,14 @@ export function TipSettlementWorkspace({
       const r = await voidTipSettlement(id);
       if (r.ok) { toast.success('Settlement voided'); router.refresh(); }
       else toast.error(r.error);
+    });
+  }
+
+  function doRetry(id: string) {
+    startGen(async () => {
+      const r = await retryTipPosting(id);
+      if (r.ok) { toast.success('Retried — posted to ERP'); router.refresh(); }
+      else { toast.error(r.error); router.refresh(); }
     });
   }
 
@@ -265,6 +276,7 @@ export function TipSettlementWorkspace({
                 <TableHead className="w-40 font-bold">Settle Date</TableHead>
                 <TableHead className="w-32 font-bold text-right">Total</TableHead>
                 <TableHead className="w-24 font-bold pl-6">Status</TableHead>
+                <TableHead className="w-44 font-bold">ERP</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
@@ -281,6 +293,24 @@ export function TipSettlementWorkspace({
                       <TableCell className="font-medium tabular">{s.posted_at ? fmtDateTime(s.posted_at) : '—'}</TableCell>
                       <TableCell className="font-bold tabular text-right">{peso(s.subtotal_cents)}</TableCell>
                       <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status}</Badge></TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {s.gl_batch_nbr ? (
+                          <span className="inline-flex items-center gap-1 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">
+                            <Check className="size-3" /> Bill #{s.gl_batch_nbr}
+                          </span>
+                        ) : s.posting_status === 'failed' ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span title={s.posting_error ?? 'AP posting failed'} className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-bold text-destructive">
+                              <TriangleAlert className="size-3" /> Failed
+                            </span>
+                            <Button size="sm" variant="ghost" onClick={() => doRetry(s.id)} disabled={pending} className="h-7 gap-1 px-2 text-xs">
+                              <RotateCcw className="size-3" /> Retry
+                            </Button>
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end items-center gap-1">
                           <a
@@ -300,7 +330,7 @@ export function TipSettlementWorkspace({
                     </TableRow>
                     {isOpen && (
                       <TableRow>
-                        <TableCell colSpan={8} className="bg-muted/20 p-0">
+                        <TableCell colSpan={9} className="bg-muted/20 p-0">
                           {/* Amount + trailing spacers mirror the parent's Total
                               (w-32) + Status (w-24) + Actions (w-20). */}
                           <Table className="table-fixed">

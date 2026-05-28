@@ -34,16 +34,31 @@ export default async function TipSettlementPage({ searchParams }: { searchParams
       .select('id, settlement_no, status, period_from, period_to, subtotal_cents, posted_at, branch:branches!tip_settlements_branch_id_fkey ( code ), tips ( amount_cents, therapist:employees!tips_therapist_id_fkey ( name ), order:orders!tips_order_id_fkey ( order_no, service_date ) )')
       .order('created_at', { ascending: false }),
   ]);
+  // ERP posting columns aren't in the generated types yet — fetch in a tolerant
+  // cast query and merge in (same pattern as the order detail page's `erp`).
+  const ids = (histRes.data ?? []).map((s) => s.id);
+  const sbCast = supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { in: (k: string, v: string[]) => Promise<{ data: { id: string; posting_status: string | null; gl_batch_nbr: string | null; posting_error: string | null }[] | null; error: unknown }> } };
+  };
+  const erpRes = ids.length > 0
+    ? await sbCast.from('tip_settlements').select('id, posting_status, gl_batch_nbr, posting_error').in('id', ids)
+    : { data: null, error: null };
+  const erpById = new Map((erpRes.data ?? []).map((e) => [e.id, e]));
+
   const history: TipHistoryRow[] = (histRes.data ?? []).map((s) => {
     const lines = (s.tips ?? [])
       .map((t) => ({ therapist: one(t.therapist)?.name ?? '—', service_date: one(t.order)?.service_date ?? '', order_no: one(t.order)?.order_no ?? '—', amount_cents: t.amount_cents }))
       .sort((a, b) => (a.service_date < b.service_date ? 1 : -1));
+    const erp = erpById.get(s.id);
     return {
       id: s.id, settlement_no: s.settlement_no, status: s.status,
       period_from: s.period_from, period_to: s.period_to, subtotal_cents: s.subtotal_cents,
       posted_at: s.posted_at, branch_code: one(s.branch)?.code ?? null,
       therapists: [...new Set(lines.map((l) => l.therapist))],
       lines,
+      posting_status: erp?.posting_status ?? null,
+      gl_batch_nbr: erp?.gl_batch_nbr ?? null,
+      posting_error: erp?.posting_error ?? null,
     };
   });
 

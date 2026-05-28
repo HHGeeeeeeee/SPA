@@ -6,8 +6,67 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
-import { postBillToErp } from '@/lib/erp-posting';
+import { postBillToErp, type PostToErpResult } from '@/lib/erp-posting';
 import { renderTipPdf } from '@/lib/tip-pdf';
+
+/** Compose the AP Bill (DR 20500 / sub 000000000, one line per therapist) and
+ *  post via postBillToErp + attach the stored PDF. Shared by settleTips (first
+ *  attempt) and retryTipPosting. Returns the posting result. */
+async function postTipSettlementToErp(settlementId: string): Promise<PostToErpResult> {
+  const supabase = await createAuditedClient();
+  const { data: s } = await supabase
+    .from('tip_settlements')
+    .select('settlement_no, branch_id, period_from, period_to, branch:branches!tip_settlements_branch_id_fkey ( code )')
+    .eq('id', settlementId)
+    .single();
+  if (!s) return { ok: false, error: 'Settlement not found' };
+
+  // pdf_file_path isn't in generated types yet — cast read.
+  const pdfRes = await (supabase.from('tip_settlements') as unknown as {
+    select: (c: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: { pdf_file_path: string | null } | null }> } };
+  })
+    .select('pdf_file_path')
+    .eq('id', settlementId)
+    .maybeSingle();
+  const pdfPath = pdfRes.data?.pdf_file_path ?? null;
+
+  const { data: tipRows } = await supabase
+    .from('tips')
+    .select('amount_cents, therapist:employees!tips_therapist_id_fkey ( id, name )')
+    .eq('settlement_id', settlementId);
+  const byTherapist = new Map<string, { name: string; total: number }>();
+  for (const t of tipRows ?? []) {
+    const th = one(t.therapist);
+    if (!th) continue;
+    const g = byTherapist.get(th.id) ?? { name: th.name ?? '—', total: 0 };
+    g.total += t.amount_cents;
+    byTherapist.set(th.id, g);
+  }
+  const apLines = [...byTherapist.values()].map((g) => ({
+    account: '20500',
+    sub_account: '000000000',
+    quantity: 1,
+    unit_cost: g.total / 100,
+    amount: g.total / 100,
+    transaction_desc: `Tips · ${g.name}`,
+  }));
+
+  return await postBillToErp({
+    entityType: 'tip_settlement',
+    table: 'tip_settlements',
+    entityId: settlementId,
+    vendor: process.env.ACUMATICA_TIPS_VENDOR ?? '',
+    vendorRef: s.settlement_no,
+    date: new Date().toISOString().slice(0, 10),
+    description: `Tip settlement ${s.settlement_no} (${s.period_from} to ${s.period_to})`,
+    financialBranch: one<{ code: string }>(s.branch)?.code ?? '',
+    cashAccount: process.env.ACUMATICA_TIPS_CASH_ACCOUNT ?? '',
+    currency: 'PHP',
+    lines: apLines,
+    proofPath: pdfPath ?? undefined,
+    proofBucket: 'tip-pdfs',
+  });
+}
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -114,43 +173,42 @@ export async function settleTips(input: unknown): Promise<ActionResult<{ id: str
   }
 
   // AP Bill: DR 20500 Tips Payable (per therapist) / CR 20100 AP (Acumatica
-  // auto). One line per therapist so payroll downstream can split cleanly.
-  // Vendor + cash account come from env (set at Acumatica integration time);
-  // postBillToErp is a no-op until ACUMATICA_BASE_URL is configured.
-  const byTherapist = new Map<string, { name: string; total: number }>();
-  for (const t of valid) {
-    const th = one(t.therapist);
-    if (!th) continue;
-    const g = byTherapist.get(th.id) ?? { name: th.name ?? '—', total: 0 };
-    g.total += t.amount_cents;
-    byTherapist.set(th.id, g);
-  }
-  const apLines = [...byTherapist.values()].map((g) => ({
-    account: '20500', // Tips Payable — matches OSP2-SETTLE-TIP-TO-AP
-    sub_account: '000000000',
-    quantity: 1,
-    unit_cost: g.total / 100,
-    amount: g.total / 100,
-    transaction_desc: `Tips · ${g.name}`,
-  }));
-  await postBillToErp({
-    entityType: 'tip_settlement',
-    table: 'tip_settlements',
-    entityId: settlement.id,
-    vendor: process.env.ACUMATICA_TIPS_VENDOR ?? '',
-    vendorRef: settlement_no,
-    date: new Date().toISOString().slice(0, 10),
-    description: `Tip settlement ${settlement_no} (${period_from} to ${period_to})`,
-    financialBranch: branch?.code ?? '',
-    cashAccount: process.env.ACUMATICA_TIPS_CASH_ACCOUNT ?? '',
-    currency: 'PHP',
-    lines: apLines,
-    proofPath: pdfPath ?? undefined,
-    proofBucket: 'tip-pdfs',
-  });
+  // auto). The helper queries tips + therapists, builds lines, posts and
+  // attaches the PDF — same path as Retry, so they can't drift.
+  await postTipSettlementToErp(settlement.id);
 
   revalidatePath('/reconciliation/tips');
   return { ok: true, data: { id: settlement.id, count: valid.length } };
+}
+
+/** Re-attempt the AP Bill push for a settlement whose previous post failed.
+ *  Manager-gated; refuses if already posted. Re-uses the shared helper, so the
+ *  retry path runs exactly the same compose-and-post (lines + PDF attach). */
+export async function retryTipPosting(settlementId: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const supabase = await createAuditedClient();
+  const { data: s } = await supabase
+    .from('tip_settlements')
+    .select('branch_id')
+    .eq('id', settlementId)
+    .maybeSingle();
+  if (!s) return { ok: false, error: 'Settlement not found' };
+  if (!s.branch_id || !(await canAccessBranch(s.branch_id))) return { ok: false, error: 'No access to this branch' };
+
+  // posting_status isn't in generated types yet — cast read.
+  const sb = supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: { posting_status: string | null } | null }> } };
+    };
+  };
+  const pr = await sb.from('tip_settlements').select('posting_status').eq('id', settlementId).maybeSingle();
+  if (pr.data?.posting_status === 'posted') return { ok: false, error: 'Already posted to ERP' };
+
+  const r = await postTipSettlementToErp(settlementId);
+  revalidatePath('/reconciliation/tips');
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true };
 }
 
 export async function voidTipSettlement(id: string): Promise<ActionResult> {

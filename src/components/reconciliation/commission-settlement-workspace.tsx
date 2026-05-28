@@ -1,10 +1,10 @@
 'use client';
 
-import { Fragment, useEffect, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronDown, Percent } from 'lucide-react';
+import { ChevronRight, ChevronDown, Download, Percent } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +49,13 @@ function fmtDateTime(iso: string): string {
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   draft: 'secondary', closed: 'default', void: 'destructive',
 };
+
+const HIST_STATUS_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'void', label: 'Void' },
+];
 
 interface Branch { id: string; code: string; name: string }
 export interface CommHistoryRow {
@@ -88,6 +102,12 @@ export function CommissionSettlementWorkspace({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [histExpanded, setHistExpanded] = useState<Set<string>>(new Set());
+  // History filter (date overlap + status) and selection-for-PDF state.
+  // Mirrors the SOA / Tip history pattern.
+  const [histFrom, setHistFrom] = useState('');
+  const [histTo, setHistTo] = useState('');
+  const [histStatus, setHistStatus] = useState('all');
+  const [histSel, setHistSel] = useState<Set<string>>(new Set());
   const [voidConfirmId, setVoidConfirmId] = useState<string | null>(null);
   const [loading, startLoad] = useTransition();
   const [pending, startGen] = useTransition();
@@ -146,6 +166,35 @@ export function CommissionSettlementWorkspace({
 
   const grandComm = groups.reduce((s, g) => s + g.commission_cents, 0);
   const grandSessions = groups.reduce((s, g) => s + g.sessions, 0);
+
+  const filteredHistory = useMemo(
+    () =>
+      history.filter((p) => {
+        if (histFrom && p.period_to < histFrom) return false;
+        if (histTo && p.period_from > histTo) return false;
+        if (histStatus !== 'all' && p.status !== histStatus) return false;
+        return true;
+      }),
+    [history, histFrom, histTo, histStatus],
+  );
+  // Void periods are shown for audit but not selectable for PDF.
+  const selectable = filteredHistory.filter((p) => p.status !== 'void');
+  const allHistSelected = selectable.length > 0 && selectable.every((p) => histSel.has(p.id));
+  function toggleHistSel(id: string) {
+    setHistSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAllHist() {
+    setHistSel((prev) => {
+      const n = new Set(prev);
+      if (allHistSelected) for (const p of selectable) n.delete(p.id);
+      else for (const p of selectable) n.add(p.id);
+      return n;
+    });
+  }
+  // 1 selected → that period's PDF; many → a ZIP of separate PDFs.
+  const pdfHref = histSel.size === 1
+    ? `/reconciliation/commission/${[...histSel][0]}/pdf`
+    : `/reconciliation/commission/pdf-zip?ids=${[...histSel].join(',')}`;
 
   return (
     <div className="flex flex-col gap-6">
@@ -269,123 +318,193 @@ export function CommissionSettlementWorkspace({
             </div>
           )}
         </>
-      ) : history.length === 0 ? (
-        <Card className="border-dashed bg-muted/30">
-          <CardContent className="py-10 text-center">
-            <Percent className="size-8 mx-auto text-muted-foreground/50" />
-            <p className="text-sm font-semibold text-muted-foreground mt-3">No commission periods yet.</p>
-          </CardContent>
-        </Card>
       ) : (
-        <Card className="p-0 overflow-hidden">
-          {/* table-fixed: column widths are exact, so the nested detail (same
-              fixed right-side widths) lines its Commission up under this one. */}
-          <Table className="table-fixed">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8" />
-                <TableHead className="font-bold">Settlement No</TableHead>
-                <TableHead className="w-16 font-bold">Branch</TableHead>
-                <TableHead className="font-bold pl-6">Period</TableHead>
-                <TableHead className="w-40 font-bold">Settle Date</TableHead>
-                <TableHead className="w-20 font-bold text-right">Sessions</TableHead>
-                <TableHead className="w-32 font-bold text-right">Commission</TableHead>
-                <TableHead className="w-24 font-bold pl-6">Status</TableHead>
-                <TableHead className="w-20" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.map((p) => {
-                const isOpen = histExpanded.has(p.id);
-                return (
-                  <Fragment key={p.id}>
-                    <TableRow className="cursor-pointer" onClick={() => setHistExpanded((prev) => { const n = new Set(prev); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; })}>
-                      <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</TableCell>
-                      <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
-                      <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
-                      <TableCell className="font-medium tabular text-muted-foreground pl-6">{p.period_from} → {p.period_to}</TableCell>
-                      <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
-                      <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
-                      <TableCell className="font-bold tabular text-right">{peso(p.total_commission_cents)}</TableCell>
-                      <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[p.status] ?? 'secondary'} className="font-bold capitalize">{p.status}</Badge></TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-end">
-                          {p.status === 'closed' && (
-                            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setVoidConfirmId(p.id)} disabled={pending}>Void</Button>
-                          )}
-                        </div>
-                      </TableCell>
+        <div className="flex flex-col gap-3">
+          {/* Filter row — narrow by period (overlap) + status. */}
+          <Card className="p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Date From</Label>
+                <Input type="date" value={histFrom} onChange={(e) => setHistFrom(e.target.value)} className="w-40" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Date To</Label>
+                <Input type="date" value={histTo} onChange={(e) => setHistTo(e.target.value)} className="w-40" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Status</Label>
+                <Select items={HIST_STATUS_OPTIONS} value={histStatus} onValueChange={(v) => v && setHistStatus(v)}>
+                  <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {HIST_STATUS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {(histFrom || histTo || histStatus !== 'all') && (
+                <button type="button" onClick={() => { setHistFrom(''); setHistTo(''); setHistStatus('all'); }} className="self-end mb-2 text-xs font-semibold text-primary hover:underline">
+                  Clear filters
+                </button>
+              )}
+              <span className="ml-auto self-end mb-2 text-xs font-semibold text-muted-foreground">
+                {filteredHistory.length} of {history.length}
+              </span>
+            </div>
+          </Card>
+
+          {history.length === 0 ? (
+            <Card className="border-dashed bg-muted/30">
+              <CardContent className="py-10 text-center">
+                <Percent className="size-8 mx-auto text-muted-foreground/50" />
+                <p className="text-sm font-semibold text-muted-foreground mt-3">No commission periods yet.</p>
+              </CardContent>
+            </Card>
+          ) : filteredHistory.length === 0 ? (
+            <Card className="border-dashed bg-muted/30">
+              <CardContent className="py-10 text-center">
+                <Percent className="size-8 mx-auto text-muted-foreground/50" />
+                <p className="text-sm font-semibold text-muted-foreground mt-3">No periods match the filters.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Select-all + bulk PDF (1 → PDF, many → ZIP). Void periods excluded. */}
+              <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allHistSelected} onChange={toggleAllHist} />
+                  <span className="text-sm font-bold">Select all ({selectable.length})</span>
+                  <span className="text-xs font-medium text-muted-foreground">— pick settlements to download as PDF / ZIP</span>
+                </label>
+                {histSel.size > 0 && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold">{histSel.size} selected</span>
+                    <a
+                      href={pdfHref}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-bold text-primary-foreground hover:bg-primary/90"
+                    >
+                      <Download className="size-4" /> Download PDF ({histSel.size})
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              <Card className="p-0 overflow-hidden">
+                {/* table-fixed: column widths are exact, so the nested detail (same
+                    fixed right-side widths) lines its Commission up under this one. */}
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8" />
+                      <TableHead className="w-8" />
+                      <TableHead className="font-bold">Settlement No</TableHead>
+                      <TableHead className="w-16 font-bold">Branch</TableHead>
+                      <TableHead className="font-bold pl-6">Period</TableHead>
+                      <TableHead className="w-40 font-bold">Settle Date</TableHead>
+                      <TableHead className="w-20 font-bold text-right">Sessions</TableHead>
+                      <TableHead className="w-32 font-bold text-right">Commission</TableHead>
+                      <TableHead className="w-24 font-bold pl-6">Status</TableHead>
+                      <TableHead className="w-20" />
                     </TableRow>
-                    {isOpen && (
-                      <TableRow>
-                        <TableCell colSpan={9} className="bg-muted/20 p-0">
-                          {/* Mirrors the parent's right-side widths (Commission w-32,
-                              then w-24 + w-20) so amounts align across both tables. */}
-                          <Table className="table-fixed">
-                            <colgroup>
-                              <col className="w-32" />
-                              <col className="w-48" />
-                              <col />
-                              <col className="w-28" />
-                              <col className="w-16" />
-                              <col className="w-32" />
-                              <col className="w-24" />
-                              <col className="w-20" />
-                            </colgroup>
-                            <TableBody>
-                              {p.detail.map((g) => {
-                                const initials = g.therapist.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-                                return (
-                                <Fragment key={g.therapist}>
-                                  <TableRow className="border-t-2 border-primary/20 bg-primary/[0.07] hover:bg-primary/[0.07]">
-                                    <TableCell colSpan={5} className="py-2.5 pl-6">
-                                      <span className="mr-2 inline-flex size-6 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary align-middle">{initials}</span>
-                                      <span className="align-middle text-sm font-extrabold text-primary">{g.therapist}</span>
-                                      <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">{g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</span>
-                                    </TableCell>
-                                    <TableCell className="py-2.5 font-extrabold tabular text-right text-primary">{peso(g.commission_cents)}</TableCell>
-                                    <TableCell className="w-24" />
-                                    <TableCell className="w-20" />
-                                  </TableRow>
-                                  <TableRow className="border-b border-border">
-                                    <TableCell className="w-32 pl-12 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Date</TableCell>
-                                    <TableCell className="w-44 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
-                                    <TableCell className="pl-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Service</TableCell>
-                                    <TableCell className="w-28 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Gross</TableCell>
-                                    <TableCell className="w-16 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Rate</TableCell>
-                                    <TableCell className="w-32 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Commission</TableCell>
-                                    <TableCell className="w-24" />
-                                    <TableCell className="w-20" />
-                                  </TableRow>
-                                  {g.lines.map((l, i) => (
-                                    <TableRow key={`${g.therapist}-${i}`}>
-                                      <TableCell className="font-medium tabular text-muted-foreground pl-12">{l.service_date}</TableCell>
-                                      <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
-                                      <TableCell className="font-medium pl-4">
-                                        {l.service}
-                                        {l.warmup && <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">warm-up</span>}
-                                      </TableCell>
-                                      <TableCell className="tabular text-right text-muted-foreground">{peso(l.gross_cents)}</TableCell>
-                                      <TableCell className="tabular text-right text-muted-foreground">{(l.rate * 100).toFixed(0)}%</TableCell>
-                                      <TableCell className="font-bold tabular text-right">{peso(l.commission_cents)}</TableCell>
-                                      <TableCell className="w-24" />
-                                      <TableCell className="w-20" />
-                                    </TableRow>
-                                  ))}
-                                </Fragment>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredHistory.map((p) => {
+                      const isOpen = histExpanded.has(p.id);
+                      return (
+                        <Fragment key={p.id}>
+                          <TableRow className={cn('cursor-pointer', histSel.has(p.id) && 'bg-primary/5')} onClick={() => setHistExpanded((prev) => { const n = new Set(prev); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; })}>
+                            <TableCell className="text-muted-foreground pr-0">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</TableCell>
+                            <TableCell className="pr-0" onClick={(e) => e.stopPropagation()}>
+                              {p.status !== 'void' && (
+                                <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(p.id)} onChange={() => toggleHistSel(p.id)} />
+                              )}
+                            </TableCell>
+                            <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
+                            <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
+                            <TableCell className="font-medium tabular text-muted-foreground pl-6">{p.period_from} → {p.period_to}</TableCell>
+                            <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
+                            <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
+                            <TableCell className="font-bold tabular text-right">{peso(p.total_commission_cents)}</TableCell>
+                            <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[p.status] ?? 'secondary'} className="font-bold capitalize">{p.status}</Badge></TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <div className="flex justify-end">
+                                {p.status === 'closed' && (
+                                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setVoidConfirmId(p.id)} disabled={pending}>Void</Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {isOpen && (
+                            <TableRow>
+                              <TableCell colSpan={10} className="bg-muted/20 p-0">
+                                {/* Mirrors the parent's right-side widths (Commission w-32,
+                                    then w-24 + w-20) so amounts align across both tables. */}
+                                <Table className="table-fixed">
+                                  <colgroup>
+                                    <col className="w-32" />
+                                    <col className="w-48" />
+                                    <col />
+                                    <col className="w-28" />
+                                    <col className="w-16" />
+                                    <col className="w-32" />
+                                    <col className="w-24" />
+                                    <col className="w-20" />
+                                  </colgroup>
+                                  <TableBody>
+                                    {p.detail.map((g) => {
+                                      const initials = g.therapist.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+                                      return (
+                                      <Fragment key={g.therapist}>
+                                        <TableRow className="border-t-2 border-primary/20 bg-primary/[0.07] hover:bg-primary/[0.07]">
+                                          <TableCell colSpan={5} className="py-2.5 pl-6">
+                                            <span className="mr-2 inline-flex size-6 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary align-middle">{initials}</span>
+                                            <span className="align-middle text-sm font-extrabold text-primary">{g.therapist}</span>
+                                            <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">{g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</span>
+                                          </TableCell>
+                                          <TableCell className="py-2.5 font-extrabold tabular text-right text-primary">{peso(g.commission_cents)}</TableCell>
+                                          <TableCell className="w-24" />
+                                          <TableCell className="w-20" />
+                                        </TableRow>
+                                        <TableRow className="border-b border-border">
+                                          <TableCell className="w-32 pl-12 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Date</TableCell>
+                                          <TableCell className="w-44 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
+                                          <TableCell className="pl-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Service</TableCell>
+                                          <TableCell className="w-28 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Gross</TableCell>
+                                          <TableCell className="w-16 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Rate</TableCell>
+                                          <TableCell className="w-32 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Commission</TableCell>
+                                          <TableCell className="w-24" />
+                                          <TableCell className="w-20" />
+                                        </TableRow>
+                                        {g.lines.map((l, i) => (
+                                          <TableRow key={`${g.therapist}-${i}`}>
+                                            <TableCell className="font-medium tabular text-muted-foreground pl-12">{l.service_date}</TableCell>
+                                            <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
+                                            <TableCell className="font-medium pl-4">
+                                              {l.service}
+                                              {l.warmup && <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">warm-up</span>}
+                                            </TableCell>
+                                            <TableCell className="tabular text-right text-muted-foreground">{peso(l.gross_cents)}</TableCell>
+                                            <TableCell className="tabular text-right text-muted-foreground">{(l.rate * 100).toFixed(0)}%</TableCell>
+                                            <TableCell className="font-bold tabular text-right">{peso(l.commission_cents)}</TableCell>
+                                            <TableCell className="w-24" />
+                                            <TableCell className="w-20" />
+                                          </TableRow>
+                                        ))}
+                                      </Fragment>
+                                      );
+                                    })}
+                                  </TableBody>
+                                </Table>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Card>
+            </>
+          )}
+        </div>
       )}
 
       <AlertDialog open={!!voidConfirmId} onOpenChange={(o) => { if (!o) setVoidConfirmId(null); }}>

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -19,6 +19,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +49,15 @@ function fmtDateTime(iso: string): string {
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   draft: 'secondary', posting: 'secondary', closed: 'default', failed: 'destructive', void: 'destructive',
 };
+
+const HIST_STATUS_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'posting', label: 'Posting' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'void', label: 'Void' },
+];
 
 interface Branch { id: string; code: string; name: string }
 export interface TipHistoryRow {
@@ -84,6 +100,14 @@ export function TipSettlementWorkspace({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [histExpanded, setHistExpanded] = useState<Set<string>>(new Set());
+  // History filter (date + status) and selection-for-PDF state. Filter is
+  // overlap on period_from/to so a settlement is in range if its period
+  // intersects the window. Selection always respects the filter — Select all
+  // selects only the currently-visible rows.
+  const [histFrom, setHistFrom] = useState('');
+  const [histTo, setHistTo] = useState('');
+  const [histStatus, setHistStatus] = useState('all');
+  const [histSel, setHistSel] = useState<Set<string>>(new Set());
   const [voidConfirmId, setVoidConfirmId] = useState<string | null>(null);
   const [loading, startLoad] = useTransition();
   const [pending, startGen] = useTransition();
@@ -152,6 +176,36 @@ export function TipSettlementWorkspace({
 
   const grandOpen = groups.reduce((s, g) => s + g.total_cents, 0);
   const grandCount = groups.reduce((s, g) => s + g.count, 0);
+
+  const filteredHistory = useMemo(
+    () =>
+      history.filter((s) => {
+        if (histFrom && s.period_to < histFrom) return false;
+        if (histTo && s.period_from > histTo) return false;
+        if (histStatus !== 'all' && s.status !== histStatus) return false;
+        return true;
+      }),
+    [history, histFrom, histTo, histStatus],
+  );
+  // Void rows have no PDF function (settlement was reversed) — they're shown
+  // for the audit trail but excluded from selection / Select all.
+  const selectable = filteredHistory.filter((s) => s.status !== 'void');
+  const allHistSelected = selectable.length > 0 && selectable.every((s) => histSel.has(s.id));
+  function toggleHistSel(id: string) {
+    setHistSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAllHist() {
+    setHistSel((prev) => {
+      const n = new Set(prev);
+      if (allHistSelected) for (const s of selectable) n.delete(s.id);
+      else for (const s of selectable) n.add(s.id);
+      return n;
+    });
+  }
+  // 1 selected → that settlement's PDF; many → a ZIP of separate PDFs.
+  const pdfHref = histSel.size === 1
+    ? `/reconciliation/tips/${[...histSel][0]}/pdf`
+    : `/reconciliation/tips/pdf-zip?ids=${[...histSel].join(',')}`;
 
   return (
     <div className="flex flex-col gap-6">
@@ -267,125 +321,187 @@ export function TipSettlementWorkspace({
             </div>
           )}
         </>
-      ) : history.length === 0 ? (
-        <Card className="border-dashed bg-muted/30">
-          <CardContent className="py-10 text-center">
-            <HandCoins className="size-8 mx-auto text-muted-foreground/50" />
-            <p className="text-sm font-semibold text-muted-foreground mt-3">No settlements yet.</p>
-          </CardContent>
-        </Card>
       ) : (
-        <Card className="p-0 overflow-hidden">
-          {/* table-fixed: exact widths so the nested detail's Amount lines up
-              under Total (same w-32 + trailing w-24 + w-20). */}
-          <Table className="table-fixed">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8" />
-                <TableHead className="font-bold">Settlement No</TableHead>
-                <TableHead className="w-16 font-bold">Branch</TableHead>
-                <TableHead className="font-bold pl-6">Period</TableHead>
-                <TableHead className="w-40 font-bold">Settle Date</TableHead>
-                <TableHead className="w-32 font-bold text-right">Total</TableHead>
-                <TableHead className="w-24 font-bold pl-6">Status</TableHead>
-                <TableHead className="w-44 font-bold">ERP</TableHead>
-                <TableHead className="w-20" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.map((s) => {
-                const isOpen = histExpanded.has(s.id);
-                return (
-                  <Fragment key={s.id}>
-                    <TableRow className="cursor-pointer" onClick={() => setHistExpanded((p) => { const n = new Set(p); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; })}>
-                      <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</TableCell>
-                      <TableCell className="font-mono font-bold">{s.settlement_no}</TableCell>
-                      <TableCell className="font-mono font-bold">{s.branch_code ?? '—'}</TableCell>
-                      <TableCell className="font-medium tabular text-muted-foreground pl-6">{s.period_from} → {s.period_to}</TableCell>
-                      <TableCell className="font-medium tabular">{s.posted_at ? fmtDateTime(s.posted_at) : '—'}</TableCell>
-                      <TableCell className="font-bold tabular text-right">{peso(s.subtotal_cents)}</TableCell>
-                      <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status}</Badge></TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        {s.gl_batch_nbr ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">
-                            <Check className="size-3" /> Bill #{s.gl_batch_nbr}
-                          </span>
-                        ) : s.posting_status === 'failed' ? (
-                          <span className="inline-flex items-center gap-1">
-                            <span title={s.posting_error ?? 'AP posting failed'} className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-bold text-destructive">
-                              <TriangleAlert className="size-3" /> Failed
-                            </span>
-                            <Button size="sm" variant="ghost" onClick={() => doRetry(s.id)} disabled={pending} className="h-7 gap-1 px-2 text-xs">
-                              <RotateCcw className="size-3" /> Retry
-                            </Button>
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-end items-center gap-1">
-                          <a
-                            href={`/reconciliation/tips/${s.id}/pdf`}
-                            target="_blank"
-                            rel="noopener"
-                            title="Download settlement detail (PDF)"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-bold text-primary hover:underline"
-                          >
-                            <Download className="size-3.5" /> PDF
-                          </a>
-                          {s.status === 'closed' && (
-                            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setVoidConfirmId(s.id)} disabled={pending}>Void</Button>
-                          )}
-                        </div>
-                      </TableCell>
+        <div className="flex flex-col gap-3">
+          {/* Filter row — narrow the list by period (overlap) and status.
+              Mirrors the SOA / Commission history filter. */}
+          <Card className="p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Date From</Label>
+                <Input type="date" value={histFrom} onChange={(e) => setHistFrom(e.target.value)} className="w-40" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Date To</Label>
+                <Input type="date" value={histTo} onChange={(e) => setHistTo(e.target.value)} className="w-40" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Status</Label>
+                <Select items={HIST_STATUS_OPTIONS} value={histStatus} onValueChange={(v) => v && setHistStatus(v)}>
+                  <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {HIST_STATUS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {(histFrom || histTo || histStatus !== 'all') && (
+                <button type="button" onClick={() => { setHistFrom(''); setHistTo(''); setHistStatus('all'); }} className="self-end mb-2 text-xs font-semibold text-primary hover:underline">
+                  Clear filters
+                </button>
+              )}
+              <span className="ml-auto self-end mb-2 text-xs font-semibold text-muted-foreground">
+                {filteredHistory.length} of {history.length}
+              </span>
+            </div>
+          </Card>
+
+          {history.length === 0 ? (
+            <Card className="border-dashed bg-muted/30">
+              <CardContent className="py-10 text-center">
+                <HandCoins className="size-8 mx-auto text-muted-foreground/50" />
+                <p className="text-sm font-semibold text-muted-foreground mt-3">No settlements yet.</p>
+              </CardContent>
+            </Card>
+          ) : filteredHistory.length === 0 ? (
+            <Card className="border-dashed bg-muted/30">
+              <CardContent className="py-10 text-center">
+                <HandCoins className="size-8 mx-auto text-muted-foreground/50" />
+                <p className="text-sm font-semibold text-muted-foreground mt-3">No settlements match the filters.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Select-all + bulk PDF download (single → PDF, many → ZIP). */}
+              <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allHistSelected} onChange={toggleAllHist} />
+                  <span className="text-sm font-bold">Select all ({selectable.length})</span>
+                  <span className="text-xs font-medium text-muted-foreground">— pick settlements to download as PDF / ZIP</span>
+                </label>
+                {histSel.size > 0 && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold">{histSel.size} selected</span>
+                    <a
+                      href={pdfHref}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-bold text-primary-foreground hover:bg-primary/90"
+                    >
+                      <Download className="size-4" /> Download PDF ({histSel.size})
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              <Card className="p-0 overflow-hidden">
+                {/* table-fixed: exact widths so the nested detail's Amount lines up
+                    under Total (same w-32 + trailing w-24 + w-20). */}
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8" />
+                      <TableHead className="w-8" />
+                      <TableHead className="font-bold">Settlement No</TableHead>
+                      <TableHead className="w-16 font-bold">Branch</TableHead>
+                      <TableHead className="font-bold pl-6">Period</TableHead>
+                      <TableHead className="w-40 font-bold">Settle Date</TableHead>
+                      <TableHead className="w-32 font-bold text-right">Total</TableHead>
+                      <TableHead className="w-24 font-bold pl-6">Status</TableHead>
+                      <TableHead className="w-44 font-bold">ERP</TableHead>
+                      <TableHead className="w-20" />
                     </TableRow>
-                    {isOpen && (
-                      <TableRow>
-                        <TableCell colSpan={9} className="bg-muted/20 p-0">
-                          {/* Amount + trailing spacers mirror the parent's Total
-                              (w-32) + Status (w-24) + Actions (w-20). */}
-                          <Table className="table-fixed">
-                            <colgroup>
-                              <col className="w-44" />
-                              <col className="w-32" />
-                              <col />
-                              <col className="w-32" />
-                              <col className="w-24" />
-                              <col className="w-20" />
-                            </colgroup>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="font-bold pl-12">Therapist</TableHead>
-                                <TableHead className="font-bold">Date</TableHead>
-                                <TableHead className="font-bold">Order No</TableHead>
-                                <TableHead className="font-bold text-right">Amount</TableHead>
-                                <TableHead />
-                                <TableHead />
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {s.lines.map((l, i) => (
-                                <TableRow key={`${s.id}-${i}`}>
-                                  <TableCell className="font-medium pl-12">{l.therapist}</TableCell>
-                                  <TableCell className="font-medium tabular text-muted-foreground">{l.service_date}</TableCell>
-                                  <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
-                                  <TableCell className="font-bold tabular text-right">{peso(l.amount_cents)}</TableCell>
-                                  <TableCell className="w-24" />
-                                  <TableCell className="w-20" />
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredHistory.map((s) => {
+                      const isOpen = histExpanded.has(s.id);
+                      return (
+                        <Fragment key={s.id}>
+                          <TableRow className={cn('cursor-pointer', histSel.has(s.id) && 'bg-primary/5')} onClick={() => setHistExpanded((p) => { const n = new Set(p); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; })}>
+                            <TableCell className="text-muted-foreground pr-0">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</TableCell>
+                            <TableCell className="pr-0" onClick={(e) => e.stopPropagation()}>
+                              {s.status !== 'void' && (
+                                <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(s.id)} onChange={() => toggleHistSel(s.id)} />
+                              )}
+                            </TableCell>
+                            <TableCell className="font-mono font-bold">{s.settlement_no}</TableCell>
+                            <TableCell className="font-mono font-bold">{s.branch_code ?? '—'}</TableCell>
+                            <TableCell className="font-medium tabular text-muted-foreground pl-6">{s.period_from} → {s.period_to}</TableCell>
+                            <TableCell className="font-medium tabular">{s.posted_at ? fmtDateTime(s.posted_at) : '—'}</TableCell>
+                            <TableCell className="font-bold tabular text-right">{peso(s.subtotal_cents)}</TableCell>
+                            <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status}</Badge></TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              {s.gl_batch_nbr ? (
+                                <span className="inline-flex items-center gap-1 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">
+                                  <Check className="size-3" /> Bill #{s.gl_batch_nbr}
+                                </span>
+                              ) : s.posting_status === 'failed' ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span title={s.posting_error ?? 'AP posting failed'} className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-bold text-destructive">
+                                    <TriangleAlert className="size-3" /> Failed
+                                  </span>
+                                  <Button size="sm" variant="ghost" onClick={() => doRetry(s.id)} disabled={pending} className="h-7 gap-1 px-2 text-xs">
+                                    <RotateCcw className="size-3" /> Retry
+                                  </Button>
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <div className="flex justify-end items-center gap-1">
+                                {s.status === 'closed' && (
+                                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setVoidConfirmId(s.id)} disabled={pending}>Void</Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {isOpen && (
+                            <TableRow>
+                              <TableCell colSpan={10} className="bg-muted/20 p-0">
+                                {/* Amount + trailing spacers mirror the parent's Total
+                                    (w-32) + Status (w-24) + Actions (w-20). */}
+                                <Table className="table-fixed">
+                                  <colgroup>
+                                    <col className="w-44" />
+                                    <col className="w-32" />
+                                    <col />
+                                    <col className="w-32" />
+                                    <col className="w-24" />
+                                    <col className="w-20" />
+                                  </colgroup>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead className="font-bold pl-12">Therapist</TableHead>
+                                      <TableHead className="font-bold">Date</TableHead>
+                                      <TableHead className="font-bold">Order No</TableHead>
+                                      <TableHead className="font-bold text-right">Amount</TableHead>
+                                      <TableHead />
+                                      <TableHead />
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {s.lines.map((l, i) => (
+                                      <TableRow key={`${s.id}-${i}`}>
+                                        <TableCell className="font-medium pl-12">{l.therapist}</TableCell>
+                                        <TableCell className="font-medium tabular text-muted-foreground">{l.service_date}</TableCell>
+                                        <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
+                                        <TableCell className="font-bold tabular text-right">{peso(l.amount_cents)}</TableCell>
+                                        <TableCell className="w-24" />
+                                        <TableCell className="w-20" />
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Card>
+            </>
+          )}
+        </div>
       )}
 
       <AlertDialog open={!!voidConfirmId} onOpenChange={(o) => { if (!o) setVoidConfirmId(null); }}>

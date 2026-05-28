@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Receipt } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { SERVICE_LABEL, PaymentBadge } from '@/components/sales-orders/order-badges';
+import { SERVICE_LABEL, PaymentBadge, orderPaymentState } from '@/components/sales-orders/order-badges';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,8 +47,22 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = 
   reserved: 'secondary', draft: 'secondary', open: 'default', in_service: 'default',
   completed: 'default', posting: 'secondary', paid: 'default', closed: 'secondary', void: 'destructive',
 };
-const STATUS_OPTIONS = ['draft', 'open', 'in_service', 'completed', 'paid', 'closed', 'void'];
-const TYPE_OPTIONS = ['walk_in', 'reservation', 'package_use', 'stored_value', 'external'];
+// Service / lifecycle axis. `completed` + `paid` both read as "Service done"
+// now, so they collapse into one filter option — payment is filtered separately.
+const SERVICE_OPTIONS: { value: string; label: string; match: (s: string) => boolean }[] = [
+  { value: 'draft', label: 'Draft', match: (s) => s === 'draft' },
+  { value: 'open', label: 'Open', match: (s) => s === 'open' },
+  { value: 'in_service', label: 'In service', match: (s) => s === 'in_service' },
+  { value: 'done', label: 'Service done', match: (s) => s === 'completed' || s === 'paid' },
+  { value: 'closed', label: 'Closed', match: (s) => s === 'closed' },
+  { value: 'void', label: 'Void', match: (s) => s === 'void' },
+];
+// Payment axis. "Owing" (unpaid OR partial) is the one a manager reaches for.
+const PAYMENT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'owing', label: 'Owing' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'ar', label: 'AR' },
+];
 const ALL = '__all__';
 
 function peso(cents: number): string {
@@ -62,31 +76,43 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
   const today = todayPHT();
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
-  const [type, setType] = useState(ALL);
   const [billing, setBilling] = useState(ALL);
-  const [status, setStatus] = useState(ALL);
+  const [service, setService] = useState(ALL);
+  const [payment, setPayment] = useState(ALL);
 
   const filtered = useMemo(
     () =>
       rows.filter((o) => {
         if (from && o.service_date < from) return false;
         if (to && o.service_date > to) return false;
-        if (type !== ALL && o.order_type !== type) return false;
         if (billing !== ALL && o.billing_code !== billing) return false;
-        if (status !== ALL && o.status !== status) return false;
+        if (service !== ALL && !SERVICE_OPTIONS.find((x) => x.value === service)?.match(o.status)) return false;
+        if (payment !== ALL) {
+          const st = orderPaymentState(o);
+          const ok = payment === 'owing' ? st === 'unpaid' || st === 'partial' : st === payment;
+          if (!ok) return false;
+        }
         return true;
       }),
-    [rows, from, to, type, billing, status],
+    [rows, from, to, billing, service, payment],
   );
 
   // Base UI's <SelectValue /> needs an items map to show labels in the trigger
   // (otherwise it prints the raw value, e.g. "__all__").
-  const typeItems = [{ value: ALL, label: 'All' }, ...TYPE_OPTIONS.map((s) => ({ value: s, label: s.replace('_', ' ') }))];
   const billingItems = [{ value: ALL, label: 'All' }, ...billingCodes.map((c) => ({ value: c, label: c }))];
-  const statusItems = [{ value: ALL, label: 'All' }, ...STATUS_OPTIONS.map((s) => ({ value: s, label: s.replace('_', ' ') }))];
+  const serviceItems = [{ value: ALL, label: 'All' }, ...SERVICE_OPTIONS.map((s) => ({ value: s.value, label: s.label }))];
+  const paymentItems = [{ value: ALL, label: 'All' }, ...PAYMENT_OPTIONS.map((s) => ({ value: s.value, label: s.label }))];
 
   const moneyCell = (cents: number, cls = '') =>
     cents > 0 ? <span className={cls}>{peso(cents)}</span> : <span className="text-muted-foreground">—</span>;
+  // Uncollected at the counter. Red when service is done but money's still out
+  // (the concern); calmer grey while the order is still in progress; — for AR
+  // (billed monthly) and fully-paid orders.
+  const outstandingCell = (o: OrderRow) => {
+    const due = o.is_ar ? 0 : Math.max(0, o.total_cents - o.paid_cents);
+    if (due === 0) return <span className="text-muted-foreground">—</span>;
+    return <span className={o.status === 'completed' ? 'font-bold text-destructive' : 'font-medium text-muted-foreground'}>{peso(due)}</span>;
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -101,16 +127,6 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Type</Label>
-            <Select items={typeItems} value={type} onValueChange={(v) => v && setType(v)}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All</SelectItem>
-                {TYPE_OPTIONS.map((s) => <SelectItem key={s} value={s} className="capitalize">{s.replace('_', ' ')}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1">
             <Label className="text-xs font-semibold">Billing To</Label>
             <Select items={billingItems} value={billing} onValueChange={(v) => v && setBilling(v)}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -121,12 +137,22 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
             </Select>
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Status</Label>
-            <Select items={statusItems} value={status} onValueChange={(v) => v && setStatus(v)}>
+            <Label className="text-xs font-semibold">Service</Label>
+            <Select items={serviceItems} value={service} onValueChange={(v) => v && setService(v)}>
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All</SelectItem>
-                {STATUS_OPTIONS.map((s) => <SelectItem key={s} value={s} className="capitalize">{s.replace('_', ' ')}</SelectItem>)}
+                {SERVICE_OPTIONS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs font-semibold">Payment</Label>
+            <Select items={paymentItems} value={payment} onValueChange={(v) => v && setPayment(v)}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All</SelectItem>
+                {PAYMENT_OPTIONS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -136,15 +162,31 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
       <Card className="p-0 overflow-hidden">
         <Table>
           <TableHeader>
+            {/* Group header brackets the three payment-method columns as one set. */}
+            <TableRow>
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+              <TableHead colSpan={3} className="text-center text-[11px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/50 border-x border-border">
+                Payments
+              </TableHead>
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+              <TableHead className="bg-transparent" />
+            </TableRow>
             <TableRow>
               <TableHead className="w-56 font-bold">Order No</TableHead>
               <TableHead className="w-20 font-bold">Branch</TableHead>
               <TableHead className="w-24 font-bold">Billing To</TableHead>
               <TableHead className="w-16 font-bold">PAX</TableHead>
               <TableHead className="w-32 font-bold">Service Date</TableHead>
-              <TableHead className="w-28 font-bold text-center">Cash</TableHead>
-              <TableHead className="w-28 font-bold text-center">Paymaya</TableHead>
-              <TableHead className="w-28 font-bold text-center">AR</TableHead>
+              <TableHead className="w-28 font-bold text-center bg-muted/30 border-l border-border">Cash</TableHead>
+              <TableHead className="w-28 font-bold text-center bg-muted/30">Paymaya</TableHead>
+              <TableHead className="w-28 font-bold text-center bg-muted/30 border-r border-border">AR</TableHead>
+              <TableHead className="w-32 font-bold text-center">Outstanding</TableHead>
               <TableHead className="w-32 font-bold text-center">Total</TableHead>
               <TableHead className="w-24 font-bold text-center">Tips</TableHead>
               <TableHead className="w-36 font-bold text-center">Status</TableHead>
@@ -153,7 +195,7 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-16">
+                <TableCell colSpan={12} className="text-center py-16">
                   <Receipt className="size-8 mx-auto text-muted-foreground/50" />
                   <p className="text-sm font-semibold text-muted-foreground mt-3">No orders match these filters.</p>
                 </TableCell>
@@ -168,9 +210,10 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
                   <TableCell className="font-mono font-bold text-xs">{o.billing_code ?? '—'}</TableCell>
                   <TableCell className="font-bold tabular">{o.pax}</TableCell>
                   <TableCell className="font-medium tabular">{o.service_date}</TableCell>
-                  <TableCell className="font-medium tabular text-right">{moneyCell(o.cash_cents)}</TableCell>
-                  <TableCell className="font-medium tabular text-right">{moneyCell(o.paymaya_cents)}</TableCell>
-                  <TableCell className="font-medium tabular text-right">{moneyCell(o.ar_cents)}</TableCell>
+                  <TableCell className="font-medium tabular text-right bg-muted/20 border-l border-border">{moneyCell(o.cash_cents)}</TableCell>
+                  <TableCell className="font-medium tabular text-right bg-muted/20">{moneyCell(o.paymaya_cents)}</TableCell>
+                  <TableCell className="font-medium tabular text-right bg-muted/20 border-r border-border">{moneyCell(o.ar_cents)}</TableCell>
+                  <TableCell className="tabular text-right">{outstandingCell(o)}</TableCell>
                   <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
                   <TableCell className="font-medium tabular text-right">{moneyCell(o.tip_cents, 'text-primary')}</TableCell>
                   <TableCell>

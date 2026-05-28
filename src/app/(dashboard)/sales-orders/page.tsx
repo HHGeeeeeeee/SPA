@@ -105,7 +105,7 @@ export default async function SalesOrdersPage() {
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Sales Orders</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
-            {rows.length} order{rows.length === 1 ? '' : 's'} · filter by date / type / billing / status
+            {rows.length} order{rows.length === 1 ? '' : 's'} · filter by date / billing / service / payment
           </p>
         </div>
         <NewOrderDialog

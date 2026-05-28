@@ -19,6 +19,17 @@ function peso(cents: number): string {
   return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 }
 
+export type PayState = 'ar' | 'none' | 'paid' | 'partial' | 'unpaid';
+
+// Payment state from amounts alone — the single source of truth shared by the
+// badge and the list's Payment filter. `partial`/`unpaid` both mean "owing".
+export function orderPaymentState(o: { total_cents: number; paid_cents: number; is_ar: boolean }): PayState {
+  if (o.is_ar) return 'ar';
+  if (o.total_cents === 0) return 'none';
+  if (o.paid_cents >= o.total_cents) return 'paid';
+  return o.paid_cents > 0 ? 'partial' : 'unpaid';
+}
+
 const BASE = 'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold whitespace-nowrap';
 
 // Payment axis — derived purely from amounts (no stored field), kept separate
@@ -37,14 +48,15 @@ export function PaymentBadge({
   status: string;
 }) {
   if (status === 'void') return null;
-  if (is_ar) return <span className={`${BASE} bg-muted text-muted-foreground`}>AR · billed</span>;
-  if (total_cents === 0) return <span className={`${BASE} bg-muted text-muted-foreground`}>No charge</span>;
-  if (paid_cents >= total_cents) {
+  const state = orderPaymentState({ total_cents, paid_cents, is_ar });
+  if (state === 'ar') return <span className={`${BASE} bg-muted text-muted-foreground`}>AR · billed</span>;
+  if (state === 'none') return <span className={`${BASE} bg-muted text-muted-foreground`}>No charge</span>;
+  if (state === 'paid') {
     return <span className={`${BASE} bg-primary/15 text-primary`}><Check className="size-3" /> Paid</span>;
   }
 
   const due = total_cents - paid_cents;
-  const partial = paid_cents > 0;
+  const partial = state === 'partial';
   // Service finished but money not (fully) in — the trap. Full payment would have
   // advanced it to Paid, so a completed counter order is by definition owing.
   if (status === 'completed') {

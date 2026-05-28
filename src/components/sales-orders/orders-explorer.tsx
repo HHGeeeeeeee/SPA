@@ -137,7 +137,7 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
             </Select>
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Service</Label>
+            <Label className="text-xs font-semibold">Stage</Label>
             <Select items={serviceItems} value={service} onValueChange={(v) => v && setService(v)}>
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>

@@ -104,7 +104,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                     return n;
                   })}
                 />
-                Select all
+                Select all <span className="font-medium text-muted-foreground/70">— pick to batch settle</span>
               </label>
             )}
             <span className="text-sm font-bold tabular">{peso(subtotal)}</span>

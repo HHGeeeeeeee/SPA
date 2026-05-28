@@ -250,6 +250,7 @@ export function SoaWorkspace({
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allSelected} onChange={toggleAll} />
                   <span className="text-sm font-bold">Select All</span>
+                  <span className="text-xs font-medium text-muted-foreground">— pick billing × branch groups to generate statements</span>
                 </label>
                 {selected.size > 0 && (
                   <div className="flex items-center gap-3">

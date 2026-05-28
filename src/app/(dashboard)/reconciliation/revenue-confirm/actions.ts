@@ -199,15 +199,23 @@ export async function loadConfirmable(branchId: string, date: string): Promise<C
     .filter((o) => o.status === 'paid' || (o.status === 'completed' && o.isAR));
 }
 
-/** Already-confirmed (Closed) orders for a branch — the Revenue Confirm history. */
-export async function loadConfirmedHistory(branchId: string): Promise<ConfirmableOrder[]> {
+/** Already-confirmed (Closed) orders for a branch — the Revenue Confirm history.
+ *  Optional from/to (yyyy-mm-dd, inclusive) narrows by service_date. */
+export async function loadConfirmedHistory(
+  branchId: string,
+  from?: string | null,
+  to?: string | null,
+): Promise<ConfirmableOrder[]> {
   const supabase = await createAuditedClient();
   const arMethod = await supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle();
   const arMethodId = arMethod.data?.id ?? null;
 
-  const { data } = await supabase
+  let q = supabase
     .from('orders').select(ORDER_SELECT)
-    .eq('branch_id', branchId).is('deleted_at', null).eq('status', 'closed')
+    .eq('branch_id', branchId).is('deleted_at', null).eq('status', 'closed');
+  if (from) q = q.gte('service_date', from);
+  if (to) q = q.lte('service_date', to);
+  const { data } = await q
     .order('service_date', { ascending: false })
     .order('order_no', { ascending: false })
     .limit(300);

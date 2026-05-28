@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { ConfirmRevenueButton } from '@/components/reconciliation/confirm-revenue-button';
 import { ReconDatePicker } from '@/components/reconciliation/recon-date-picker';
 import { RevenueConfirmHistory } from '@/components/reconciliation/revenue-confirm-history';
+import { RevenueHistoryFilter } from '@/components/reconciliation/revenue-history-filter';
 import { loadConfirmable, loadConfirmedHistory, isCashClosed, type ConfirmableOrder } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -52,7 +53,7 @@ function OrderRow({ o, showDate }: { o: ConfirmableOrder; showDate?: boolean }) 
 export default async function RevenueConfirmPage({
   searchParams,
 }: {
-  searchParams: Promise<{ branch?: string; date?: string; view?: string }>;
+  searchParams: Promise<{ branch?: string; date?: string; view?: string; hist_from?: string; hist_to?: string }>;
 }) {
   const sp = await searchParams;
   const supabase = createServiceClient();
@@ -61,10 +62,19 @@ export default async function RevenueConfirmPage({
   const branchId = sp.branch && list.some((b) => b.id === sp.branch) ? sp.branch : list[0]?.id;
   const date = sp.date || todayPHT();
   const view = sp.view === 'history' ? 'history' : 'confirm';
+  // History filter — yyyy-mm-dd validated by the filter UI's native date input;
+  // unfiltered = full 300-row history.
+  const histFrom = sp.hist_from && /^\d{4}-\d{2}-\d{2}$/.test(sp.hist_from) ? sp.hist_from : '';
+  const histTo = sp.hist_to && /^\d{4}-\d{2}-\d{2}$/.test(sp.hist_to) ? sp.hist_to : '';
 
   const cashClosed = branchId && view === 'confirm' ? await isCashClosed(branchId, date) : false;
   const orders = branchId && view === 'confirm' ? await loadConfirmable(branchId, date) : [];
-  const history = branchId && view === 'history' ? await loadConfirmedHistory(branchId) : [];
+  const history = branchId && view === 'history' ? await loadConfirmedHistory(branchId, histFrom || null, histTo || null) : [];
+  // Total count (unfiltered) — only fetched when there's an active filter, so
+  // we can show "N of M" without an extra query in the common case.
+  const historyTotal = branchId && view === 'history' && (histFrom || histTo)
+    ? (await loadConfirmedHistory(branchId)).length
+    : null;
   const total = orders.reduce((s, o) => s + o.total_cents, 0);
   const histTotal = history.reduce((s, o) => s + o.total_cents, 0);
   // Column totals for the footer row
@@ -114,6 +124,7 @@ export default async function RevenueConfirmPage({
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">Create a branch first.</Card>
       ) : view === 'history' ? (
         <>
+          <RevenueHistoryFilter from={histFrom} to={histTo} shownCount={history.length} totalCount={historyTotal} />
           <p className="text-sm font-semibold text-muted-foreground -mb-2">
             Confirmed (Closed) · {history.length} order(s) · {peso(histTotal)} · grouped by service date
           </p>

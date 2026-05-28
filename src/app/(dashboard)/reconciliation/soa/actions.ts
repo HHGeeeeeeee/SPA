@@ -439,7 +439,7 @@ export async function settleSOA(id: string): Promise<ActionResult> {
   const supabase = await createAuditedClient();
   const { data: soa } = await supabase
     .from('revenue_soa')
-    .select('soa_no, status, total_cents, settlement_type, branch_id, billing:billing_destinations ( intercompany_account, intercompany_sub ), branch:branches ( code )')
+    .select('soa_no, status, total_cents, settlement_type, branch_id, period_from, period_to, billing:billing_destinations ( intercompany_account, intercompany_sub ), branch:branches ( code )')
     .eq('id', id)
     .single();
   if (!soa) return { ok: false, error: 'SOA not found' };
@@ -452,6 +452,13 @@ export async function settleSOA(id: string): Promise<ActionResult> {
   // CR our AR. Strict posting — postToErp flips issued→settled + writes the
   // voucher number on success, or reverts to issued + notes the error on
   // failure. (No-ops the GL call until Acumatica is configured.)
+  //
+  // GL date = SOA's period_to (last day of the semi-monthly coverage). Same
+  // policy as Revenue Confirm (service_date on each order): the cost transfer
+  // accounting-period must match the period the SOA actually represents, NOT
+  // the day a manager happened to click Settle. Combined with the EoD
+  // discipline guard (≤2-day backdate), Acumatica needs ≥3 days backdate
+  // grace to never hit a closed period.
   const billing = one<{ intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
   const branchCode = one<{ code: string }>(soa.branch)?.code ?? '';
   const amount = soa.total_cents / 100;
@@ -459,7 +466,7 @@ export async function settleSOA(id: string): Promise<ActionResult> {
     entityType: 'soa_settle',
     table: 'revenue_soa',
     entityId: id,
-    date: new Date().toISOString().slice(0, 10),
+    date: soa.period_to,
     branch: branchCode,
     description: `${soa.soa_no} intercompany settle`,
     lines: [

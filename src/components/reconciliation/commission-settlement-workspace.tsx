@@ -474,9 +474,15 @@ export function CommissionSettlementWorkspace({
                                     then w-24 + w-20) so amounts align across both tables.
                                     Mins (w-14) sits between Service and Gross. */}
                                 <Table className="table-fixed">
+                                  {/* Widened Date (w-32 → w-40) and Order No
+                                      (w-48 → w-60) so the SO-OSP2-YYYYMMDD-NNN
+                                      pattern (~150pt) has breathing room and
+                                      the Date / Order / Service triplet stops
+                                      visually clumping together. Right-side
+                                      numeric cols stay (small payloads). */}
                                   <colgroup>
-                                    <col className="w-32" />
-                                    <col className="w-48" />
+                                    <col className="w-40" />
+                                    <col className="w-60" />
                                     <col />
                                     <col className="w-14" />
                                     <col className="w-28" />
@@ -509,8 +515,8 @@ export function CommissionSettlementWorkspace({
                                           <TableCell className="w-20" />
                                         </TableRow>
                                         <TableRow className="border-b border-border">
-                                          <TableCell className="w-32 pl-12 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Date</TableCell>
-                                          <TableCell className="w-44 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
+                                          <TableCell className="w-40 pl-12 pr-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Date</TableCell>
+                                          <TableCell className="w-60 pr-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
                                           <TableCell className="pl-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Service</TableCell>
                                           <TableCell className="w-14 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Mins</TableCell>
                                           <TableCell className="w-28 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Gross</TableCell>
@@ -521,8 +527,8 @@ export function CommissionSettlementWorkspace({
                                         </TableRow>
                                         {g.lines.map((l, i) => (
                                           <TableRow key={`${g.therapist}-${i}`}>
-                                            <TableCell className="font-medium tabular text-muted-foreground pl-12">{l.service_date}</TableCell>
-                                            <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
+                                            <TableCell className="font-medium tabular text-muted-foreground pl-12 pr-4">{l.service_date}</TableCell>
+                                            <TableCell className="font-mono font-bold pr-4">{l.order_no}</TableCell>
                                             <TableCell className="font-medium pl-4">
                                               {l.service}
                                               {l.warmup && <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">warm-up</span>}

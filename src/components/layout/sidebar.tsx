@@ -26,14 +26,13 @@ function groupChildrenBySection(children: NavSubItem[]): { section?: string; ite
   return segments;
 }
 
-// Per-section visual tone. "Daily Close" is the high-attention cluster (run
-// every business day) so it gets the primary tint; everything else falls back
-// to a muted style so multiple sections side-by-side don't all compete for the
-// eye. New section labels can land without changes here — they inherit the
-// neutral fallback automatically.
+// Per-section visual tone. All section borders use the same neutral gray to
+// keep the sidebar quiet; the small uppercase header carries the section's
+// identity (primary text for Daily Close, muted for others) so the urgency
+// hint is still there without the bar competing for attention.
 const SECTION_STYLES: Record<string, { border: string; label: string }> = {
   'Daily Close': {
-    border: 'border-l-2 border-primary/55',
+    border: 'border-l border-sidebar-border',
     label: 'text-primary/80',
   },
 };

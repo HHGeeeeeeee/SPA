@@ -160,18 +160,20 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                               <p className="text-xs font-semibold text-muted-foreground">No open statements.</p>
                             ) : (
                               <Table className="table-fixed">
-                                {/* All columns fixed so table-fixed spreads the slack
-                                    proportionally — the right side (amounts / status /
-                                    actions) gets roomy, even space instead of bunching.
-                                    First column is the row-select checkbox (intercompany
-                                    only); third-party renders the column empty for layout
-                                    alignment. */}
+                                {/* Total / Paid columns inserted between Due and
+                                    Outstanding so the desk sees the whole picture
+                                    on a partial_paid row: original amount, what's
+                                    been collected so far, what's still open.
+                                    Paid = total - outstanding (derived; payment
+                                    detail still expands below). */}
                                 <colgroup>
                                   <col className="w-10" />
                                   <col className="w-64" />
-                                  <col className="w-44" />
+                                  <col className="w-40" />
                                   <col className="w-24" />
-                                  <col className="w-32" />
+                                  <col className="w-28" />
+                                  <col className="w-28" />
+                                  <col className="w-28" />
                                   <col className="w-28" />
                                   <col className="w-32" />
                                 </colgroup>
@@ -181,6 +183,8 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                     <TableHead className="font-bold">SOA No</TableHead>
                                     <TableHead className="font-bold">Period</TableHead>
                                     <TableHead className="font-bold">Due</TableHead>
+                                    <TableHead className="font-bold text-right">Total</TableHead>
+                                    <TableHead className="font-bold text-right">Paid</TableHead>
                                     <TableHead className="font-bold text-right">Outstanding</TableHead>
                                     <TableHead className="font-bold text-center">Status</TableHead>
                                     <TableHead className="pr-4" />
@@ -217,6 +221,8 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                           </Badge>
                                         )}
                                       </TableCell>
+                                      <TableCell className="tabular text-right text-muted-foreground">{peso(s.total_cents)}</TableCell>
+                                      <TableCell className="tabular text-right">{s.total_cents - s.outstanding_cents > 0 ? peso(s.total_cents - s.outstanding_cents) : '—'}</TableCell>
                                       <TableCell className="tabular text-right font-bold">{peso(s.outstanding_cents)}</TableCell>
                                       <TableCell className="text-center"><StatusBadge status={s.status} kind="soa" /></TableCell>
                                       <TableCell className="pr-4">
@@ -227,7 +233,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                     </TableRow>
                                     {openSoa.has(s.id) && (
                                       <TableRow>
-                                        <TableCell colSpan={7} className="bg-muted/20 p-3">
+                                        <TableCell colSpan={9} className="bg-muted/20 p-3">
                                           <SoaPaymentsList soaId={s.id} />
                                         </TableCell>
                                       </TableRow>

@@ -60,8 +60,12 @@ function fmtDateTime(iso: string): string {
 
 // Commission status badge variants + tooltips live in `status-badge.tsx`.
 
+// 'active' = the default lens; hides void since a void was reversed and only
+// matters for audit. 'all' stays available; specific statuses (incl. Void)
+// also selectable for audit pulls.
 const HIST_STATUS_OPTIONS = [
-  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'all', label: 'All (incl. void)' },
   { value: 'draft', label: 'Draft' },
   { value: 'closed', label: 'Closed' },
   { value: 'void', label: 'Void' },
@@ -121,7 +125,7 @@ export function CommissionSettlementWorkspace({
   const defaultMonth = useMemo(() => currentMonthPHT(), []);
   const [histFrom, setHistFrom] = useState(defaultMonth.from);
   const [histTo, setHistTo] = useState(defaultMonth.to);
-  const [histStatus, setHistStatus] = useState('all');
+  const [histStatus, setHistStatus] = useState('active');
   const [histSel, setHistSel] = useState<Set<string>>(new Set());
   const [voidConfirmId, setVoidConfirmId] = useState<string | null>(null);
   const [loading, startLoad] = useTransition();
@@ -187,7 +191,10 @@ export function CommissionSettlementWorkspace({
       history.filter((p) => {
         if (histFrom && p.period_to < histFrom) return false;
         if (histTo && p.period_from > histTo) return false;
-        if (histStatus !== 'all' && p.status !== histStatus) return false;
+        // 'active' hides void by default; 'all' shows it; otherwise the value
+        // is a specific status code (incl. 'void' for audit pulls).
+        if (histStatus === 'active' && p.status === 'void') return false;
+        if (histStatus !== 'active' && histStatus !== 'all' && p.status !== histStatus) return false;
         return true;
       }),
     [history, histFrom, histTo, histStatus],
@@ -372,8 +379,8 @@ export function CommissionSettlementWorkspace({
                   </SelectContent>
                 </Select>
               </div>
-              {(histFrom !== defaultMonth.from || histTo !== defaultMonth.to || histStatus !== 'all') && (
-                <button type="button" onClick={() => { setHistFrom(defaultMonth.from); setHistTo(defaultMonth.to); setHistStatus('all'); }} className="self-end mb-2 text-xs font-semibold text-primary hover:underline">
+              {(histFrom !== defaultMonth.from || histTo !== defaultMonth.to || histStatus !== 'active') && (
+                <button type="button" onClick={() => { setHistFrom(defaultMonth.from); setHistTo(defaultMonth.to); setHistStatus('active'); }} className="self-end mb-2 text-xs font-semibold text-primary hover:underline">
                   Reset to this month
                 </button>
               )}

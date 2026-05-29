@@ -15,6 +15,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -180,6 +181,19 @@ export function SoaWorkspace({
   const pdfHref = histSel.size === 1
     ? `/reconciliation/soa/${[...histSel][0]}/pdf`
     : `/reconciliation/soa/pdf-zip?ids=${[...histSel].join(',')}`;
+
+  // Grand totals across the current filter window (same pattern as Tip /
+  // Commission / Revenue Confirm history footers). Void SOAs are tracked as a
+  // separate count for visibility but excluded from the money sums — a void
+  // statement carries no economic value.
+  const histGrandCount = filteredHistory.filter((s) => s.status !== 'void').length;
+  const histVoidCount = filteredHistory.filter((s) => s.status === 'void').length;
+  const histGrandTotal = filteredHistory
+    .filter((s) => s.status !== 'void')
+    .reduce((sum, s) => sum + s.total_cents, 0);
+  const histGrandOutstanding = filteredHistory
+    .filter((s) => s.status !== 'void')
+    .reduce((sum, s) => sum + s.outstanding_cents, 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -528,6 +542,25 @@ export function SoaWorkspace({
                   );
                 })}
               </TableBody>
+              {/* Grand Totals — sum of non-void SOAs in the current filter
+                  window. Money columns align under their headers (Total /
+                  Status uses the slot to surface a separate "void" count so
+                  the desk sees both numbers without re-filtering). */}
+              <TableFooter>
+                <TableRow className="border-t-2 border-border bg-muted/50 hover:bg-muted/50">
+                  <TableCell colSpan={6} className="font-extrabold uppercase text-xs tracking-wider text-muted-foreground pl-4">
+                    Grand Totals
+                    <span className="ml-3 font-medium normal-case tracking-normal text-muted-foreground/80">
+                      {histGrandCount} statement{histGrandCount === 1 ? '' : 's'}
+                      {histVoidCount > 0 ? ` · ${histVoidCount} void` : ''}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-extrabold tabular text-right pr-2 bg-muted/60">{peso(histGrandTotal)}</TableCell>
+                  <TableCell colSpan={2} className="bg-muted/60 text-right pr-4 text-xs font-bold text-muted-foreground">
+                    {histGrandOutstanding > 0 ? `${peso(histGrandOutstanding)} outstanding` : 'all settled'}
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
         </>

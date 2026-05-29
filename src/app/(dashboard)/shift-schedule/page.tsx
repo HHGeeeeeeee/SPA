@@ -5,8 +5,8 @@ import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cel
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData } from '@/components/shift-schedule/schedule-board';
 import { DispatchBoard } from '@/components/shift-schedule/dispatch-board';
-import { TherapistsNowCard } from '@/components/shift-schedule/therapists-now-card';
-import { BedsNowCard } from '@/components/shift-schedule/beds-now-card';
+import { StaffNowCard } from '@/components/shift-schedule/staff-now-card';
+import { StationsNowCard } from '@/components/shift-schedule/stations-now-card';
 import { BulkShiftDialog } from '@/components/shift-schedule/bulk-shift-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
@@ -462,23 +462,44 @@ interface TherapistNow {
   id: string;
   name: string;
   code: string;
+  // Position code (e.g. MASSAGE_THERAPIST / HAIR_STYLIST). Drives the per-
+  // position grouping inside the Staff card. null = no position assigned.
+  positionCode: string | null;
   shiftType: string;
   free: boolean;
   serviceName: string | null;
   since: string | null;
 }
-interface BedNow {
+interface StationNow {
   id: string;
   name: string;
+  // Station type drives the in-card sub-grouping (massage_bed / hair_chair /
+  // nail_station). Other types we know about (rest_room) are still rolled in
+  // for now — easy to filter out later if the desk wants only billable types.
+  type: string;
   free: boolean;
   occupant: string | null;
 }
+interface StationTypeSummary {
+  type: string;        // raw resource_type, e.g. 'massage_bed'
+  label: string;       // short label for the card subline, e.g. 'bed'
+  free: number;
+  total: number;
+}
+interface PositionSummary {
+  code: string;        // position code, e.g. 'MASSAGE_THERAPIST'
+  label: string;       // short label for the card subline, e.g. 'massage'
+  free: number;
+  onShift: number;
+}
 interface NowAvailability {
-  bedsFree: number;
-  bedsTotal: number;
-  beds: BedNow[];
+  stationsFree: number;
+  stationsTotal: number;
+  stationTypes: StationTypeSummary[];
+  stations: StationNow[];
   therapistsFree: number;
   therapistsOnShift: number;
+  positions: PositionSummary[];
   therapists: TherapistNow[];
   nowMin: number;
 }
@@ -492,9 +513,27 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
   const day = todayISO();
   const nowMin = tsToMin(new Date().toISOString());
 
-  const [bedsRes, shiftRes, itemsRes, resvRes, graceMin] = await Promise.all([
-    supabase.from('resources').select('id, resource_name').eq('branch_id', branchId).eq('resource_type', 'massage_bed').eq('status', 'active').order('resource_name'),
-    supabase.from('employee_shifts').select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )').eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
+  // Bookable station types — what the Stations card sums. Add a new type
+  // here when a new business unit ships (e.g. 'pedicure_chair'). rest_room is
+  // intentionally excluded: it's a paid rest service, not a service station.
+  const STATION_TYPES = ['massage_bed', 'hair_chair', 'nail_station'] as const;
+  // Pretty labels for the per-type subline ("bed 8·8 · hair 1·2 · nail 2·2").
+  const STATION_LABEL: Record<string, string> = {
+    massage_bed: 'bed', hair_chair: 'hair', nail_station: 'nail',
+  };
+  const [stationsRes, shiftRes, itemsRes, resvRes, graceMin] = await Promise.all([
+    supabase
+      .from('resources')
+      .select('id, resource_name, resource_type')
+      .eq('branch_id', branchId)
+      .in('resource_type', STATION_TYPES as unknown as string[])
+      .eq('status', 'active')
+      .order('resource_type')
+      .order('resource_name'),
+    supabase
+      .from('employee_shifts')
+      .select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
+      .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
     supabase
       .from('order_items')
       .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
@@ -507,15 +546,17 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
     getReservationGraceMinutes(),
   ]);
 
-  const bedIds = new Set((bedsRes.data ?? []).map((b) => b.id));
+  const stationRows = stationsRes.data ?? [];
+  const stationIds = new Set(stationRows.map((b) => b.id));
+  const stationTypeById = new Map(stationRows.map((b) => [b.id, b.resource_type]));
   const items = (itemsRes.data ?? []).filter((it) => { const o = one(it.order); return o && o.branch_id === branchId && o.service_date === day && o.status !== 'void' && it.actual_start; });
 
-  // Beds busy this minute: an active service ([prep .. end (+cleanup)]) or a
-  // confirmed, non-overdue pinned reservation whose window covers now.
+  // Stations busy this minute: an active service ([prep .. end (+cleanup)]) or
+  // a confirmed, non-overdue pinned reservation whose window covers now.
   const busyBeds = new Set<string>();
-  const busyBedInfo = new Map<string, string>(); // bed → what's on it (for the expandable list)
+  const busyBedInfo = new Map<string, string>(); // station → what's on it (for the expandable list)
   for (const it of items) {
-    if (!it.resource_id || !bedIds.has(it.resource_id)) continue;
+    if (!it.resource_id || !stationIds.has(it.resource_id)) continue;
     const prep = one(it.service)?.prep_before_minutes ?? 0;
     const cleanup = one(it.service)?.cleanup_after_minutes ?? 0;
     const s0 = tsToMin(it.actual_start!);
@@ -535,19 +576,55 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
     const cleanup = one(r.service)?.cleanup_after_minutes ?? 0;
     const start = tsToMin(r.desired_service_start);
     const occEnd = tsToMin(r.desired_service_end) + cleanup;
-    if (nowMin >= start && nowMin < occEnd) for (const x of r.reservation_resources ?? []) if (bedIds.has(x.resource_id)) { busyBeds.add(x.resource_id); if (!busyBedInfo.has(x.resource_id)) busyBedInfo.set(x.resource_id, r.guest_name ?? 'Reserved'); }
+    if (nowMin >= start && nowMin < occEnd) for (const x of r.reservation_resources ?? []) if (stationIds.has(x.resource_id)) { busyBeds.add(x.resource_id); if (!busyBedInfo.has(x.resource_id)) busyBedInfo.set(x.resource_id, r.guest_name ?? 'Reserved'); }
   }
-  const beds: BedNow[] = (bedsRes.data ?? [])
-    .map((b) => ({ id: b.id, name: b.resource_name, free: !busyBeds.has(b.id), occupant: busyBedInfo.get(b.id) ?? null }))
-    .sort((a, b) => Number(a.free) - Number(b.free) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const stations: StationNow[] = stationRows
+    .map((b) => ({ id: b.id, name: b.resource_name, type: b.resource_type, free: !busyBeds.has(b.id), occupant: busyBedInfo.get(b.id) ?? null }))
+    .sort((a, b) =>
+      // Sort by station type group first (massage_bed before hair_chair before
+      // nail_station), then free-before-busy inside each type, then by name.
+      STATION_TYPES.indexOf(a.type as typeof STATION_TYPES[number]) - STATION_TYPES.indexOf(b.type as typeof STATION_TYPES[number])
+      || Number(a.free) - Number(b.free)
+      || a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
+  // Per-type sub-totals for the card subline. Always include all known types
+  // so the desk sees "0/0" for types that haven't been provisioned yet — that
+  // hint is more useful than silently hiding a future business unit.
+  const stationTypes: StationTypeSummary[] = STATION_TYPES.map((t) => {
+    const rows = stations.filter((s) => s.type === t);
+    return { type: t, label: STATION_LABEL[t] ?? t, total: rows.length, free: rows.filter((r) => r.free).length };
+  });
 
-  // Therapists rostered (timed shift covering now). On-duty = rostered (the
-  // roster is the source of truth — no punch-clock); free = not mid-service.
+  // Service-providing positions only — receptionists / managers are on shift
+  // but never get assigned to service work, so counting them as "free" would
+  // inflate the headline. The prefix check covers MASSAGE_* / HAIR_* / NAIL_*
+  // and any future business-unit additions following the same convention.
+  const isServicePosition = (code: string | null): boolean =>
+    !!code && (code.startsWith('MASSAGE_') || code.startsWith('HAIR_') || code.startsWith('NAIL_'));
+  // Per-position labels for the card subline. Anything not in this map falls
+  // back to the lowercased position code minus the prefix.
+  const POSITION_LABEL: Record<string, string> = {
+    MASSAGE_THERAPIST: 'massage',
+    MASSAGE_NEWBI: 'newbi',
+    HAIR_STYLIST: 'hair',
+    NAIL_TECHNICIAN: 'nail',
+  };
+  const POSITION_ORDER = ['MASSAGE_THERAPIST', 'MASSAGE_NEWBI', 'HAIR_STYLIST', 'NAIL_TECHNICIAN'];
+
+  // Roster snapshot: which employees are covered by a timed shift right now.
+  // No punch-clock — roster = ground truth. Position is captured here so the
+  // Staff card can group counts (and the hover popup later can filter).
   const onShift = new Set<string>();
-  const meta = new Map<string, { name: string; code: string; shiftType: string }>();
+  const meta = new Map<string, { name: string; code: string; shiftType: string; positionCode: string | null }>();
   for (const s of shiftRes.data ?? []) {
     const e = one(s.employees);
-    meta.set(s.employee_id, { name: e?.name ?? '—', code: e?.employee_code ?? '', shiftType: s.shift_type });
+    const position = e ? one(e.position) : null;
+    meta.set(s.employee_id, {
+      name: e?.name ?? '—',
+      code: e?.employee_code ?? '',
+      shiftType: s.shift_type,
+      positionCode: position?.code ?? null,
+    });
     const ss = timeToMin(s.shift_start), se = timeToMin(s.shift_end);
     if (ss != null && se != null && nowMin >= ss && nowMin < se) onShift.add(s.employee_id);
   }
@@ -563,11 +640,47 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
     .map((id) => {
       const m = meta.get(id);
       const b = busyInfo.get(id);
-      return { id, name: m?.name ?? '—', code: m?.code ?? '', shiftType: m?.shiftType ?? 'regular', free: !busyTh.has(id), serviceName: b?.serviceName ?? null, since: b ? hm(b.since) : null };
+      return {
+        id, name: m?.name ?? '—', code: m?.code ?? '',
+        positionCode: m?.positionCode ?? null,
+        shiftType: m?.shiftType ?? 'regular',
+        free: !busyTh.has(id), serviceName: b?.serviceName ?? null, since: b ? hm(b.since) : null,
+      };
     })
+    // Filter out non-service positions from the count (receptionist/manager are
+    // still on shift, just not relevant for "who can take a booking?").
+    .filter((t) => isServicePosition(t.positionCode))
     .sort((a, b) => Number(a.free) - Number(b.free) || a.code.localeCompare(b.code));
 
-  return { bedsFree: Math.max(0, bedIds.size - busyBeds.size), bedsTotal: bedIds.size, beds, therapistsFree: therapists.filter((t) => t.free).length, therapistsOnShift: onShift.size, therapists, nowMin };
+  // Per-position subtotals. Iterates the well-known order first so the card
+  // subline reads "massage 10 · hair 1 · nail 2" in stable order, then any
+  // unrecognised service positions append after.
+  const seenPositions = new Set<string>();
+  const positions: PositionSummary[] = [];
+  for (const code of POSITION_ORDER) {
+    const rows = therapists.filter((t) => t.positionCode === code);
+    if (rows.length === 0) continue;
+    positions.push({ code, label: POSITION_LABEL[code] ?? code.toLowerCase(), onShift: rows.length, free: rows.filter((r) => r.free).length });
+    seenPositions.add(code);
+  }
+  for (const t of therapists) {
+    if (!t.positionCode || seenPositions.has(t.positionCode)) continue;
+    const rows = therapists.filter((x) => x.positionCode === t.positionCode);
+    positions.push({ code: t.positionCode, label: t.positionCode.toLowerCase().replace(/^(massage|hair|nail)_/, ''), onShift: rows.length, free: rows.filter((r) => r.free).length });
+    seenPositions.add(t.positionCode);
+  }
+
+  return {
+    stationsFree: Math.max(0, stations.length - busyBeds.size),
+    stationsTotal: stations.length,
+    stationTypes,
+    stations,
+    therapistsFree: therapists.filter((t) => t.free).length,
+    therapistsOnShift: therapists.length,
+    positions,
+    therapists,
+    nowMin,
+  };
 }
 
 async function fetchData(branchParam?: string, weekParam?: string) {
@@ -664,8 +777,18 @@ export default async function ShiftSchedulePage({
           above both views, always reflecting "now" regardless of the day shown. */}
       {availability && (
         <div className="flex flex-wrap items-start gap-3">
-          <BedsNowCard free={availability.bedsFree} total={availability.bedsTotal} beds={availability.beds} />
-          <TherapistsNowCard free={availability.therapistsFree} onShift={availability.therapistsOnShift} therapists={availability.therapists} />
+          <StationsNowCard
+            free={availability.stationsFree}
+            total={availability.stationsTotal}
+            byType={availability.stationTypes}
+            stations={availability.stations}
+          />
+          <StaffNowCard
+            free={availability.therapistsFree}
+            onShift={availability.therapistsOnShift}
+            byPosition={availability.positions}
+            staff={availability.therapists}
+          />
           <span className="self-center text-xs font-semibold text-muted-foreground">Live · as of {hm(availability.nowMin)} PHT</span>
         </div>
       )}

@@ -71,7 +71,10 @@ export function ShiftControls({ branches, branchId, weekStart, day, view, scale,
           <BedDouble className="size-4" /> Station
         </button>
         <button type="button" onClick={() => go({ view: 'employee', scale: 'week' })} className={tabBtn(view === 'employee')}>
-          <Users className="size-4" /> Therapist
+          {/* Labelled "Staff" rather than "Therapist" — the page now lists
+              massage therapists, hair stylists, and nail technicians together,
+              so the older massage-only label was misleading. */}
+          <Users className="size-4" /> Staff
         </button>
         <button type="button" onClick={() => go({ view: 'dispatch', scale: 'day' })} className={tabBtn(view === 'dispatch')}>
           <Hotel className="size-4" /> Dispatch

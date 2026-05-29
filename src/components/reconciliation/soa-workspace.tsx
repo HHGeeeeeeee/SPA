@@ -30,6 +30,7 @@ import {
 import { cn } from '@/lib/utils';
 import { SoaActions } from '@/components/reconciliation/soa-actions';
 import { ArBalanceExplorer } from '@/components/reconciliation/ar-balance-explorer';
+import { StatusBadge } from '@/components/reconciliation/status-badge';
 import { loadSoaWorkspace, generateSOAGroups, type SoaGroup, type SoaHistoryRow, type ArBalance } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 export type { SoaHistoryRow, ArBalance };
@@ -48,9 +49,8 @@ function peso(cents: number): string {
   return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
-  draft: 'secondary', issued: 'default', partial_paid: 'secondary', settled: 'default', void: 'destructive',
-};
+// Status badge variants + tooltips live in `status-badge.tsx`. The History
+// table feeds `<StatusBadge kind="soa" />` directly; no per-file dictionary.
 
 const HIST_STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
@@ -478,7 +478,7 @@ export function SoaWorkspace({
                         <TableCell className="text-center"><Badge variant="secondary" className="font-bold capitalize">{(s.settlement_type ?? '').replace('_', '-')}</Badge></TableCell>
                         <TableCell className="font-medium tabular text-muted-foreground text-center">{s.period_from} → {s.period_to}</TableCell>
                         <TableCell className="font-bold tabular text-right pr-2">{peso(s.total_cents)}</TableCell>
-                        <TableCell className="text-center"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
+                        <TableCell className="text-center"><StatusBadge status={s.status} kind="soa" /></TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
                             <SoaActions id={s.id} status={s.status} settlementType={s.settlement_type} outstandingCents={s.outstanding_cents} collect={false} />

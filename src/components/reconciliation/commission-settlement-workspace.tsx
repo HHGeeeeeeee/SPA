@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { loadCommissionGroups, settleCommission, voidCommissionPeriod, type CommGroup } from '@/app/(dashboard)/reconciliation/commission/actions';
+import { StatusBadge } from '@/components/reconciliation/status-badge';
 
 // First and last day of the current month in PHT (Asia/Manila). Used as the
 // default history filter — desk's normal workflow is "review this month".
@@ -57,9 +58,7 @@ function fmtDateTime(iso: string): string {
   return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
-  draft: 'secondary', closed: 'default', void: 'destructive',
-};
+// Commission status badge variants + tooltips live in `status-badge.tsx`.
 
 const HIST_STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
@@ -458,7 +457,7 @@ export function CommissionSettlementWorkspace({
                             <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
                             <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
                             <TableCell className="font-bold tabular text-right">{peso(p.total_commission_cents)}</TableCell>
-                            <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[p.status] ?? 'secondary'} className="font-bold capitalize">{p.status}</Badge></TableCell>
+                            <TableCell className="pl-6"><StatusBadge status={p.status} kind="commission" /></TableCell>
                             <TableCell onClick={(e) => e.stopPropagation()}>
                               <div className="flex justify-end">
                                 {p.status === 'closed' && (

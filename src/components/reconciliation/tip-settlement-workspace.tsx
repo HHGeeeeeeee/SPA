@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { loadOpenTipGroups, settleTips, voidTipSettlement, retryTipPosting, type TipGroup } from '@/app/(dashboard)/reconciliation/tips/actions';
+import { StatusBadge } from '@/components/reconciliation/status-badge';
 
 // First and last day of the current month in PHT (Asia/Manila). Used as the
 // default history filter window — the desk almost always looks at "this month".
@@ -57,9 +58,7 @@ function fmtDateTime(iso: string): string {
   return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
-  draft: 'secondary', posting: 'secondary', closed: 'default', failed: 'destructive', void: 'destructive',
-};
+// Tip status badge variants + tooltips live in `status-badge.tsx`.
 
 const HIST_STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
@@ -465,7 +464,7 @@ export function TipSettlementWorkspace({
                             <TableCell className="font-medium tabular text-muted-foreground pl-6">{s.period_from} → {s.period_to}</TableCell>
                             <TableCell className="font-medium tabular">{s.posted_at ? fmtDateTime(s.posted_at) : '—'}</TableCell>
                             <TableCell className="font-bold tabular text-right">{peso(s.subtotal_cents)}</TableCell>
-                            <TableCell className="pl-6"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status}</Badge></TableCell>
+                            <TableCell className="pl-6"><StatusBadge status={s.status} kind="tip" /></TableCell>
                             <TableCell onClick={(e) => e.stopPropagation()}>
                               {s.gl_batch_nbr ? (
                                 <span className="inline-flex items-center gap-1 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">

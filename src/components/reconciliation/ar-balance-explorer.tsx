@@ -20,6 +20,7 @@ import {
 import { cn } from '@/lib/utils';
 import { SoaActions } from '@/components/reconciliation/soa-actions';
 import { SoaPaymentsList } from '@/components/reconciliation/soa-payments-list';
+import { StatusBadge } from '@/components/reconciliation/status-badge';
 import { settleSOABatch, type ArBalance, type ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 function peso(cents: number): string {
@@ -29,9 +30,7 @@ function fmtDate(ymd: string | null): string {
   if (!ymd) return '—';
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${ymd}T00:00:00Z`));
 }
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
-  issued: 'default', partial_paid: 'secondary', settled: 'default', void: 'destructive',
-};
+// SOA status badge variants + tooltips live in `status-badge.tsx`.
 
 /**
  * AR Balance — receivables ledger. Headline outstanding split Current / Overdue,
@@ -219,7 +218,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                         )}
                                       </TableCell>
                                       <TableCell className="tabular text-right font-bold">{peso(s.outstanding_cents)}</TableCell>
-                                      <TableCell className="text-center"><Badge variant={STATUS_VARIANT[s.status] ?? 'secondary'} className="font-bold capitalize">{s.status.replace('_', ' ')}</Badge></TableCell>
+                                      <TableCell className="text-center"><StatusBadge status={s.status} kind="soa" /></TableCell>
                                       <TableCell className="pr-4">
                                         <div className="flex items-center justify-end gap-2">
                                           <SoaActions id={s.id} status={s.status} settlementType={s.settlement_type} outstandingCents={s.outstanding_cents} allowVoid={false} />

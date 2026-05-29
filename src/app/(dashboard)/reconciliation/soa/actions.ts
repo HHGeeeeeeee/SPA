@@ -417,6 +417,14 @@ const createSchema = z.object({
   period_to: z.string().min(1),
 });
 
+// Add `days` to a yyyy-mm-dd string, returning yyyy-mm-dd. Used to compute the
+// day-after-prior-coverage when auto-narrowing period_from on SOA generation.
+function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function generateSOA(input: unknown): Promise<ActionResult<{ id: string }>> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
@@ -436,11 +444,33 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   if (!branch) return { ok: false, error: 'Branch not found' };
   if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
 
-  const candidates = await loadSoaCandidates(billing_to_id, branch_id, period_from, period_to);
+  // Auto-narrow period_from to the day after the most recent live SOA's
+  // period_to for this billing destination, when its window overlaps the
+  // requested range. The picker is a "max window I care about" — without
+  // narrowing, a wide month pick (5/01–5/29) collides with the semi-monthly
+  // SOA already covering the first half (5/01–5/15) and trips
+  // no_soa_period_overlap. The orders are already de-duped by loadSoaCandidates
+  // (anything on a live SOA is excluded), so narrowing only changes the
+  // STORED period — the bills the new SOA captures are unaffected.
+  const { data: prior } = await supabase
+    .from('revenue_soa')
+    .select('period_to, soa_no')
+    .eq('billing_to_id', billing_to_id)
+    .in('status', ['issued', 'partial_paid', 'settled'])
+    .gte('period_to', period_from)
+    .lte('period_from', period_to)
+    .order('period_to', { ascending: false })
+    .limit(1);
+  const effectiveFrom = prior?.[0]?.period_to ? addDaysYmd(prior[0].period_to, 1) : period_from;
+  if (effectiveFrom > period_to) {
+    return { ok: false, error: `Already covered by ${prior![0]!.soa_no} (through ${prior![0]!.period_to}) — nothing new to bill` };
+  }
+
+  const candidates = await loadSoaCandidates(billing_to_id, branch_id, effectiveFrom, period_to);
   if (candidates.length === 0) return { ok: false, error: 'No un-SOA’d closed orders for this billing/branch/period' };
   const subtotal = candidates.reduce((s, c) => s + c.total_cents, 0);
 
-  const ym = period_from.replace(/-/g, '').slice(0, 6);
+  const ym = effectiveFrom.replace(/-/g, '').slice(0, 6);
   const prefix = `SOA-${ym}-${billing.code}-${branch.code}-`;
   const { data: last } = await supabase
     .from('revenue_soa').select('soa_no').like('soa_no', `${prefix}%`).order('soa_no', { ascending: false }).limit(1);
@@ -457,7 +487,7 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   const { data: soa, error } = await supabase
     .from('revenue_soa')
     .insert({
-      soa_no, billing_to_id, branch_id, period_from, period_to,
+      soa_no, billing_to_id, branch_id, period_from: effectiveFrom, period_to,
       settlement_type: billing.settlement_type,
       subtotal_cents: subtotal, total_cents: subtotal, paid_cents: 0, outstanding_cents: subtotal,
       status: 'issued', issued_date: today, due_date: dueDate,

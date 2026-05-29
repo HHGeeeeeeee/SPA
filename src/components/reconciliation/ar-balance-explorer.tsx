@@ -12,6 +12,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -95,15 +96,14 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
 
   function section(title: string, hint: string, debtors: ArDebtor[], settleable = false, selectBar?: React.ReactNode) {
     if (debtors.length === 0) return null;
-    const subtotal = debtors.reduce((s, d) => s + d.total_cents, 0);
+    const subUnbilled = debtors.reduce((s, d) => s + d.unbilled_cents, 0);
+    const subOutstanding = debtors.reduce((s, d) => s + d.outstanding_cents, 0);
+    const subTotal = debtors.reduce((s, d) => s + d.total_cents, 0);
     return (
       <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{title}</h3>
-            <p className="text-xs font-medium text-muted-foreground/80">{hint}</p>
-          </div>
-          <span className="text-sm font-bold tabular">{peso(subtotal)}</span>
+        <div>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{title}</h3>
+          <p className="text-xs font-medium text-muted-foreground/80">{hint}</p>
         </div>
         {selectBar}
         <Card className="p-0 overflow-hidden">
@@ -240,6 +240,21 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                 );
               })}
             </TableBody>
+            {/* Section subtotal — sums Unbilled / Outstanding / Total Owed
+                across debtors in this settlement-type group. Sits at the
+                bottom (replaces the previous right-of-title number) so it
+                aligns visually under the numeric columns. */}
+            <TableFooter>
+              <TableRow className="border-t-2 border-border bg-muted/50 hover:bg-muted/50">
+                <TableCell className="bg-muted/60" />
+                <TableCell className="font-extrabold uppercase text-xs tracking-wider text-muted-foreground bg-muted/60">
+                  Subtotal
+                </TableCell>
+                <TableCell className="font-extrabold tabular text-right bg-muted/60">{subUnbilled > 0 ? peso(subUnbilled) : '—'}</TableCell>
+                <TableCell className="font-extrabold tabular text-right bg-muted/60">{subOutstanding > 0 ? peso(subOutstanding) : '—'}</TableCell>
+                <TableCell className="font-extrabold tabular text-right pr-4 bg-muted/60">{peso(subTotal)}</TableCell>
+              </TableRow>
+            </TableFooter>
           </Table>
         </Card>
       </div>

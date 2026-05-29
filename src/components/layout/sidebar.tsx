@@ -26,16 +26,11 @@ function groupChildrenBySection(children: NavSubItem[]): { section?: string; ite
   return segments;
 }
 
-// Per-section visual tone. All section borders use the same neutral gray to
-// keep the sidebar quiet; the small uppercase header carries the section's
-// identity (primary text for Daily Close, muted for others) so the urgency
-// hint is still there without the bar competing for attention.
-const SECTION_STYLES: Record<string, { border: string; label: string }> = {
-  'Daily Close': {
-    border: 'border-l border-sidebar-border',
-    label: 'text-primary/80',
-  },
-};
+// Per-section visual tone. All sections currently use the same neutral
+// styling (gray border + muted label) — the section header text itself
+// carries the meaning. SECTION_STYLES is kept as the override hook for
+// future clusters that genuinely warrant emphasis.
+const SECTION_STYLES: Record<string, { border: string; label: string }> = {};
 const NEUTRAL_SECTION_STYLE = {
   border: 'border-l border-sidebar-border',
   label: 'text-muted-foreground/80',

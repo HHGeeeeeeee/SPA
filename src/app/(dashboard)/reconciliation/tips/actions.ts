@@ -98,31 +98,49 @@ export interface TipGroup {
   therapist_name: string;
   count: number;
   total_cents: number;
+  // Home branch code when ≠ this settlement's branch. Same convention as
+  // Commission Settlement: surfaces cross-branch loaners so the manager
+  // sees who isn't on their roster without cross-referencing.
+  borrowed_from: string | null;
   tips: TipLine[];
 }
 
 /** Open (unsettled) PAYMAYA tips for a branch in range, grouped by therapist. */
 export async function loadOpenTipGroups(branchId: string, from: string, to: string): Promise<TipGroup[]> {
   const supabase = await createAuditedClient();
-  const { data } = await supabase
-    .from('tips')
-    .select(`
-      id, amount_cents, therapist_id, status, settlement_id,
-      therapist:employees!tips_therapist_id_fkey ( name ),
-      order:orders!tips_order_id_fkey ( order_no, service_date, status, branch_id )
-    `)
-    .is('settlement_id', null)
-    .eq('status', 'open');
+  const [tipsRes, branchesRes] = await Promise.all([
+    supabase
+      .from('tips')
+      .select(`
+        id, amount_cents, therapist_id, status, settlement_id,
+        therapist:employees!tips_therapist_id_fkey ( name ),
+        order:orders!tips_order_id_fkey ( order_no, service_date, status, branch_id ),
+        order_item:order_items!tips_order_item_id_fkey ( therapist_home_branch_id )
+      `)
+      .is('settlement_id', null)
+      .eq('status', 'open'),
+    // Branch id → code for the borrowed-from badge. One fetch covers all
+    // therapists in the workspace (same pattern as commission's computeGroups).
+    supabase.from('branches').select('id, code'),
+  ]);
+  const branchCode = new Map((branchesRes.data ?? []).map((b) => [b.id as string, b.code as string]));
 
   const groups = new Map<string, TipGroup>();
-  for (const t of data ?? []) {
+  for (const t of tipsRes.data ?? []) {
     const ord = one(t.order);
     if (!ord || ord.branch_id !== branchId || ord.status === 'void') continue;
     if (ord.service_date < from || ord.service_date > to) continue;
     const th = one(t.therapist);
-    const g = groups.get(t.therapist_id) ?? { therapist_id: t.therapist_id, therapist_name: th?.name ?? '—', count: 0, total_cents: 0, tips: [] };
+    const oi = one(t.order_item);
+    const g = groups.get(t.therapist_id) ?? { therapist_id: t.therapist_id, therapist_name: th?.name ?? '—', count: 0, total_cents: 0, borrowed_from: null, tips: [] };
     g.count += 1;
     g.total_cents += t.amount_cents;
+    // Roll up borrowed_from from the order_item snapshot. First non-null
+    // foreign home branch wins (a therapist has one home at a time, so all
+    // snapshots agree within the open pool).
+    if (g.borrowed_from === null && oi?.therapist_home_branch_id && oi.therapist_home_branch_id !== branchId) {
+      g.borrowed_from = branchCode.get(oi.therapist_home_branch_id) ?? null;
+    }
     g.tips.push({ id: t.id, service_date: ord.service_date, order_no: ord.order_no, amount_cents: t.amount_cents });
     groups.set(t.therapist_id, g);
   }

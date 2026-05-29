@@ -17,7 +17,15 @@ function longDate(ymd: string): string {
 }
 
 interface PdfTipLine { date: string; order_no: string; amount: number }
-interface PdfGroup { therapist_name: string; count: number; total: number; lines: PdfTipLine[] }
+interface PdfGroup {
+  therapist_name: string;
+  count: number;
+  total: number;
+  // Home branch code when therapist's home ≠ settlement branch (cross-branch
+  // loaner). Renders as the amber "from XXX" badge in the group header.
+  borrowed_from: string | null;
+  lines: PdfTipLine[];
+}
 interface PdfData {
   settlement_no: string;
   status: string;
@@ -35,26 +43,38 @@ async function loadTipForPdf(settlementId: string): Promise<PdfData | null> {
   const { data: s } = await supabase
     .from('tip_settlements')
     .select(`
-      settlement_no, status, period_from, period_to, posted_at, subtotal_cents,
+      settlement_no, status, period_from, period_to, posted_at, subtotal_cents, branch_id,
       branch:branches!tip_settlements_branch_id_fkey ( name ),
       tips (
         amount_cents,
         therapist:employees!tips_therapist_id_fkey ( id, name ),
-        order:orders!tips_order_id_fkey ( order_no, service_date )
+        order:orders!tips_order_id_fkey ( order_no, service_date ),
+        order_item:order_items!tips_order_item_id_fkey ( therapist_home_branch_id )
       )
     `)
     .eq('id', settlementId)
     .maybeSingle();
   if (!s) return null;
 
+  // Branch id → code lookup for the borrowed-from badge (matches the on-screen
+  // workspace + commission PDF). One small fetch, used for every group.
+  const { data: branches } = await supabase.from('branches').select('id, code');
+  const branchCode = new Map((branches ?? []).map((b) => [b.id as string, b.code as string]));
+
   const groups = new Map<string, PdfGroup>();
   for (const t of s.tips ?? []) {
     const th = one(t.therapist);
     const ord = one(t.order);
+    const oi = one(t.order_item);
     if (!th) continue;
-    const g = groups.get(th.id) ?? { therapist_name: th.name ?? '—', count: 0, total: 0, lines: [] };
+    const g = groups.get(th.id) ?? { therapist_name: th.name ?? '—', count: 0, total: 0, borrowed_from: null, lines: [] };
     g.count += 1;
     g.total += t.amount_cents;
+    // Roll up borrowed_from: first non-null foreign home wins; per-therapist
+    // home doesn't change within a settlement so all snapshots agree.
+    if (g.borrowed_from === null && oi?.therapist_home_branch_id && oi.therapist_home_branch_id !== s.branch_id) {
+      g.borrowed_from = branchCode.get(oi.therapist_home_branch_id) ?? null;
+    }
     g.lines.push({ date: ord?.service_date ?? '', order_no: ord?.order_no ?? '—', amount: t.amount_cents });
     groups.set(th.id, g);
   }
@@ -74,7 +94,7 @@ async function loadTipForPdf(settlementId: string): Promise<PdfData | null> {
   };
 }
 
-const C = '#0f172a', MUTED = '#64748b', LINE = '#e2e8f0', GROUPBG = '#f8fafc';
+const C = '#0f172a', MUTED = '#64748b', LINE = '#e2e8f0', GROUPBG = '#f8fafc', WARM = '#92400e', WARMBG = '#fef3c7';
 const styles = StyleSheet.create({
   page: { padding: 36, fontSize: 9, color: C, fontFamily: 'Helvetica' },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
@@ -87,10 +107,15 @@ const styles = StyleSheet.create({
   summaryLabel: { color: MUTED, fontSize: 8 },
   summaryVal: { fontFamily: 'Helvetica-Bold', fontSize: 11, marginTop: 2 },
 
-  groupHead: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: GROUPBG, paddingVertical: 6, paddingHorizontal: 6, marginTop: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: LINE },
-  groupName: { fontFamily: 'Helvetica-Bold', fontSize: 10, flex: 1 },
+  groupHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: GROUPBG, paddingVertical: 6, paddingHorizontal: 6, marginTop: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: LINE },
+  groupNameWrap: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  groupName: { fontFamily: 'Helvetica-Bold', fontSize: 10 },
   groupSub: { color: MUTED, fontSize: 9, width: 80, textAlign: 'right' },
   groupTotal: { fontFamily: 'Helvetica-Bold', fontSize: 10, width: 90, textAlign: 'right' },
+  // Borrowed-from amber pill next to therapist name. Same style as the
+  // commission PDF's borrowed badge — keeps the visual language consistent
+  // across both finance documents.
+  borrowed: { fontSize: 7, color: WARM, backgroundColor: WARMBG, paddingHorizontal: 3, paddingVertical: 1, marginLeft: 6, borderRadius: 2, fontFamily: 'Helvetica-Bold' },
 
   row: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 4, paddingHorizontal: 6 },
   td: { fontSize: 9 },
@@ -143,7 +168,10 @@ function TipDoc({ d }: { d: PdfData }) {
         {d.groups.map((g, gi) => (
           <View key={gi} wrap={false}>
             <View style={styles.groupHead}>
-              <Text style={styles.groupName}>{g.therapist_name}</Text>
+              <View style={styles.groupNameWrap}>
+                <Text style={styles.groupName}>{g.therapist_name}</Text>
+                {g.borrowed_from && <Text style={styles.borrowed}>from {g.borrowed_from}</Text>}
+              </View>
               <Text style={styles.groupSub}>{g.count} tip{g.count === 1 ? '' : 's'}</Text>
               <Text style={styles.groupTotal}>{php(g.total)}</Text>
             </View>

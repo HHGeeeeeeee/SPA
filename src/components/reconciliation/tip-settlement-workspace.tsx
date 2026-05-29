@@ -81,7 +81,16 @@ export interface TipHistoryRow {
   subtotal_cents: number;
   posted_at: string | null;
   therapists: string[];
-  lines: { therapist: string; service_date: string; order_no: string; amount_cents: number }[];
+  lines: {
+    therapist: string;
+    // Home branch code when ≠ this settlement's branch; null otherwise.
+    // Per-line because History is rendered flat (not grouped by therapist) —
+    // every row needs to know whether its therapist is a loaner.
+    borrowed_from: string | null;
+    service_date: string;
+    order_no: string;
+    amount_cents: number;
+  }[];
   posting_status: string | null;
   gl_batch_nbr: string | null;
   posting_error: string | null;
@@ -310,6 +319,15 @@ export function TipSettlementWorkspace({
                       </button>
                       <button type="button" onClick={() => toggleExp(g.therapist_id)} className="flex items-center gap-2 text-left">
                         <span className="font-bold">{g.therapist_name}</span>
+                        {/* Borrowed-from badge — same convention as Commission
+                            workspace + PDF. Amber tag when therapist's home
+                            branch ≠ this settlement's branch (cross-branch
+                            loaner). Snapshotted via order_items at booking. */}
+                        {g.borrowed_from && (
+                          <span className="inline-flex items-center rounded bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                            from {g.borrowed_from}
+                          </span>
+                        )}
                         <span className="text-xs font-medium text-muted-foreground">({g.count} tip{g.count > 1 ? 's' : ''})</span>
                       </button>
                       <span className="ml-auto text-base font-extrabold tabular">Total: {peso(g.total_cents)}</span>
@@ -501,7 +519,18 @@ export function TipSettlementWorkspace({
                                   <TableBody>
                                     {s.lines.map((l, i) => (
                                       <TableRow key={`${s.id}-${i}`}>
-                                        <TableCell className="font-medium pl-12">{l.therapist}</TableCell>
+                                        <TableCell className="font-medium pl-12">
+                                          {l.therapist}
+                                          {/* Per-line borrowed-from badge — flat
+                                              History layout means each row carries
+                                              its own marker; tag is small (10px) so
+                                              it doesn't dominate the therapist column. */}
+                                          {l.borrowed_from && (
+                                            <span className="ml-2 inline-flex items-center rounded bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                                              from {l.borrowed_from}
+                                            </span>
+                                          )}
+                                        </TableCell>
                                         <TableCell className="font-medium tabular text-muted-foreground">{l.service_date}</TableCell>
                                         <TableCell className="font-mono font-bold">{l.order_no}</TableCell>
                                         <TableCell className="font-bold tabular text-right">{peso(l.amount_cents)}</TableCell>

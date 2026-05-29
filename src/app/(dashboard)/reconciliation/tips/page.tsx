@@ -27,13 +27,16 @@ export default async function TipSettlementPage({ searchParams }: { searchParams
   const branchId = sp.branch && list.some((b) => b.id === sp.branch) ? sp.branch : list[0]?.id ?? '';
   const { from, to } = halfMonthRange();
 
-  const [groups, histRes] = await Promise.all([
+  const [groups, histRes, branchListRes] = await Promise.all([
     branchId ? loadOpenTipGroups(branchId, from, to) : Promise.resolve([]),
     supabase
       .from('tip_settlements')
-      .select('id, settlement_no, status, period_from, period_to, subtotal_cents, posted_at, branch:branches!tip_settlements_branch_id_fkey ( code ), tips ( amount_cents, therapist:employees!tips_therapist_id_fkey ( name ), order:orders!tips_order_id_fkey ( order_no, service_date ) )')
+      .select('id, settlement_no, status, period_from, period_to, subtotal_cents, posted_at, branch_id, branch:branches!tip_settlements_branch_id_fkey ( code ), tips ( amount_cents, therapist:employees!tips_therapist_id_fkey ( name ), order:orders!tips_order_id_fkey ( order_no, service_date ), order_item:order_items!tips_order_item_id_fkey ( therapist_home_branch_id ) )')
       .order('created_at', { ascending: false }),
+    // Branch id → code for the per-line borrowed-from badge in History.
+    supabase.from('branches').select('id, code'),
   ]);
+  const branchCodeById = new Map((branchListRes.data ?? []).map((b) => [b.id as string, b.code as string]));
   // ERP posting columns aren't in the generated types yet — fetch in a tolerant
   // cast query and merge in (same pattern as the order detail page's `erp`).
   const ids = (histRes.data ?? []).map((s) => s.id);
@@ -47,7 +50,22 @@ export default async function TipSettlementPage({ searchParams }: { searchParams
 
   const history: TipHistoryRow[] = (histRes.data ?? []).map((s) => {
     const lines = (s.tips ?? [])
-      .map((t) => ({ therapist: one(t.therapist)?.name ?? '—', service_date: one(t.order)?.service_date ?? '', order_no: one(t.order)?.order_no ?? '—', amount_cents: t.amount_cents }))
+      .map((t) => {
+        // Resolve per-line borrowed_from from the order_item snapshot taken at
+        // booking. Settlement branch_id from the parent row; if the snapshot
+        // points elsewhere, surface the home branch code on this row.
+        const homeBranchId = one(t.order_item)?.therapist_home_branch_id ?? null;
+        const borrowed_from = homeBranchId && homeBranchId !== s.branch_id
+          ? branchCodeById.get(homeBranchId) ?? null
+          : null;
+        return {
+          therapist: one(t.therapist)?.name ?? '—',
+          borrowed_from,
+          service_date: one(t.order)?.service_date ?? '',
+          order_no: one(t.order)?.order_no ?? '—',
+          amount_cents: t.amount_cents,
+        };
+      })
       .sort((a, b) => (a.service_date < b.service_date ? 1 : -1));
     const erp = erpById.get(s.id);
     return {

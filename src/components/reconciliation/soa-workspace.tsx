@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronDown, FileText, FilePlus2, CalendarClock, Download, Wallet } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, FilePlus2, CalendarClock, Download, Wallet, Check, AlertCircle } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -436,7 +436,27 @@ export function SoaWorkspace({
                         <TableCell className="pr-0">
                           <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(s.id)} onChange={() => toggleHistSel(s.id)} />
                         </TableCell>
-                        <TableCell className="font-mono font-bold">{s.soa_no}</TableCell>
+                        <TableCell className="font-mono font-bold">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{s.soa_no}</span>
+                            {/* ERP voucher chip — stacked under the SOA No so the
+                                Acumatica F-number is visible at a glance without
+                                expanding the row. Failed-post rows surface the
+                                error tooltip + an AlertCircle. */}
+                            {s.gl_batch_nbr ? (
+                              <span className="inline-flex w-fit items-center gap-1 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary">
+                                <Check className="size-3" /> GL #{s.gl_batch_nbr}
+                              </span>
+                            ) : s.posting_status === 'failed' ? (
+                              <span
+                                title={s.posting_error ?? 'ERP posting failed'}
+                                className="inline-flex w-fit items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-destructive"
+                              >
+                                <AlertCircle className="size-3" /> Posting failed
+                              </span>
+                            ) : null}
+                          </div>
+                        </TableCell>
                         <TableCell className="font-medium">{s.billing_code ? `${s.billing_code} — ${s.billing_name}` : '—'}</TableCell>
                         <TableCell className="text-center"><Badge variant="secondary" className="font-bold capitalize">{(s.settlement_type ?? '').replace('_', '-')}</Badge></TableCell>
                         <TableCell className="font-medium tabular text-muted-foreground text-center">{s.period_from} → {s.period_to}</TableCell>

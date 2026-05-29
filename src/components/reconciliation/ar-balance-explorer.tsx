@@ -58,8 +58,14 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
     if (!ids.length) return;
     startSettle(async () => {
       const r = await settleSOABatch(ids);
-      if (r.ok) { toast.success(`Settled ${r.data?.settled} SOA${(r.data?.settled ?? 0) > 1 ? 's' : ''}`); setSel(new Set()); router.refresh(); }
-      else toast.error(r.error);
+      if (r.ok) {
+        const count = r.data?.settled ?? 0;
+        const batches = r.data?.batchNbrs ?? [];
+        const batchTag = batches.length === 1 ? ` · GL #${batches[0]}` : batches.length > 1 ? ` · ${batches.length} journals` : '';
+        toast.success(`Settled ${count} SOA${count > 1 ? 's' : ''}${batchTag}`);
+        setSel(new Set());
+        router.refresh();
+      } else toast.error(r.error);
     });
   }
 

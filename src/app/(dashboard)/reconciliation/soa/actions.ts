@@ -3,11 +3,13 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { createAuditedClient } from '@/lib/supabase/server';
+import { createAuditedClient, createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
 import { assertNoBlockedClose } from '@/lib/business-day';
-import { postToErp, type PostToErpResult } from '@/lib/erp-posting';
+import { postToErp, acumaticaConfigured, type PostToErpResult } from '@/lib/erp-posting';
+import { pushGLEntry, attachFileToJournal, type GLLine } from '@/lib/acumatica';
+import { readAcuSessionCookie } from '@/lib/session';
 import { renderSoaPdf } from '@/lib/soa-pdf';
 
 // Render the SOA voucher PDF and return it as a fresh ArrayBuffer payload for
@@ -136,6 +138,12 @@ export interface SoaHistoryRow {
   outstanding_cents: number;
   billing_code: string | null;
   billing_name: string | null;
+  // ERP voucher fields — populated once the settle / payment journal is posted.
+  // gl_batch_nbr is the Acumatica F-number shown next to the SOA in History so
+  // the desk can cross-reference Acumatica without re-opening the SOA detail.
+  gl_batch_nbr: string | null;
+  posting_status: string | null;
+  posting_error: string | null;
   // The orders stated on this SOA (for the expandable History detail). Empty for
   // voided statements — voiding releases the order links.
   detail: SoaOrderLine[];
@@ -144,10 +152,15 @@ export interface SoaHistoryRow {
 /** All statements, newest first, each with its stated-orders detail. */
 export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
   const supabase = await createAuditedClient();
-  const { data } = await supabase
-    .from('revenue_soa')
+  // gl_batch_nbr / posting_status / posting_error aren't in the generated DB
+  // types yet — read through an untyped surface and rely on the explicit
+  // mapping below to keep the public SoaHistoryRow strict.
+  const { data } = await (supabase.from('revenue_soa') as unknown as {
+    select: (c: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<Record<string, unknown>> | null }> };
+  })
     .select(`
       id, soa_no, status, settlement_type, period_from, period_to, total_cents, outstanding_cents,
+      gl_batch_nbr, posting_status, posting_error,
       billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name ),
       revenue_soa_orders (
         order:orders (
@@ -158,7 +171,14 @@ export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
       )
     `)
     .order('created_at', { ascending: false });
-  return (data ?? []).map((s) => {
+  return (data ?? []).map((raw) => {
+    const s = raw as {
+      id: string; soa_no: string; status: string; settlement_type: string | null;
+      period_from: string; period_to: string; total_cents: number; outstanding_cents: number | null;
+      gl_batch_nbr: string | null; posting_status: string | null; posting_error: string | null;
+      billing: { code: string | null; name: string | null } | { code: string | null; name: string | null }[] | null;
+      revenue_soa_orders: { order: RawSoaOrder | RawSoaOrder[] | null }[] | null;
+    };
     const b = one(s.billing);
     const detail = (s.revenue_soa_orders ?? [])
       .map((link) => one(link.order) as RawSoaOrder | null)
@@ -169,7 +189,11 @@ export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
       id: s.id, soa_no: s.soa_no, status: s.status, settlement_type: s.settlement_type,
       period_from: s.period_from, period_to: s.period_to, total_cents: s.total_cents,
       outstanding_cents: s.outstanding_cents ?? s.total_cents,
-      billing_code: b?.code ?? null, billing_name: b?.name ?? null, detail,
+      billing_code: b?.code ?? null, billing_name: b?.name ?? null,
+      gl_batch_nbr: s.gl_batch_nbr,
+      posting_status: s.posting_status,
+      posting_error: s.posting_error,
+      detail,
     };
   });
 }
@@ -447,92 +471,237 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   return { ok: true, data: { id: soa.id } };
 }
 
-/**
- * Settle an INTERCOMPANY statement = transfer to cost (no cash). Third-party
- * statements are settled by recording payments instead.
- * NOTE: ERP cost-transfer posting (DR 50170 / Sub 000000T03 → CR 10200) deferred.
- */
-export async function settleSOA(id: string): Promise<ActionResult> {
-  const session = await currentSession();
-  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
-  const supabase = await createAuditedClient();
-  const { data: soa } = await supabase
-    .from('revenue_soa')
-    .select('soa_no, status, total_cents, settlement_type, branch_id, period_from, period_to, billing:billing_destinations ( intercompany_account, intercompany_sub ), branch:branches ( code )')
-    .eq('id', id)
-    .single();
-  if (!soa) return { ok: false, error: 'SOA not found' };
-  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (soa.settlement_type !== 'intercompany') return { ok: false, error: 'Third-party statements are settled via Record Payment' };
-  if (soa.status !== 'issued') return { ok: false, error: 'Only an issued statement can be settled' };
-  try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
+interface PreparedSettleSoa {
+  id: string;
+  soa_no: string;
+  branch_id: string;
+  branchCode: string;
+  period_to: string;
+  total_cents: number;
+  intercompany_account: string;
+  intercompany_sub: string;
+}
 
-  // Intercompany cost transfer: DR the hotel's cost account (per billing dest),
-  // CR our AR. Strict posting — postToErp flips issued→settled + writes the
-  // voucher number on success, or reverts to issued + notes the error on
-  // failure. (No-ops the GL call until Acumatica is configured.)
-  //
-  // GL date = SOA's period_to (last day of the semi-monthly coverage). Same
-  // policy as Revenue Confirm (service_date on each order): the cost transfer
-  // accounting-period must match the period the SOA actually represents, NOT
-  // the day a manager happened to click Settle. Combined with the EoD
-  // discipline guard (≤2-day backdate), Acumatica needs ≥3 days backdate
-  // grace to never hit a closed period.
-  const billing = one<{ intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
-  const branchCode = one<{ code: string }>(soa.branch)?.code ?? '';
-  const amount = soa.total_cents / 100;
-  // Pre-render the SOA voucher PDF — postToErp attaches it to the journal on
-  // success (matches Revenue Confirm's pattern; gives the Acumatica reviewer
-  // the source detail next to the entry).
-  const renderedAttachment = await buildSoaAttachment(id);
-  const r = await postToErp({
-    entityType: 'soa_settle',
-    table: 'revenue_soa',
-    entityId: id,
-    date: soa.period_to,
-    branch: branchCode,
-    description: `${soa.soa_no} intercompany settle`,
-    lines: [
+/**
+ * Load + validate a list of SOAs for batch settle. Surfaces the first row that
+ * can't be settled (wrong type / wrong status / no branch access / blocked
+ * close-day) so the batch UI can show one clean reason instead of a half-done
+ * post. Returns the dehydrated, branch-grouping-ready records.
+ */
+async function loadSettleable(ids: string[]): Promise<{ ok: true; rows: PreparedSettleSoa[] } | { ok: false; error: string }> {
+  const supabase = await createAuditedClient();
+  const { data } = await supabase
+    .from('revenue_soa')
+    .select('id, soa_no, status, total_cents, settlement_type, branch_id, period_to, billing:billing_destinations ( intercompany_account, intercompany_sub ), branch:branches ( code )')
+    .in('id', ids);
+  if (!data || data.length === 0) return { ok: false, error: 'SOA not found' };
+  const rows: PreparedSettleSoa[] = [];
+  for (const soa of data) {
+    if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: `${soa.soa_no}: no access to this branch` };
+    if (soa.settlement_type !== 'intercompany') return { ok: false, error: `${soa.soa_no}: third-party statements are settled via Record Payment` };
+    if (soa.status !== 'issued') return { ok: false, error: `${soa.soa_no}: only an issued statement can be settled` };
+    try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
+    const billing = one<{ intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
+    rows.push({
+      id: soa.id,
+      soa_no: soa.soa_no,
+      branch_id: soa.branch_id,
+      branchCode: one<{ code: string }>(soa.branch)?.code ?? '',
+      period_to: soa.period_to,
+      total_cents: soa.total_cents,
+      intercompany_account: billing?.intercompany_account ?? '50170',
+      intercompany_sub: billing?.intercompany_sub ?? '000000T03',
+    });
+  }
+  return { ok: true, rows };
+}
+
+/**
+ * Atomically post ONE GL journal for a branch-grouped batch of intercompany
+ * SOAs. Mirrors the Revenue Confirm batch pattern: one pushGLEntry call with
+ * stacked DR cost / CR AR pairs for every SOA in the group; on success all
+ * SOAs share the same gl_batch_nbr and flip to settled; on failure every SOA
+ * reverts to issued + posting_status='failed'.
+ *
+ * GL date = max(period_to) of the group — the most recent semi-monthly cutoff
+ * the journal represents. Acumatica journals carry a single date/branch, so
+ * mixed-period or mixed-branch selections are split into separate groups by
+ * the caller.
+ */
+async function postSoaSettleBatch(group: PreparedSettleSoa[]): Promise<{ ok: true; batchNbr: string | null } | { ok: false; error: string }> {
+  const session = await currentSession();
+  const svc = createServiceClient();
+  const ids = group.map((s) => s.id);
+  const branchCode = group[0]!.branchCode;
+  const glDate = group.map((s) => s.period_to).sort().at(-1)!;
+  const totalCents = group.reduce((sum, s) => sum + s.total_cents, 0);
+  const soaNos = group.map((s) => s.soa_no);
+
+  // Build all DR cost / CR AR lines up front so a render failure on one PDF
+  // doesn't half-post the journal.
+  const allLines: GLLine[] = group.flatMap((s) => {
+    const amount = s.total_cents / 100;
+    return [
       {
-        account: billing?.intercompany_account ?? '50170',
-        sub_account: billing?.intercompany_sub ?? '000000T03',
+        account: s.intercompany_account,
+        sub_account: s.intercompany_sub,
         debit_amount: amount,
         credit_amount: null,
-        transaction_desc: `${soa.soa_no} intercompany cost`,
+        transaction_desc: `${s.soa_no} intercompany cost`,
       },
       {
         account: AR_ACCOUNT,
         sub_account: AR_SUBACCOUNT,
         debit_amount: null,
         credit_amount: amount,
-        transaction_desc: `${soa.soa_no} AR settle`,
+        transaction_desc: `${s.soa_no} AR settle`,
       },
-    ],
-    fromStatus: 'issued',
-    toStatus: 'settled',
-    extraOnSuccess: { paid_cents: soa.total_cents, outstanding_cents: 0 },
-    renderedAttachment,
+    ];
   });
-  if (!r.ok) return { ok: false, error: `ERP posting failed: ${r.error}` };
-  revalidatePath('/reconciliation/soa');
+
+  // Loose-typed updater — posting_status / gl_batch_nbr aren't in the generated
+  // types yet. Mirrors the Revenue Confirm batch helper.
+  const updateAll = (patch: Record<string, unknown>) =>
+    (svc.from('revenue_soa') as unknown as { update: (p: Record<string, unknown>) => { in: (c: string, v: string[]) => Promise<unknown> } })
+      .update(patch)
+      .in('id', ids);
+
+  // Acumatica not wired → flip every SOA to settled without a voucher number.
+  // Keeps pre-integration flows working (same policy as postToErp).
+  if (!acumaticaConfigured()) {
+    await updateAll({ status: 'settled', paid_cents: 0, outstanding_cents: 0 });
+    // paid_cents needs the per-row total — write each one.
+    for (const s of group) {
+      await svc.from('revenue_soa').update({ paid_cents: s.total_cents }).eq('id', s.id);
+    }
+    return { ok: true, batchNbr: null };
+  }
+
+  await updateAll({ posting_status: 'posting', posting_error: null });
+
+  const { data: logRow } = await (svc.from('erp_posting_log') as unknown as {
+    insert: (p: Record<string, unknown>) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null }> } };
+  })
+    .insert({
+      entity_type: 'soa_settle_batch',
+      entity_id: ids[0],
+      status: 'pending',
+      payload: { branch_code: branchCode, date: glDate, soa_ids: ids, soa_nos: soaNos, count: group.length, total_cents: totalCents, lines: allLines },
+      posted_by_staff_id: session?.staffUserId ?? null,
+      acu_session_user_id: session?.acumaticaUserId ?? null,
+    })
+    .select('id')
+    .single();
+
+  const cookie = await readAcuSessionCookie();
+  try {
+    const description = group.length === 1
+      ? `${soaNos[0]} intercompany settle`
+      : `Intercompany settle batch · ${group.length} SOAs (${branchCode})`;
+    const res = await pushGLEntry({ date: glDate, branch: branchCode, description, currency: 'PHP', lines: allLines }, cookie);
+
+    // One voucher, every SOA in the group references it.
+    for (const s of group) {
+      await (svc.from('revenue_soa') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
+        .update({ status: 'settled', gl_batch_nbr: res.batchNbr, posting_status: 'posted', posting_error: null, paid_cents: s.total_cents, outstanding_cents: 0 })
+        .eq('id', s.id);
+    }
+    if (logRow) {
+      await (svc.from('erp_posting_log') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
+        .update({ status: 'success', batch_nbr: res.batchNbr, erp_response: res.raw })
+        .eq('id', logRow.id);
+    }
+
+    // Best-effort: attach each SOA's voucher PDF to the journal so reviewers
+    // see the per-statement detail in Acumatica. A failure on one attach is
+    // logged but doesn't unwind the post.
+    if (res.batchNbr) {
+      const attachErrors: string[] = [];
+      for (const s of group) {
+        try {
+          const ra = await buildSoaAttachment(s.id);
+          if (!ra) continue;
+          await attachFileToJournal({ batchNbr: res.batchNbr, filename: ra.filename, fileBuffer: ra.buffer, mimeType: ra.mimeType }, cookie);
+        } catch (e) {
+          attachErrors.push(`${s.soa_no}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      if (attachErrors.length && logRow) {
+        await (svc.from('erp_posting_log') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
+          .update({ error_message: `Posted (batch ${res.batchNbr}) but PDF attach failed: ${attachErrors.join('; ')}` })
+          .eq('id', logRow.id);
+      }
+    }
+
+    return { ok: true, batchNbr: res.batchNbr };
+  } catch (err) {
+    const msg = (err as Error).message || 'GL push failed';
+    await updateAll({ posting_status: 'failed', posting_error: msg });
+    if (logRow) {
+      await (svc.from('erp_posting_log') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
+        .update({ status: 'failed', error_message: msg })
+        .eq('id', logRow.id);
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Settle an INTERCOMPANY statement = transfer to cost (no cash). Third-party
+ * statements are settled by recording payments instead. Convenience wrapper
+ * around the batch path so per-row Settle and AR-Balance batch Settle share
+ * the same one-journal-per-call posting (see postSoaSettleBatch).
+ */
+export async function settleSOA(id: string): Promise<ActionResult> {
+  const r = await settleSOABatch([id]);
+  if (!r.ok) return { ok: false, error: r.error };
   return { ok: true };
 }
 
-/** Batch-settle selected INTERCOMPANY statements (cost transfer) in one pass. */
-export async function settleSOABatch(ids: string[]): Promise<ActionResult<{ settled: number }>> {
+/**
+ * Batch-settle selected INTERCOMPANY statements as ONE GL journal per branch.
+ * Acumatica journals carry a single branch + date, so a mixed selection is
+ * grouped by branch (and dated at the group's max period_to). Within a branch
+ * group every SOA shares the same gl_batch_nbr — exactly like Revenue Confirm
+ * batches Sales Orders into one voucher per branch/day.
+ *
+ * GL date policy = max(period_to) of the branch group: the cost transfer's
+ * accounting period matches the semi-monthly cutoff the SOAs represent, not
+ * the day a manager happened to click Settle (mirrors per-SOA policy).
+ */
+export async function settleSOABatch(ids: string[]): Promise<ActionResult<{ settled: number; batchNbrs: string[] }>> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   if (!ids.length) return { ok: false, error: 'Select at least one intercompany statement' };
-  let settled = 0;
-  const errors: string[] = [];
-  for (const id of ids) {
-    const r = await settleSOA(id);
-    if (r.ok) settled += 1;
-    else errors.push(r.error);
+
+  const prepared = await loadSettleable(ids);
+  if (!prepared.ok) return { ok: false, error: prepared.error };
+
+  // Group by branch — one journal per branch (Acumatica journal = single branch).
+  const byBranch = new Map<string, PreparedSettleSoa[]>();
+  for (const s of prepared.rows) {
+    const g = byBranch.get(s.branch_id) ?? [];
+    g.push(s);
+    byBranch.set(s.branch_id, g);
   }
+
+  let settled = 0;
+  const batchNbrs: string[] = [];
+  const errors: string[] = [];
+  for (const group of byBranch.values()) {
+    const r = await postSoaSettleBatch(group);
+    if (r.ok) {
+      settled += group.length;
+      if (r.batchNbr) batchNbrs.push(r.batchNbr);
+    } else {
+      errors.push(r.error);
+    }
+  }
+  void session;
+
   if (settled === 0) return { ok: false, error: errors[0] ?? 'Nothing to settle' };
   revalidatePath('/reconciliation/soa');
-  return { ok: true, data: { settled } };
+  return { ok: true, data: { settled, batchNbrs } };
 }
 
 // PHT (Asia/Manila) today as yyyy-mm-dd — the latest acceptable paid_at.

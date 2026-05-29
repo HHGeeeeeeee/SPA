@@ -137,6 +137,10 @@ async function main() {
     { code: 'REST60', name: 'Rest Room 60min', cat: 'REST', duration: 60, resource: 'rest_room', prep: 5, cleanup: 10, commission: false, tip: false },
     { code: 'REST120', name: 'Rest Room 120min', cat: 'REST', duration: 120, resource: 'rest_room', prep: 5, cleanup: 10, commission: false, tip: false },
   ];
+  // Strip trailing " NNmin" so siblings ("Thai Massage 60min" / 90min) share
+  // a group; items with no duration suffix (e.g. "Hair Cut") get group = name.
+  // Matches the migration's regex used to backfill existing rows.
+  const groupOf = (name) => name.replace(/\s*\d+\s*min$/i, '').trim();
   for (const it of items) {
     const { error } = await supabase
       .from('service_items')
@@ -144,6 +148,9 @@ async function main() {
         {
           code: it.code,
           name: it.name,
+          // Drives the "Skills this therapist can perform" picker on the
+          // Employees page; NULL group → silently dropped from the picker.
+          service_group: groupOf(it.name),
           service_category_id: categoryId[it.cat],
           duration_minutes: it.duration,
           prep_before_minutes: it.prep ?? 10,

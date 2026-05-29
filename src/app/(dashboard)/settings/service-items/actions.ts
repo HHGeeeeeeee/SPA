@@ -55,6 +55,14 @@ async function syncNormalPrice(serviceItemId: string, pricePhp: number) {
   })).error;
 }
 
+// Strip " NNmin" (case-insensitive) from the name to derive a default
+// service_group. Matches the regex used by the original backfill migration
+// (20260520125133_service_group). Items that don't carry a duration suffix
+// just get group = full name.
+function deriveServiceGroup(name: string): string {
+  return name.replace(/\s*\d+\s*min$/i, '').trim() || name.trim();
+}
+
 export async function createServiceItem(input: unknown): Promise<ActionResult> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -64,6 +72,11 @@ export async function createServiceItem(input: unknown): Promise<ActionResult> {
     .from('service_items')
     .insert({
       ...fields,
+      // Default service_group to the name-without-duration when the form
+      // leaves it blank. NULL group makes the item invisible in the
+      // Employees skill picker, which is a silent-failure trap; auto-deriving
+      // matches what the backfill migration did for the seed rows.
+      service_group: fields.service_group || deriveServiceGroup(fields.name),
       required_resource_type: fields.required_resource_type || null,
       active: true,
     })
@@ -87,7 +100,22 @@ export async function updateServiceItem(input: unknown): Promise<ActionResult> {
   const d = parsed.data;
   const patch: ServiceItemUpdate = {};
   if (d.name !== undefined) patch.name = d.name;
-  if (d.service_group !== undefined) patch.service_group = d.service_group || null;
+  // Same defensive default as createServiceItem: if the form clears
+  // service_group, fall back to deriving it from the (new or existing) name so
+  // the item stays visible in the Employees skill picker.
+  if (d.service_group !== undefined) {
+    if (d.service_group) {
+      patch.service_group = d.service_group;
+    } else {
+      let baseName = d.name;
+      if (!baseName) {
+        const { data: cur } = await (await createAuditedClient())
+          .from('service_items').select('name').eq('id', d.id).maybeSingle();
+        baseName = cur?.name ?? '';
+      }
+      patch.service_group = baseName ? deriveServiceGroup(baseName) : null;
+    }
+  }
   if (d.service_category_id !== undefined) patch.service_category_id = d.service_category_id;
   if (d.duration_minutes !== undefined) patch.duration_minutes = d.duration_minutes;
   if (d.prep_before_minutes !== undefined) patch.prep_before_minutes = d.prep_before_minutes;

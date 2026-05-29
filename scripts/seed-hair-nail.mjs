@@ -121,6 +121,11 @@ for (const it of nailServices) {
     {
       code: it.code,
       name: it.name,
+      // service_group drives the "Skills this therapist can perform" picker on
+      // the Employees page (distinct-on service_group). Items with NULL group
+      // are silently dropped from that picker, so always set it explicitly —
+      // for nail services there's no duration suffix to strip, so group=name.
+      service_group: it.name,
       service_category_id: categoryId.NAIL,
       duration_minutes: it.duration,
       prep_before_minutes: it.prep,

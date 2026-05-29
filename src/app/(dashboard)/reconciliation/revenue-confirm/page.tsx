@@ -147,8 +147,12 @@ export default async function RevenueConfirmPage({
             </CardContent>
           </Card>
 
-          <Card className="p-0 overflow-hidden">
-            <CardHeader className="flex-row items-center justify-between p-4">
+          {/* Header (date + Confirm button) + Table live in one Card with a
+              stronger outline so the desk reads "Today's batch" as a single
+              workflow block. A subtle bg tint + bottom border on the header
+              keeps the visual hierarchy inside the frame. */}
+          <Card className="p-0 overflow-hidden ring-1 ring-border shadow-sm">
+            <CardHeader className="flex-row items-center justify-between p-4 bg-muted/30 border-b border-border">
               <CardTitle className="text-base font-bold">{date} · {orders.length} order(s) · {peso(total)}</CardTitle>
               <ConfirmRevenueButton branchId={branchId} date={date} count={orders.length} disabled={!cashClosed} />
             </CardHeader>

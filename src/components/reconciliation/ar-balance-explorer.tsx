@@ -93,7 +93,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
     });
   }
 
-  function section(title: string, hint: string, debtors: ArDebtor[], settleable = false) {
+  function section(title: string, hint: string, debtors: ArDebtor[], settleable = false, selectBar?: React.ReactNode) {
     if (debtors.length === 0) return null;
     const subtotal = debtors.reduce((s, d) => s + d.total_cents, 0);
     return (
@@ -105,6 +105,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
           </div>
           <span className="text-sm font-bold tabular">{peso(subtotal)}</span>
         </div>
+        {selectBar}
         <Card className="p-0 overflow-hidden">
           <Table className="table-fixed">
             <colgroup>
@@ -269,32 +270,37 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
 
       {section('Third-party — to collect', 'Real receivables — collected via Record Payment (e.g. Elnido Go pays periodically).', thirdParty)}
 
-      {intercompany.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {interCoIds.length > 0 && (
-            <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="size-4 cursor-pointer accent-primary"
-                  checked={allIntercoSel}
-                  onChange={toggleAllInterco}
-                />
-                <span className="text-sm font-bold">Select all ({interCoIds.length})</span>
-                <span className="text-xs font-medium text-muted-foreground">— pick intercompany statements to batch settle</span>
-              </label>
-              {sel.size > 0 && (
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-bold">{sel.size} selected · {peso(selectedTotal)}</span>
-                  <Button size="sm" onClick={doSettle} disabled={settling}>
-                    {settling ? 'Settling…' : `Settle & post (${sel.size})`}
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-          {section('Intercompany — to settle', 'Cleared by internal cost transfer (Settle), not cash collection.', intercompany, true)}
-        </div>
+      {/* Select-all bar lives INSIDE the Intercompany section (between the
+          title and the table) so it visually belongs to the section it acts
+          on — previously it sat above the section title and read as a
+          stray Third-party control. */}
+      {section(
+        'Intercompany — to settle',
+        'Cleared by internal cost transfer (Settle), not cash collection.',
+        intercompany,
+        true,
+        interCoIds.length > 0 ? (
+          <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="size-4 cursor-pointer accent-primary"
+                checked={allIntercoSel}
+                onChange={toggleAllInterco}
+              />
+              <span className="text-sm font-bold">Select all ({interCoIds.length})</span>
+              <span className="text-xs font-medium text-muted-foreground">— pick intercompany statements to batch settle</span>
+            </label>
+            {sel.size > 0 && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-bold">{sel.size} selected · {peso(selectedTotal)}</span>
+                <Button size="sm" onClick={doSettle} disabled={settling}>
+                  {settling ? 'Settling…' : `Settle & post (${sel.size})`}
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : undefined,
       )}
     </div>
   );

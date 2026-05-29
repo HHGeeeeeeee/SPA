@@ -15,6 +15,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -190,6 +191,11 @@ export function TipSettlementWorkspace({
   // Void rows have no PDF function (settlement was reversed) — they're shown
   // for the audit trail but excluded from selection / Select all.
   const selectable = filteredHistory.filter((s) => s.status !== 'void');
+  // Grand totals (non-void only) for the footer. Void settlements were
+  // reversed, so they shouldn't count toward the period AP total.
+  const histGrandTotal = selectable.reduce((s, x) => s + x.subtotal_cents, 0);
+  const histGrandCount = selectable.length;
+  const histVoidCount = filteredHistory.length - histGrandCount;
   const allHistSelected = selectable.length > 0 && selectable.every((s) => histSel.has(s.id));
   function toggleHistSel(id: string) {
     setHistSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -499,6 +505,20 @@ export function TipSettlementWorkspace({
                       );
                     })}
                   </TableBody>
+                  {/* Grand Totals — sum of non-void settlements in the current
+                      filter window. Aligned under the parent Total column. */}
+                  <TableFooter>
+                    <TableRow className="border-t-2 border-border bg-muted/50 hover:bg-muted/50">
+                      <TableCell colSpan={6} className="font-extrabold uppercase text-xs tracking-wider text-muted-foreground pl-4">
+                        Grand Totals
+                        <span className="ml-2 text-muted-foreground/70 normal-case tracking-normal text-[11px]">
+                          ({histGrandCount} settlement{histGrandCount === 1 ? '' : 's'}{histVoidCount > 0 ? ` · ${histVoidCount} void excluded` : ''})
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-extrabold tabular text-right bg-muted/60">{peso(histGrandTotal)}</TableCell>
+                      <TableCell colSpan={3} className="bg-muted/60" />
+                    </TableRow>
+                  </TableFooter>
                 </Table>
               </Card>
             </>

@@ -15,6 +15,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -179,6 +180,12 @@ export function CommissionSettlementWorkspace({
   );
   // Void periods are shown for audit but not selectable for PDF.
   const selectable = filteredHistory.filter((p) => p.status !== 'void');
+  // Grand totals (non-void only). Void commission periods were reversed —
+  // their lines went back to the open pool so they shouldn't double-count.
+  const histGrandSessions = selectable.reduce((s, x) => s + x.total_sessions, 0);
+  const histGrandCommission = selectable.reduce((s, x) => s + x.total_commission_cents, 0);
+  const histGrandCount = selectable.length;
+  const histVoidCount = filteredHistory.length - histGrandCount;
   const allHistSelected = selectable.length > 0 && selectable.every((p) => histSel.has(p.id));
   function toggleHistSel(id: string) {
     setHistSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -508,6 +515,22 @@ export function CommissionSettlementWorkspace({
                       );
                     })}
                   </TableBody>
+                  {/* Grand Totals — sum of non-void periods in the current
+                      filter window. Sessions aligned under Sessions column,
+                      commission under Commission column. */}
+                  <TableFooter>
+                    <TableRow className="border-t-2 border-border bg-muted/50 hover:bg-muted/50">
+                      <TableCell colSpan={6} className="font-extrabold uppercase text-xs tracking-wider text-muted-foreground pl-4">
+                        Grand Totals
+                        <span className="ml-2 text-muted-foreground/70 normal-case tracking-normal text-[11px]">
+                          ({histGrandCount} period{histGrandCount === 1 ? '' : 's'}{histVoidCount > 0 ? ` · ${histVoidCount} void excluded` : ''})
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-extrabold tabular text-right bg-muted/60">{histGrandSessions}</TableCell>
+                      <TableCell className="font-extrabold tabular text-right bg-muted/60">{peso(histGrandCommission)}</TableCell>
+                      <TableCell colSpan={2} className="bg-muted/60" />
+                    </TableRow>
+                  </TableFooter>
                 </Table>
               </Card>
             </>

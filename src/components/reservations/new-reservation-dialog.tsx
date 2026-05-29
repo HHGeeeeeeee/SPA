@@ -444,28 +444,61 @@ export function NewReservationDialog({
                 {availableCategories.length === 0 ? (
                   <p className="text-xs font-medium text-muted-foreground px-2 py-1">No service types at this branch.</p>
                 ) : (
-                  availableCategories.map((c) => (
-                    <label key={c.id} className="flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 hover:bg-accent">
-                      <input
-                        type="checkbox"
-                        className="size-4 cursor-pointer accent-primary"
-                        checked={categoryIds.includes(c.id)}
-                        onChange={() => toggleCategory(c.id)}
-                      />
-                      <span className="text-sm font-semibold">{c.name}</span>
-                      <span className="text-xs font-medium text-muted-foreground">
-                        {c.requiredResourceType ? rtLabel(c.requiredResourceType) : 'no resource set'}
-                      </span>
-                    </label>
-                  ))
+                  availableCategories.map((c) => {
+                    // A locked bed has a single resource_type; only the
+                    // category that matches it can actually run on that bed.
+                    // Disable the others (with a hint) so the desk can't pick
+                    // an impossible combo from the click-to-add flow — the
+                    // server enforces the same rule, this is the UX nudge.
+                    const incompatible = !!lockedBed?.type && !!c.requiredResourceType && c.requiredResourceType !== lockedBed.type;
+                    return (
+                      <label
+                        key={c.id}
+                        className={`flex items-center gap-2 rounded-md px-2 py-1.5 ${incompatible ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-accent'}`}
+                        title={incompatible ? `${rtLabel(lockedBed!.type!)} can't host this service` : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          className="size-4 cursor-pointer accent-primary"
+                          checked={categoryIds.includes(c.id)}
+                          disabled={incompatible}
+                          onChange={() => toggleCategory(c.id)}
+                        />
+                        <span className="text-sm font-semibold">{c.name}</span>
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {c.requiredResourceType ? rtLabel(c.requiredResourceType) : 'no resource set'}
+                        </span>
+                      </label>
+                    );
+                  })
                 )}
               </div>
+              {/* Click-to-add from the board pins ONE station; the system
+                  doesn't currently hold a second station of a different type
+                  for the same reservation, so we restrict the picker to the
+                  bed's compatible category. Mixed services need separate
+                  reservations or get itemised in the order at check-in. */}
+              {lockedBed?.type && (
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  Bed is locked to {rtLabel(lockedBed.type)} — non-matching services are disabled. Mix-and-match goes on the order at check-in.
+                </p>
+              )}
             </div>
 
             {/* Optional specific service. Walk-ins usually set it (so the order
                 line + capable therapist are confirmed); advance bookings can leave
-                it "Any" and let the guest choose at check-in. Never required. */}
-            {cat0 && itemChoices.length > 0 && (
+                it "Any" and let the guest choose at check-in. Never required.
+                Hidden when 2+ categories are ticked because the dropdown only
+                lists the first category's services — leaving it visible there
+                misrepresents what's bookable. Mixed-service guests get their
+                per-line detail entered in the order at check-in. */}
+            {categoryIds.length >= 2 ? (
+              <div className="flex flex-col gap-2 col-span-2">
+                <p className="text-xs font-medium text-muted-foreground rounded-md border border-dashed border-border bg-muted/30 px-3 py-2">
+                  Multiple service types selected — per-guest service detail is set on the order at check-in.
+                </p>
+              </div>
+            ) : cat0 && itemChoices.length > 0 && (
               <div className="flex flex-col gap-2 col-span-2">
                 <Label className="font-semibold">Specific service <span className="font-medium text-muted-foreground">(optional)</span></Label>
                 <Select

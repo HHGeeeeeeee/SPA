@@ -498,13 +498,15 @@ export function TipSettlementWorkspace({
                                 {/* Amount + trailing spacers mirror the parent's Total
                                     (w-32) + Status (w-24) + Actions (w-20). */}
                                 <Table className="table-fixed">
-                                  {/* Therapist column widened (w-44 → w-60) to
-                                      fit "Long Name [from XXX]" without the
-                                      badge overflowing into Date. pl-12 indent
-                                      eats 48pt; the cell needs ~200pt of room
-                                      for name (~70pt) + gap + badge (~70pt). */}
+                                  {/* Therapist column widened to w-80 (320pt) —
+                                      pl-12 indent eats 48pt and a real full
+                                      name (15-20 chars ~150pt) plus the
+                                      "from XXX" badge (~70pt) wants ~230pt of
+                                      content room. Date + Order push right
+                                      accordingly so the badge has breathing
+                                      space and never collides with the date. */}
                                   <colgroup>
-                                    <col className="w-60" />
+                                    <col className="w-80" />
                                     <col className="w-32" />
                                     <col />
                                     <col className="w-32" />

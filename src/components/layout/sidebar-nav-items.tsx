@@ -20,6 +20,11 @@ import {
 export interface NavSubItem {
   label: string;
   href: string;
+  // Optional grouping marker — consecutive children with the same `section`
+  // are wrapped together under one labelled bar in the sidebar. Used to mark
+  // the "must do daily" trio inside Reconciliation so the desk sees them as
+  // one workflow rather than 6 independent links.
+  section?: string;
 }
 
 export interface NavSubGroup {
@@ -37,8 +42,10 @@ export interface NavItem {
 
 export const mainNavItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },
+  // Shift Schedule first — the desk's daily-start workflow (set up the
+  // therapist/room board) precedes taking individual orders against it.
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarClock },
+  { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },
   { label: 'Reservations', href: '/reservations', icon: CalendarDays },
   { label: 'Customers', href: '/customers', icon: Users },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the
@@ -49,9 +56,12 @@ export const mainNavItems: NavItem[] = [
     icon: Wallet,
     href: '/reconciliation',
     children: [
-      { label: 'End of Day', href: '/reconciliation/end-of-day' },
-      { label: 'Shift Cash Count', href: '/reconciliation/cash' },
-      { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm' },
+      // Daily-close trio — desk must run these every business day before EoD
+      // can close. The shared section marker renders them under one labelled
+      // bar so they read as a single workflow, not three independent links.
+      { label: 'End of Day', href: '/reconciliation/end-of-day', section: 'Daily Close' },
+      { label: 'Shift Cash Count', href: '/reconciliation/cash', section: 'Daily Close' },
+      { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm', section: 'Daily Close' },
       { label: 'Tip Settlement', href: '/reconciliation/tips' },
       { label: 'Commission Settlement', href: '/reconciliation/commission' },
       { label: 'Accounts Receivable', href: '/reconciliation/soa' },

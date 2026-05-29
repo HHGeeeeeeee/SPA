@@ -7,7 +7,23 @@ import { ChevronDown } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { SpaLeaf } from '@/components/icons/spa-leaf';
-import { mainNavItems, bottomNavItems, type NavItem } from './sidebar-nav-items';
+import { mainNavItems, bottomNavItems, type NavItem, type NavSubItem } from './sidebar-nav-items';
+
+// Walk children once and emit segments of consecutive items that share a
+// `section` marker. Items without a section get their own ungrouped segment
+// so the renderer can style sectioned vs un-sectioned segments differently.
+function groupChildrenBySection(children: NavSubItem[]): { section?: string; items: NavSubItem[] }[] {
+  const segments: { section?: string; items: NavSubItem[] }[] = [];
+  for (const c of children) {
+    const last = segments[segments.length - 1];
+    if (last && last.section === c.section) {
+      last.items.push(c);
+    } else {
+      segments.push({ section: c.section, items: [c] });
+    }
+  }
+  return segments;
+}
 
 function isActive(pathname: string, href?: string, children?: { href: string }[]): boolean {
   if (href && (pathname === href || pathname.startsWith(href + '/'))) return true;
@@ -82,20 +98,48 @@ function NavLink({
         </button>
       </div>
       {open && (item.children || item.childGroups) && (
-        <div className="mt-1 ml-3 flex flex-col gap-px border-l border-sidebar-border pl-3">
-          {item.children?.map((c) => (
-            <ChildLink key={c.href} item={c} pathname={pathname} />
-          ))}
-          {item.childGroups?.map((group, idx) => (
-            <div key={group.label} className={cn('flex flex-col gap-px', idx > 0 && 'mt-2')}>
-              <p className="mx-3 pt-1 pb-1 mb-1 border-b border-sidebar-border text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-                {group.label}
-              </p>
-              {group.items.map((c) => (
-                <ChildLink key={c.href} item={c} pathname={pathname} />
+        <div className="mt-1 ml-3 flex flex-col gap-1">
+          {/* Children rendered as section-aware segments: consecutive items
+              with the same `section` share one wrapper. Sectioned segments
+              get a primary-coloured left bar + small uppercase header so the
+              grouping reads visually (e.g. Daily Close inside Reconciliation).
+              Un-sectioned items fall back to the muted border-l, matching the
+              previous single-bar look. */}
+          {item.children &&
+            groupChildrenBySection(item.children).map((seg, si) => (
+              <div
+                key={si}
+                className={cn(
+                  'flex flex-col gap-px border-l pl-3',
+                  seg.section
+                    ? 'border-l-2 border-primary/55'
+                    : 'border-sidebar-border',
+                )}
+              >
+                {seg.section && (
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary/80 mb-1 px-1">
+                    {seg.section}
+                  </p>
+                )}
+                {seg.items.map((c) => (
+                  <ChildLink key={c.href} item={c} pathname={pathname} />
+                ))}
+              </div>
+            ))}
+          {item.childGroups && (
+            <div className="border-l border-sidebar-border pl-3 flex flex-col gap-px">
+              {item.childGroups.map((group, idx) => (
+                <div key={group.label} className={cn('flex flex-col gap-px', idx > 0 && 'mt-2')}>
+                  <p className="mx-3 pt-1 pb-1 mb-1 border-b border-sidebar-border text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    {group.label}
+                  </p>
+                  {group.items.map((c) => (
+                    <ChildLink key={c.href} item={c} pathname={pathname} />
+                  ))}
+                </div>
               ))}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>

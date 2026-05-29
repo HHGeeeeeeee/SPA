@@ -26,6 +26,22 @@ function groupChildrenBySection(children: NavSubItem[]): { section?: string; ite
   return segments;
 }
 
+// Per-section visual tone. "Daily Close" is the high-attention cluster (run
+// every business day) so it gets the primary tint; everything else falls back
+// to a muted style so multiple sections side-by-side don't all compete for the
+// eye. New section labels can land without changes here — they inherit the
+// neutral fallback automatically.
+const SECTION_STYLES: Record<string, { border: string; label: string }> = {
+  'Daily Close': {
+    border: 'border-l-2 border-primary/55',
+    label: 'text-primary/80',
+  },
+};
+const NEUTRAL_SECTION_STYLE = {
+  border: 'border-l border-sidebar-border',
+  label: 'text-muted-foreground/80',
+};
+
 function isActive(pathname: string, href?: string, children?: { href: string }[]): boolean {
   if (href && (pathname === href || pathname.startsWith(href + '/'))) return true;
   if (children) {
@@ -107,26 +123,26 @@ function NavLink({
               Un-sectioned items fall back to the muted border-l, matching the
               previous single-bar look. */}
           {item.children &&
-            groupChildrenBySection(item.children).map((seg, si) => (
-              <div
-                key={si}
-                className={cn(
-                  'flex flex-col gap-px border-l pl-3',
-                  seg.section
-                    ? 'border-l-2 border-primary/55'
-                    : 'border-sidebar-border',
-                )}
-              >
-                {seg.section && (
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary/80 mb-1 px-1">
-                    {seg.section}
-                  </p>
-                )}
-                {seg.items.map((c) => (
-                  <ChildLink key={c.href} item={c} pathname={pathname} />
-                ))}
-              </div>
-            ))}
+            groupChildrenBySection(item.children).map((seg, si) => {
+              const style = seg.section
+                ? SECTION_STYLES[seg.section] ?? NEUTRAL_SECTION_STYLE
+                : NEUTRAL_SECTION_STYLE;
+              return (
+                <div
+                  key={si}
+                  className={cn('flex flex-col gap-px pl-3', style.border)}
+                >
+                  {seg.section && (
+                    <p className={cn('text-[10px] font-bold uppercase tracking-[0.12em] mb-1 px-1', style.label)}>
+                      {seg.section}
+                    </p>
+                  )}
+                  {seg.items.map((c) => (
+                    <ChildLink key={c.href} item={c} pathname={pathname} />
+                  ))}
+                </div>
+              );
+            })}
           {item.childGroups && (
             <div className="border-l border-sidebar-border pl-3 flex flex-col gap-px">
               {item.childGroups.map((group, idx) => (

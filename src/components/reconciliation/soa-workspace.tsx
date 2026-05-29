@@ -34,7 +34,7 @@ import { loadSoaWorkspace, generateSOAGroups, type SoaGroup, type SoaHistoryRow,
 export type { SoaHistoryRow, ArBalance };
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {

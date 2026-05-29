@@ -7,7 +7,7 @@ const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? nu
 
 function php(cents: number): string {
   // Helvetica has no ₱ glyph — spell the currency.
-  return `PHP ${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  return `${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
 function moneyCell(cents: number): string {
   return cents > 0 ? php(cents) : '—';
@@ -165,7 +165,7 @@ function RevenueConfirmDoc({ d }: { d: PdfData }) {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.brand}>{d.branch_name}</Text>
-            <Text style={styles.sub}>REVENUE CONFIRM</Text>
+            <Text style={styles.sub}>REVENUE CONFIRM  ·  CURRENCY PHP</Text>
           </View>
           <View>
             <Text style={styles.metaLabel}>GL Voucher No.</Text>

@@ -16,7 +16,7 @@ import { ReportIncidentDialog } from '@/components/incidents/report-incident-dia
 export const dynamic = 'force-dynamic';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  return (cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 });
 }
 
 function one<T>(v: T | T[] | null): T | null {

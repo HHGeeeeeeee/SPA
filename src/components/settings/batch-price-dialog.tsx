@@ -35,7 +35,7 @@ export interface BatchTarget {
 }
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 0 });
 }
 function todayISO(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -139,7 +139,7 @@ export function BatchPriceDialog({
               </div>
             )}
             <div className="flex flex-col gap-1">
-              <Label className="text-xs font-semibold">{mode === 'percent' ? 'Percent (%)' : mode === 'amount' ? 'Amount (₱)' : 'Set price to (₱)'}</Label>
+              <Label className="text-xs font-semibold">{mode === 'percent' ? 'Percent (%)' : mode === 'amount' ? 'Amount' : 'Set price to'}</Label>
               <Input type="number" min="0" step={mode === 'percent' ? '0.5' : '1'} value={magnitude} onChange={(e) => setMagnitude(e.target.value)} className="w-32" placeholder={mode === 'percent' ? '10' : mode === 'amount' ? '100' : '1000'} />
             </div>
             <div className="flex flex-col gap-1">

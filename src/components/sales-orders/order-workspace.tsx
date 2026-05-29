@@ -54,7 +54,7 @@ import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
 import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 interface OrderItem {
@@ -142,7 +142,7 @@ const GENDER_OPTS = [
 ];
 
 function peso0(cents: number | null): string {
-  return cents == null ? '—' : `₱${(cents / 100).toLocaleString('en-PH')}`;
+  return cents == null ? '—' : `${(cents / 100).toLocaleString('en-PH')}`;
 }
 
 function hm(ts: string | null): string {
@@ -526,7 +526,7 @@ export function OrderWorkspace({
     d.discount_percent > 0
       ? `${d.discount_percent}%`
       : d.discount_amount_cents > 0
-        ? `₱${(d.discount_amount_cents / 100).toLocaleString()}`
+        ? `${(d.discount_amount_cents / 100).toLocaleString()}`
         : null;
   const discOptions = discountClasses.map((d) => {
     const rate = discRate(d);
@@ -882,7 +882,7 @@ export function OrderWorkspace({
                     </div>
                     {needsDiscountAmount && (
                       <div>
-                        <Label className="text-xs font-semibold">{selectedDiscountCode} amount (₱) *</Label>
+                        <Label className="text-xs font-semibold">{selectedDiscountCode} amount *</Label>
                         <Input type="number" min="0" step="0.01" value={discountOverride} onChange={(e) => setDiscountOverride(e.target.value)} placeholder="manager-set" />
                       </div>
                     )}

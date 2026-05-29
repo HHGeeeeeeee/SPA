@@ -118,11 +118,11 @@ export function IssueCardDialog({ customers, branches, discountClasses, defaultE
               <Input id="sv-exp" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} required />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="sv-init" className="font-semibold">Initial Amount (₱) *</Label>
+              <Label htmlFor="sv-init" className="font-semibold">Initial Amount *</Label>
               <Input id="sv-init" type="number" min="0" step="0.01" value={initial} onChange={(e) => setInitial(e.target.value)} placeholder="5000" required />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="sv-bonus" className="font-semibold">Bonus (₱)</Label>
+              <Label htmlFor="sv-bonus" className="font-semibold">Bonus</Label>
               <Input id="sv-bonus" type="number" min="0" step="0.01" value={bonus} onChange={(e) => setBonus(e.target.value)} />
             </div>
             <div className="flex flex-col gap-2 col-span-2">

@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 export const dynamic = 'force-dynamic';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 function one<T>(v: T | T[] | null): T | null {

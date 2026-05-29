@@ -24,7 +24,7 @@ import { closeCashReconciliation, reopenCashReconciliation } from '@/app/(dashbo
 import { type ShiftStatus } from '@/app/(dashboard)/reconciliation/cash/shifts';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 interface Props {
@@ -127,7 +127,7 @@ export function CashReconForm({ branchId, date, shift, canReopen }: Props) {
       <span className="font-bold">{shift.label}<span className="ml-2 text-xs font-medium text-muted-foreground tabular">{shift.windowLabel}</span></span>
       {rows}
       <div className="flex flex-col gap-2">
-        <Label className="font-semibold">Counted cash (₱)</Label>
+        <Label className="font-semibold">Counted cash</Label>
         <Input type="number" min="0" step="0.01" value={actual} onChange={(e) => setActual(e.target.value)} className="w-40" />
       </div>
       <div className="flex items-center justify-between text-sm">

@@ -26,7 +26,7 @@ function todayPHT(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 function moneyCell(cents: number): string {
   return cents > 0 ? peso(cents) : '—';

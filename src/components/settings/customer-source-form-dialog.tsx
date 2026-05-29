@@ -95,7 +95,7 @@ export function CustomerSourceFormDialog({
     d.discount_percent > 0
       ? `${d.discount_percent}%`
       : d.discount_amount_cents > 0
-        ? `₱${(d.discount_amount_cents / 100).toLocaleString()}`
+        ? `${(d.discount_amount_cents / 100).toLocaleString()}`
         : null;
   const discountOptions = [
     { value: NONE, label: 'None' },

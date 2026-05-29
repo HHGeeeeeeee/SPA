@@ -3,6 +3,7 @@
 import { Bell, Search } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { CurrencyBadge } from '@/components/ui/currency-badge';
 
 export interface TopBarProps {
   /**
@@ -30,6 +31,9 @@ export function TopBar({ title, userName }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Single-source currency indicator. Every amount on the POS is in this
+            unit; no per-amount ₱ / PHP symbols are shown downstream. */}
+        <CurrencyBadge />
         <button
           type="button"
           className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

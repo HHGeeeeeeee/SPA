@@ -234,7 +234,7 @@ export function ServiceItemFormDialog({
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                <Label htmlFor="si-price" className="font-semibold">Price (₱) *</Label>
+                <Label htmlFor="si-price" className="font-semibold">Price *</Label>
                 <Input
                   id="si-price"
                   type="number"

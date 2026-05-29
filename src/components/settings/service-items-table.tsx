@@ -128,7 +128,7 @@ export function ServiceItemsTable({
                       <TableCell className="font-mono font-bold">{r.code}</TableCell>
                       <TableCell className="font-bold tabular">{r.duration_minutes} min</TableCell>
                       <TableCell className="font-bold tabular text-right">
-                        {r.priceCents != null ? `₱${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
+                        {r.priceCents != null ? `${(r.priceCents / 100).toLocaleString('en-PH')}` : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell className="font-medium tabular text-sm text-muted-foreground">
                         {r.validFrom ? (
@@ -138,7 +138,7 @@ export function ServiceItemsTable({
                         ) : '—'}
                         {r.future && (
                           <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
-                            → ₱{(r.future.price_cents / 100).toLocaleString('en-PH')} from {r.future.effective_from}
+                            → {(r.future.price_cents / 100).toLocaleString('en-PH')} from {r.future.effective_from}
                           </div>
                         )}
                       </TableCell>

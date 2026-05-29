@@ -7,7 +7,7 @@ const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? nu
 
 function php(cents: number): string {
   // Built-in Helvetica has no ₱ glyph, so spell the currency.
-  return `PHP ${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  return `${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
 function todayPHT(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -111,7 +111,7 @@ function TipDoc({ d }: { d: PdfData }) {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.brand}>{d.branch_name}</Text>
-            <Text style={styles.sub}>TIP SETTLEMENT</Text>
+            <Text style={styles.sub}>TIP SETTLEMENT  ·  CURRENCY PHP</Text>
           </View>
           <View>
             <Text style={styles.metaLabel}>Settlement No.</Text>

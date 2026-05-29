@@ -24,7 +24,7 @@ interface Method { id: string; code: string; display_name: string }
 interface Card { id: string; card_no: string; balance_cents: number; customer_name: string | null }
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 // Manager-only post-payment corrections on a completed/paid order: collect an
@@ -111,7 +111,7 @@ export function PaymentAdjust({
           <div className="flex flex-col gap-3 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="relative flex flex-col gap-1">
-                <Label className="text-xs font-semibold">Amount (₱)</Label>
+                <Label className="text-xs font-semibold">Amount</Label>
                 <Input type="number" min="0" max={(dueCents / 100).toFixed(2)} step="0.01" value={cAmount} onChange={(e) => setCAmount(e.target.value)} aria-invalid={cOver} className={cOver ? 'border-destructive' : undefined} />
                 {cOver && <span className="absolute top-full left-0 mt-0.5 whitespace-nowrap text-[11px] font-medium text-destructive">Max {peso(dueCents)}</span>}
               </div>
@@ -160,7 +160,7 @@ export function PaymentAdjust({
           <div className="flex flex-col gap-3 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="relative flex flex-col gap-1">
-                <Label className="text-xs font-semibold">Amount (₱)</Label>
+                <Label className="text-xs font-semibold">Amount</Label>
                 <Input type="number" min="0" max={(paidCents / 100).toFixed(2)} step="0.01" value={rAmount} onChange={(e) => setRAmount(e.target.value)} aria-invalid={rOver} className={rOver ? 'border-destructive' : undefined} />
                 {rOver && <span className="absolute top-full left-0 mt-0.5 whitespace-nowrap text-[11px] font-medium text-destructive">Max {peso(paidCents)}</span>}
               </div>

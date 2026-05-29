@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { loadSoaPayments, getArProofUrl, retrySoaPaymentPosting, type SoaPaymentRow } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 function peso(c: number): string {
-  return `₱${(c / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (c / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 function fmt(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));

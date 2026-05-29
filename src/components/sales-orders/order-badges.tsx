@@ -50,7 +50,7 @@ const PAY_DESC: Record<PayState, string> = {
 };
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 // Payment state from amounts alone — the single source of truth shared by the

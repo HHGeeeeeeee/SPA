@@ -5,7 +5,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 
 function php(cents: number): string {
   // Built-in Helvetica has no ₱ glyph, so spell the currency.
-  return `PHP ${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  return `${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
 const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
 
@@ -115,7 +115,7 @@ function SoaDoc({ d }: { d: PdfData }) {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.brand}>{d.branchName}</Text>
-            <Text style={styles.sub}>STATEMENT OF ACCOUNT</Text>
+            <Text style={styles.sub}>STATEMENT OF ACCOUNT  ·  CURRENCY PHP</Text>
           </View>
           <View>
             <Text style={styles.metaLabel}>SOA No.</Text>

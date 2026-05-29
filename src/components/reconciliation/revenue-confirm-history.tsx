@@ -18,7 +18,7 @@ import {
 import type { ConfirmableOrder } from '@/app/(dashboard)/reconciliation/revenue-confirm/actions';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 function moneyCell(cents: number): string {
   return cents > 0 ? peso(cents) : '—';

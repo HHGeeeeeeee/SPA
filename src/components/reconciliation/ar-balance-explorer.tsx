@@ -22,7 +22,7 @@ import { SoaPaymentsList } from '@/components/reconciliation/soa-payments-list';
 import { settleSOABatch, type ArBalance, type ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 function fmtDate(ymd: string | null): string {
   if (!ymd) return '—';

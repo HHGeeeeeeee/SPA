@@ -600,7 +600,7 @@ export async function recordSoaPayment(input: unknown): Promise<ActionResult> {
 
   const amountCents = Math.round(amount * 100);
   const outstanding = soa.total_cents - soa.paid_cents;
-  if (amountCents > outstanding) return { ok: false, error: `Amount exceeds the outstanding balance (₱${(outstanding / 100).toLocaleString('en-PH')})` };
+  if (amountCents > outstanding) return { ok: false, error: `Amount exceeds the outstanding balance (${(outstanding / 100).toLocaleString('en-PH')})` };
 
   // Cash physically lands in today's till, so it's stamped with the real time of
   // entry and feeds the shift cash count via cashReceivedCents. Non-cash methods

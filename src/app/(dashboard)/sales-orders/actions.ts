@@ -1135,7 +1135,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   // No overpayment: a collection can't push the paid total past the order total.
   if (order.paid_cents + amountCents > order.total_cents) {
     const due = Math.max(0, order.total_cents - order.paid_cents);
-    return { ok: false, error: `Amount exceeds the balance due (₱${(due / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
+    return { ok: false, error: `Amount exceeds the balance due (${(due / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
   }
 
   // Per-guest cap (Pay separately): a payment tagged to one guest can't exceed
@@ -1159,7 +1159,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     const custPaid = (custPays ?? []).reduce((s, p) => s + p.amount_cents, 0);
     const custDue = Math.max(0, custSubtotal - custPaid);
     if (amountCents > custDue) {
-      return { ok: false, error: `Amount exceeds this guest's balance due (₱${(custDue / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
+      return { ok: false, error: `Amount exceeds this guest's balance due (${(custDue / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
     }
   }
 
@@ -1354,7 +1354,7 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
     return { ok: false, error: 'The business day is closed — refunds can no longer post to this date.' };
   }
   if (amountCents > order.paid_cents) {
-    return { ok: false, error: `Refund exceeds the amount collected (₱${(order.paid_cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
+    return { ok: false, error: `Refund exceeds the amount collected (${(order.paid_cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
   }
 
   const { data: method } = await supabase.from('payment_methods').select('code').eq('id', d.payment_method_id).single();

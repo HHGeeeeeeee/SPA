@@ -18,7 +18,7 @@ import { CardRowActions } from '@/components/stored-value-cards/card-row-actions
 export const dynamic = 'force-dynamic';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {

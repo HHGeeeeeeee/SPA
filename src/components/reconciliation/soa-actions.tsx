@@ -86,12 +86,12 @@ function RecordPaymentDialog({ id, outstandingCents }: { id: string; outstanding
         <DialogHeader>
           <DialogTitle className="font-bold">Record Payment</DialogTitle>
           <DialogDescription className="font-medium">
-            Outstanding: ₱{(outstandingCents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}
+            Outstanding: {(outstandingCents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3 py-2">
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Amount (₱)</Label>
+            <Label className="text-xs font-semibold">Amount</Label>
             <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
           </div>
           <div className="flex flex-col gap-1">

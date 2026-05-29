@@ -91,7 +91,7 @@ export function CardRowActions({ card }: Props) {
               <DialogTitle className="font-bold">Top Up · {card.card_no}</DialogTitle>
             </DialogHeader>
             <div className="py-4">
-              <Label htmlFor="tu-amt" className="font-semibold">Amount (₱)</Label>
+              <Label htmlFor="tu-amt" className="font-semibold">Amount</Label>
               <Input id="tu-amt" type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-2" autoFocus />
             </div>
             <DialogFooter>

@@ -34,7 +34,7 @@ import {
 } from '@/app/(dashboard)/settings/service-items/actions';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 function todayISO(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -175,7 +175,7 @@ export function PriceScheduleDialog({
             <p className="text-sm font-bold mb-3">Schedule a price change</p>
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
-                <Label className="text-xs font-semibold">New price (₱)</Label>
+                <Label className="text-xs font-semibold">New price</Label>
                 <Input type="number" min="0" step="0.01" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-36" placeholder="900" />
               </div>
               <div className="flex flex-col gap-1">

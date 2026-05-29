@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { takePayment } from '@/app/(dashboard)/sales-orders/actions';
 
 function peso(cents: number): string {
-  return `₱${(cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
 export interface TipTarget {
@@ -80,7 +80,7 @@ export function CustomerPaymentCard({
   const refRequired = !!paymayaId && method === paymayaId;
   const cardOptions = storedValueCards.map((c) => ({
     value: c.id,
-    label: `${c.card_no}${c.customer_name ? ` · ${c.customer_name}` : ''} · ₱${(c.balance_cents / 100).toLocaleString('en-PH')}`,
+    label: `${c.card_no}${c.customer_name ? ` · ${c.customer_name}` : ''} · ${(c.balance_cents / 100).toLocaleString('en-PH')}`,
   }));
   const tipTotalPesos = tipTargets.reduce((s, t) => s + (Number(tips[t.orderItemId]) || 0), 0);
   const amountCents = Math.round((Number(amount) || 0) * 100);
@@ -143,7 +143,7 @@ export function CustomerPaymentCard({
           </Select>
         </div>
         <div className="relative flex flex-col gap-1">
-          <Label className="text-xs font-semibold">Amount (₱)</Label>
+          <Label className="text-xs font-semibold">Amount</Label>
           {/* Editable so a bill can be split across methods (e.g. cash part +
               PAYMAYA part). Defaults to the full due; tips stay separate.
               Can't exceed the due — over-collection is blocked. */}

@@ -10,6 +10,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -48,6 +49,19 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
       });
   }, [orders]);
 
+  // Grand totals across every day in the current view (respects the page-level
+  // date filter via the orders prop). Sits in the table footer so the desk can
+  // glance the period-total without having to add up the day groups.
+  const grand = useMemo(() => ({
+    cash: groups.reduce((s, g) => s + g.cash, 0),
+    paymaya: groups.reduce((s, g) => s + g.paymaya, 0),
+    ar: groups.reduce((s, g) => s + g.ar, 0),
+    total: groups.reduce((s, g) => s + g.total, 0),
+    tip: groups.reduce((s, g) => s + g.tip, 0),
+    orderCount: groups.reduce((s, g) => s + g.rows.length, 0),
+    dayCount: groups.length,
+  }), [groups]);
+
   // Open the most recent day by default.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.length ? [groups[0].date] : []));
   function toggle(date: string) {
@@ -69,7 +83,11 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
     // Single Card + single Table so the column headers stay visible no matter
     // how many day-groups are collapsed. Each day = one clickable summary row
     // (date + totals under their columns) followed by detail rows when open.
+    // Grand totals across all visible days render as a TableFooter.
     <Card className="p-0 overflow-hidden ring-1 ring-border">
+      <div className="px-4 py-3 bg-muted/30 border-b border-border text-sm font-semibold">
+        Confirmed (Closed) · <span className="tabular">{grand.orderCount}</span> order{grand.orderCount === 1 ? '' : 's'} across <span className="tabular">{grand.dayCount}</span> day{grand.dayCount === 1 ? '' : 's'} · grouped by service date
+      </div>
       <Table className="table-fixed">
         <colgroup>
           <col className="w-56" />{/* Order No / Date */}
@@ -159,6 +177,25 @@ export function RevenueConfirmHistory({ orders }: { orders: ConfirmableOrder[] }
             );
           })}
         </TableBody>
+        {/* Grand totals: sums across every visible day, regardless of which
+            groups are expanded. Mirrors the day-summary styling (bg-muted/40
+            + border-l/r on the Sales / Tips groups) so the bottom line reads
+            as the period close-out for whatever filter the user has applied. */}
+        <TableFooter>
+          <TableRow className="border-t-2 border-border bg-muted/50 hover:bg-muted/50">
+            <TableCell colSpan={4} className="font-extrabold uppercase text-xs tracking-wider text-muted-foreground pl-4">
+              Grand Totals
+              <span className="ml-2 text-muted-foreground/70 normal-case tracking-normal text-[11px]">
+                ({grand.orderCount} order{grand.orderCount === 1 ? '' : 's'} · {grand.dayCount} day{grand.dayCount === 1 ? '' : 's'})
+              </span>
+            </TableCell>
+            <TableCell className="font-extrabold tabular text-right bg-muted/60 border-l border-border">{moneyCell(grand.cash)}</TableCell>
+            <TableCell className="font-extrabold tabular text-right bg-muted/60">{moneyCell(grand.paymaya)}</TableCell>
+            <TableCell className="font-extrabold tabular text-right bg-muted/60">{moneyCell(grand.ar)}</TableCell>
+            <TableCell className="font-extrabold tabular text-right bg-muted/60 border-r border-border text-foreground">{peso(grand.total)}</TableCell>
+            <TableCell className="font-extrabold tabular text-right bg-muted/60 border-r border-border pr-4">{moneyCell(grand.tip)}</TableCell>
+          </TableRow>
+        </TableFooter>
       </Table>
     </Card>
   );

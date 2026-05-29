@@ -79,7 +79,6 @@ export default async function RevenueConfirmPage({
     ? (await loadConfirmedHistory(branchId)).length
     : null;
   const total = orders.reduce((s, o) => s + o.total_cents, 0);
-  const histTotal = history.reduce((s, o) => s + o.total_cents, 0);
   // Column totals for the footer row
   const cashTotal = orders.reduce((s, o) => s + o.cash_cents, 0);
   const paymayaTotal = orders.reduce((s, o) => s + o.paymaya_cents, 0);
@@ -129,9 +128,6 @@ export default async function RevenueConfirmPage({
       ) : view === 'history' ? (
         <>
           <RevenueHistoryFilter from={histFrom} to={histTo} shownCount={history.length} totalCount={historyTotal} />
-          <p className="text-sm font-semibold text-muted-foreground -mb-2">
-            Confirmed (Closed) · {history.length} order(s) · {peso(histTotal)} · grouped by service date
-          </p>
           <RevenueConfirmHistory orders={history} />
         </>
       ) : (

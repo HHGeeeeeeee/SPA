@@ -8,6 +8,7 @@ import { canAccessBranch } from '@/lib/branch-access';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { canPerformAny, matchesGender } from '@/lib/therapist-availability';
 import { addOrderItem } from '@/app/(dashboard)/sales-orders/actions';
+import { assertBedsMatchCategories } from '@/lib/resource-compatibility';
 
 const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
 
@@ -500,6 +501,7 @@ async function resolvePinnedBeds(
   branchId: string,
   resourceIds: string[],
   pax: number,
+  categoryIds: string[],
   start: string,
   end: string,
   locationType: string,
@@ -520,6 +522,11 @@ async function resolvePinnedBeds(
   const found = new Map((rows ?? []).map((r) => [r.id, r.resource_name]));
   const missing = ids.filter((id) => !found.has(id));
   if (missing.length) return { ok: false, error: 'A pinned bed is not an active resource of this branch' };
+  // Resource-type guard — a Hair Salon booking can't pin Bed #1 (massage_bed)
+  // just because it's free. The previous code only enforced this for the
+  // auto-picked "extra" beds in a group; the anchor / first pin was unchecked.
+  const compat = await assertBedsMatchCategories(ids, categoryIds);
+  if (!compat.ok) return { ok: false, error: compat.error };
   const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
   const taken = ids.filter((id) => busy.has(id)).map((id) => found.get(id));
   if (taken.length) return { ok: false, error: `Already taken for this window: ${taken.join(', ')}` };
@@ -629,7 +636,7 @@ async function resolveEffectiveBeds(args: {
 }): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
   if (args.locationType === 'external_hotel') return { ok: true, ids: [] };
   if (args.resourceIds.length > 0) {
-    const pinned = await resolvePinnedBeds(args.branchId, args.resourceIds, args.pax, args.start, args.end, args.locationType, args.excludeReservationId);
+    const pinned = await resolvePinnedBeds(args.branchId, args.resourceIds, args.pax, args.categoryIds, args.start, args.end, args.locationType, args.excludeReservationId);
     if (!pinned.ok) return pinned;
     // One bed per guest: if fewer beds were pinned than pax (e.g. clicked a single
     // slot on the board for a group), top up to pax with nearby free beds.

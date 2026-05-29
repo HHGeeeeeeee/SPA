@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import { canAccessBranch } from '@/lib/branch-access';
 import { currentSession, isManager } from '@/lib/auth';
+import { assertBedsMatchCategories, assertBedMatchesServiceItem } from '@/lib/resource-compatibility';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -145,6 +146,13 @@ export async function placeReservationOnBed(input: unknown): Promise<ActionResul
   if (await bedHasConflict(supabase, bed_id, day, start_min, endMin, { reservationId: reservation_id })) {
     return { ok: false, error: 'That bed is already booked for this time' };
   }
+  // Resource-type guard — Hair Salon onto Bed #1 (massage_bed) etc. used to
+  // sail through because the conflict check is purely time-based.
+  {
+    const categoryIds = (r.reservation_service_categories ?? []).map((x) => x.service_category_id);
+    const compat = await assertBedsMatchCategories([bed_id], categoryIds);
+    if (!compat.ok) return { ok: false, error: compat.error };
+  }
 
   const startIso = makeIso(day, start_min);
   const endIso = new Date(Date.parse(startIso) + durationMin * 60000).toISOString();
@@ -214,7 +222,7 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
 
   const { data: it } = await supabase
     .from('order_items')
-    .select('status, duration_minutes, order:orders!order_items_order_id_fkey ( branch_id )')
+    .select('status, duration_minutes, service_item_id, order:orders!order_items_order_id_fkey ( branch_id )')
     .eq('id', item_id)
     .single();
   if (!it) return { ok: false, error: 'Order item not found' };
@@ -226,6 +234,11 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
   const endMin = start_min + durationMin;
   if (await bedHasConflict(supabase, bed_id, day, start_min, endMin, { itemId: item_id })) {
     return { ok: false, error: 'That bed is already booked for this time' };
+  }
+  // Resource-type guard for the same reason as placeReservationOnBed.
+  if (it.service_item_id) {
+    const compat = await assertBedMatchesServiceItem(bed_id, it.service_item_id);
+    if (!compat.ok) return { ok: false, error: compat.error };
   }
 
   const startIso = makeIso(day, start_min);

@@ -24,18 +24,30 @@ const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SECRET_
 async function main() {
   console.log('Phase 2 seed: looking up FKs…');
 
+  // text-column FKs were migrated to UUID FKs:
+  //   - business_unit → business_unit_id  (20260519164258_business_units_master)
+  //   - employees.position → position_id  (20260519155607_add_positions_table)
+  // Pull both new master tables so the inserts below can write the FKs.
   const { data: branches } = await supabase.from('branches').select('id, code');
   const { data: categories } = await supabase.from('service_categories').select('id, code');
   const { data: classes } = await supabase.from('commission_classes').select('id, class_code');
+  const { data: bUnits } = await supabase.from('business_units').select('id, code');
+  const { data: positions } = await supabase.from('positions').select('id, code');
 
   const byCode = (rows, key) => Object.fromEntries(rows.map((r) => [r[key], r.id]));
   const branchId = byCode(branches ?? [], 'code');
   const categoryId = byCode(categories ?? [], 'code');
   const classId = byCode(classes ?? [], 'class_code');
+  const bUnitId = byCode(bUnits ?? [], 'code');
+  const positionId = byCode(positions ?? [], 'code');
+  const SPA_UNIT = bUnitId.spa;
+  const MASSAGE_THERAPIST = positionId.MASSAGE_THERAPIST;
 
   if (!branchId.OSP2 || !categoryId.MASSAGE || !classId.J) {
     throw new Error('Phase 1 seed missing required rows (OSP2 / MASSAGE / J)');
   }
+  if (!SPA_UNIT) throw new Error('business_units.spa missing — run business_units_master migration first');
+  if (!MASSAGE_THERAPIST) throw new Error('positions.MASSAGE_THERAPIST missing — run add_positions_table migration first');
 
   // ---- Resources (OSP1 + OSP2)
   console.log('  · resources');
@@ -51,22 +63,28 @@ async function main() {
     { branch: 'OSP2', type: 'hair_chair', name: 'Hair Chair A', zone: 'OSP2-1F', capacity: 1 },
     { branch: 'OSP2', type: 'rest_room', name: 'Rest Room A', zone: 'OSP2-3F', capacity: 2 },
   ];
+  // resources has no UNIQUE constraint on (branch_id, resource_name), so the
+  // old `upsert(..., { onConflict: ... })` would fail outright. Do a manual
+  // check-then-insert keyed on (branch_id, resource_type, resource_name).
   for (const r of resourceRows) {
-    const { error } = await supabase
+    const { data: existing } = await supabase
       .from('resources')
-      .upsert(
-        {
-          branch_id: branchId[r.branch],
-          resource_type: r.type,
-          resource_name: r.name,
-          location_zone: r.zone,
-          capacity: r.capacity,
-          business_unit: 'spa',
-          status: 'active',
-        },
-        { onConflict: 'branch_id,resource_name', ignoreDuplicates: true },
-      );
-    if (error && !/duplicate|unique/i.test(error.message)) throw error;
+      .select('id')
+      .eq('branch_id', branchId[r.branch])
+      .eq('resource_type', r.type)
+      .eq('resource_name', r.name)
+      .maybeSingle();
+    if (existing) continue;
+    const { error } = await supabase.from('resources').insert({
+      branch_id: branchId[r.branch],
+      resource_type: r.type,
+      resource_name: r.name,
+      location_zone: r.zone,
+      capacity: r.capacity,
+      business_unit_id: SPA_UNIT,
+      status: 'active',
+    });
+    if (error) throw error;
   }
 
   // ---- Employees
@@ -78,23 +96,30 @@ async function main() {
     { code: 'E004', name: 'Pedro', phone: '63917000004', branch: 'OSP2', class: 'J', gender: 'M' },
     { code: 'E005', name: 'Lily', phone: '63917000005', branch: 'OSP1', class: 'J', gender: 'F' },
   ];
+  // employees has multiple unique keys (employee_code, phone). Supabase upsert
+  // can only use one onConflict target, and after the initial bootstrap the
+  // live DB may have re-coded these therapists (e.g. OSP{branch}-{seq}) while
+  // keeping the original phone numbers — that would trip the phone constraint.
+  // Skip if either key collides; the seed is fresh-DB-bootstrap data, not
+  // something to replay over user edits.
   for (const e of employees) {
-    const { error } = await supabase
+    const { data: existing } = await supabase
       .from('employees')
-      .upsert(
-        {
-          employee_code: e.code,
-          name: e.name,
-          phone: e.phone,
-          gender: e.gender,
-          home_branch_id: branchId[e.branch],
-          commission_class_id: classId[e.class],
-          position: 'Massage Therapist',
-          business_unit: 'spa',
-          status: 'active',
-        },
-        { onConflict: 'employee_code' },
-      );
+      .select('id, employee_code, name')
+      .or(`employee_code.eq.${e.code},phone.eq.${e.phone}`)
+      .maybeSingle();
+    if (existing) continue;
+    const { error } = await supabase.from('employees').insert({
+      employee_code: e.code,
+      name: e.name,
+      phone: e.phone,
+      gender: e.gender,
+      home_branch_id: branchId[e.branch],
+      commission_class_id: classId[e.class],
+      position_id: MASSAGE_THERAPIST,
+      business_unit_id: SPA_UNIT,
+      status: 'active',
+    });
     if (error) throw error;
   }
 
@@ -127,7 +152,7 @@ async function main() {
           pricing_model: 'per_session',
           commission_applicable: it.commission ?? true,
           tip_applicable: it.tip ?? true,
-          business_unit: 'spa',
+          business_unit_id: SPA_UNIT,
           active: true,
         },
         { onConflict: 'code' },

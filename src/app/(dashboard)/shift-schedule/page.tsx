@@ -1,12 +1,13 @@
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
-import { ShiftCell, type ShiftData } from '@/components/shift-schedule/shift-cell';
+import { type ShiftData } from '@/components/shift-schedule/shift-cell';
 import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift } from '@/components/shift-schedule/schedule-board';
 import { DispatchBoard } from '@/components/shift-schedule/dispatch-board';
 import { StaffNowCard } from '@/components/shift-schedule/staff-now-card';
 import { StationsNowCard } from '@/components/shift-schedule/stations-now-card';
+import { StaffWeekGrid } from '@/components/shift-schedule/staff-week-grid';
 import { BulkShiftDialog } from '@/components/shift-schedule/bulk-shift-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
@@ -716,22 +717,26 @@ async function fetchData(branchParam?: string, weekParam?: string) {
   const monday = weekParam ?? thisMonday();
   const days = weekDays(monday);
 
-  let employees: { id: string; employee_code: string; name: string; home_branch_id: string | null }[] = [];
+  let employees: { id: string; employee_code: string; name: string; home_branch_id: string | null; position_code: string | null }[] = [];
   let shifts: ShiftRow[] = [];
   if (branchId) {
     // Roster the branch's own therapists + any from branches in the same sharing
-    // group (cross-branch borrowing).
+    // group (cross-branch borrowing). Position joined so the week grid can
+    // group rows by Massage / Hair / Nail like the live cards do.
     const group = list.find((b) => b.id === branchId)?.therapist_share_group;
     const homeBranchIds = group ? list.filter((b) => b.therapist_share_group === group).map((b) => b.id) : [branchId];
     const [emp, sh] = await Promise.all([
-      supabase.from('employees').select('id, employee_code, name, home_branch_id').in('home_branch_id', homeBranchIds).eq('status', 'active').order('employee_code'),
+      supabase.from('employees').select('id, employee_code, name, home_branch_id, position:positions ( code )').in('home_branch_id', homeBranchIds).eq('status', 'active').order('employee_code'),
       supabase.from('employee_shifts')
         .select('employee_id, shift_date, shift_type, shift_start, shift_end, leave_type')
         .eq('branch_id', branchId)
         .gte('shift_date', days[0].date)
         .lte('shift_date', days[6].date),
     ]);
-    employees = emp.data ?? [];
+    employees = (emp.data ?? []).map((e) => ({
+      id: e.id, employee_code: e.employee_code, name: e.name, home_branch_id: e.home_branch_id,
+      position_code: one(e.position)?.code ?? null,
+    }));
     shifts = (sh.data ?? []) as ShiftRow[];
   }
 
@@ -839,7 +844,7 @@ export default async function ShiftSchedulePage({
         <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel="Therapist" nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} reservations={dayData!.reservations} />
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
-          No active therapists for this branch (or its sharing group).
+          No active staff for this branch (or its sharing group).
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
@@ -852,52 +857,26 @@ export default async function ShiftSchedulePage({
               />
             </div>
           )}
-        <Card className="p-0 overflow-auto max-h-[calc(100vh-16rem)]">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                {/* Top-left corner: frozen on both axes (above the header row and the name column). */}
-                <th className="text-left font-bold text-sm p-3 w-48 sticky left-0 top-0 z-30 bg-card border-b border-border">Therapist</th>
-                {days.map((d) => (
-                  <th key={d.date} className="text-center font-bold text-xs p-2 min-w-[88px] sticky top-0 z-20 bg-card border-b border-border">
-                    <div>{d.dow}</div>
-                    <div className="font-medium text-muted-foreground tabular">{d.label}</div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {employees.map((e) => (
-                <tr key={e.id} className="border-b border-border last:border-0">
-                  <td className="p-3 sticky left-0 z-10 bg-card">
-                    <div className="font-semibold text-sm">
-                      {e.name}
-                      {e.home_branch_id !== branchId && (
-                        <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
-                          from {branches.find((b) => b.id === e.home_branch_id)?.code ?? '?'}
-                        </span>
-                      )}
-                    </div>
-                    <div className="font-mono font-bold text-xs text-muted-foreground">{e.employee_code}</div>
-                  </td>
-                  {days.map((d) => (
-                    <td key={d.date} className="p-1 align-middle">
-                      <ShiftCell
-                        employeeId={e.id}
-                        employeeName={e.name}
-                        branchId={branchId}
-                        date={d.date}
-                        shift={shiftAt(e.id, d.date)}
-                        visiting={e.home_branch_id !== branchId}
-                        readOnly={!canManageRoster}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+          {/* Pre-flatten the (employee, date) → ShiftData map server-side so
+              the client component can do O(1) lookups while rendering. */}
+          {(() => {
+            const lookup: Record<string, ShiftData | null> = {};
+            for (const e of employees) {
+              for (const d of days) {
+                lookup[`${e.id}:${d.date}`] = shiftAt(e.id, d.date);
+              }
+            }
+            return (
+              <StaffWeekGrid
+                branchId={branchId}
+                branches={branches}
+                employees={employees}
+                days={days}
+                shiftLookup={lookup}
+                canManageRoster={canManageRoster}
+              />
+            );
+          })()}
         </div>
       )}
 

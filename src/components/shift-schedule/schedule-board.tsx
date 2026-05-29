@@ -1,9 +1,9 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { Fragment, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Users } from 'lucide-react';
+import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand } from 'lucide-react';
 import {
   DndContext,
   type DragEndEvent,
@@ -363,6 +363,53 @@ export function ScheduleBoard({
   // hover popup reads consistently with the top-of-page summary cards.
   const STATION_ORDER = ['massage_bed', 'hair_chair', 'nail_station'] as const;
   const STATION_LABEL: Record<string, string> = { massage_bed: 'bed', hair_chair: 'hair', nail_station: 'nail' };
+  // Plural labels + icons for the in-grid type-group headers. Anything outside
+  // STATION_ORDER falls through to the default label / icon.
+  const STATION_GROUP_LABEL: Record<string, string> = {
+    massage_bed: 'Beds', hair_chair: 'Hair chairs', nail_station: 'Nail stations',
+  };
+  const STATION_GROUP_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+    massage_bed: BedDouble, hair_chair: Scissors, nail_station: Hand,
+  };
+
+  // Collapse state per type-group, persisted per branch so the desk's
+  // preference survives navigation. Default = every group expanded.
+  const STORAGE_KEY = `hhg-spa:schedule-board:collapsed:${branchId}`;
+  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) setCollapsedTypes(new Set(JSON.parse(raw)));
+    } catch { /* defensive */ }
+  }, [STORAGE_KEY]);
+  useEffect(() => {
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsedTypes])); } catch { /* defensive */ }
+  }, [collapsedTypes, STORAGE_KEY]);
+  const toggleType = (t: string) =>
+    setCollapsedTypes((p) => { const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n; });
+
+  // Beds grouped by type in display order. Unknown types append at the end.
+  const bedsByType = (() => {
+    const groups = new Map<string, BoardBed[]>();
+    for (const b of beds) {
+      const arr = groups.get(b.type) ?? [];
+      arr.push(b);
+      groups.set(b.type, arr);
+    }
+    const ordered: { type: string; label: string; Icon: React.ComponentType<{ className?: string }>; rows: BoardBed[] }[] = [];
+    const defaultIcon = BedDouble;
+    for (const t of STATION_ORDER) {
+      const rows = groups.get(t);
+      if (rows && rows.length) {
+        ordered.push({ type: t, label: STATION_GROUP_LABEL[t] ?? t, Icon: STATION_GROUP_ICON[t] ?? defaultIcon, rows });
+        groups.delete(t);
+      }
+    }
+    for (const [type, rows] of groups) {
+      ordered.push({ type, label: STATION_GROUP_LABEL[type] ?? type.replace(/_/g, ' '), Icon: STATION_GROUP_ICON[type] ?? defaultIcon, rows });
+    }
+    return ordered;
+  })();
   const POSITION_ORDER = ['MASSAGE_THERAPIST', 'MASSAGE_NEWBI', 'HAIR_STYLIST', 'NAIL_TECHNICIAN'];
   const POSITION_LABEL: Record<string, string> = {
     MASSAGE_THERAPIST: 'Massage', MASSAGE_NEWBI: 'Newbi', HAIR_STYLIST: 'Hair', NAIL_TECHNICIAN: 'Nail',
@@ -549,21 +596,50 @@ export function ScheduleBoard({
           })()}
 
           {beds.length === 0 ? (
-            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No active beds for this branch.</div>
+            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No active stations for this branch.</div>
           ) : (
-            beds.map((bed) => (
-              <BedRow
-                key={bed.id}
-                bed={bed}
-                blocks={blocksByBed.get(bed.id) ?? []}
-                windowStartMin={windowStartMin}
-                trackWidth={trackWidth}
-                hours={hours}
-                nowMin={nowMin}
-                onOpen={openBlock}
-                onEmptyClick={onEmptyClick}
-              />
-            ))
+            bedsByType.map((group) => {
+              const isCollapsed = collapsedTypes.has(group.type);
+              const Icon = group.Icon;
+              return (
+                <Fragment key={group.type}>
+                  {/* Type-group header — chevron toggles collapse for this
+                      group only. Spans the full row so it stays aligned with
+                      the timeline; sticky-left on the label keeps it visible
+                      while scrubbing horizontally. */}
+                  <div className="flex border-b border-border bg-muted/40">
+                    <button
+                      type="button"
+                      onClick={() => toggleType(group.type)}
+                      className="w-40 shrink-0 p-2 flex items-center gap-1.5 sticky left-0 z-20 bg-muted/40 text-left hover:bg-muted/60 transition-colors"
+                    >
+                      {isCollapsed
+                        ? <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                        : <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />}
+                      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground truncate">
+                        {group.label}
+                      </span>
+                      <span className="ml-auto pr-1 font-extrabold tabular text-xs text-foreground/80">{group.rows.length}</span>
+                    </button>
+                    <div className="flex-1" style={{ minWidth: trackWidth }} />
+                  </div>
+                  {!isCollapsed && group.rows.map((bed) => (
+                    <BedRow
+                      key={bed.id}
+                      bed={bed}
+                      blocks={blocksByBed.get(bed.id) ?? []}
+                      windowStartMin={windowStartMin}
+                      trackWidth={trackWidth}
+                      hours={hours}
+                      nowMin={nowMin}
+                      onOpen={openBlock}
+                      onEmptyClick={onEmptyClick}
+                    />
+                  ))}
+                </Fragment>
+              );
+            })
           )}
 
           {/* scrub cursor — follows the pointer, marks the time the readout shows */}

@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { Plus, Users } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
@@ -15,7 +16,7 @@ import { Card } from '@/components/ui/card';
 import { CustomerFormDialog, type CustomerItem } from '@/components/customers/customer-form-dialog';
 import { CustomerRowActions } from '@/components/customers/customer-row-actions';
 import { getAllowedBranches, getAllowedBranchIds } from '@/lib/branch-access';
-import { currentSession, isAdmin } from '@/lib/auth';
+import { currentSession, isAdmin, isManager } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,6 +56,7 @@ function one<T>(v: T | T[] | null): T | null {
 }
 
 export default async function CustomersPage() {
+  if (!isManager(await currentSession())) redirect('/dashboard');
   const { customers, businessUnits, branches } = await fetchData();
   const activeCount = customers.filter((c) => c.status === 'active').length;
 

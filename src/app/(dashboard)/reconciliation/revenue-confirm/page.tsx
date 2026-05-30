@@ -1,8 +1,10 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { CircleCheck, CircleAlert } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { getAllowedBranches } from '@/lib/branch-access';
+import { currentSession, isManager } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -58,6 +60,7 @@ export default async function RevenueConfirmPage({
 }: {
   searchParams: Promise<{ branch?: string; date?: string; view?: string; hist_from?: string; hist_to?: string }>;
 }) {
+  if (!isManager(await currentSession())) redirect('/dashboard');
   const sp = await searchParams;
   const supabase = createServiceClient();
   const branches = await getAllowedBranches();

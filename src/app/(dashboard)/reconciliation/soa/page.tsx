@@ -1,4 +1,6 @@
+import { redirect } from 'next/navigation';
 import { SoaWorkspace } from '@/components/reconciliation/soa-workspace';
+import { currentSession, isManager } from '@/lib/auth';
 import { loadSoaWorkspace, loadSoaHistory, loadArBalance } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 export const dynamic = 'force-dynamic';
@@ -10,6 +12,7 @@ function defaultRange(): { from: string; to: string } {
 }
 
 export default async function RevenueSoaPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  if (!isManager(await currentSession())) redirect('/dashboard');
   const { from, to } = defaultRange();
   const view = (await searchParams)?.view;
   // AR Balance is the default landing view; ?view=generate / history opt into the others.

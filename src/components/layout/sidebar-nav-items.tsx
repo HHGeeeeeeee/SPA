@@ -57,7 +57,7 @@ export const mainNavItems: NavItem[] = [
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarClock },
   { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },
   { label: 'Reservations', href: '/reservations', icon: CalendarDays },
-  { label: 'Customers', href: '/customers', icon: Users },
+  { label: 'Customers', href: '/customers', icon: Users, managerOnly: true },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the
   // page/route stays but is off the nav.
   { label: 'Stored Value Cards', href: '/stored-value-cards', icon: CreditCard, adminOnly: true },
@@ -68,17 +68,19 @@ export const mainNavItems: NavItem[] = [
     children: [
       // Daily-close trio — desk must run these every business day before EoD
       // can close. Rendered in the primary-tinted "Daily Close" segment so
-      // the urgency reads visually.
-      { label: 'End of Day', href: '/reconciliation/end-of-day', section: 'Daily Close' },
+      // the urgency reads visually. EoD + Revenue Confirm are manager-driven
+      // close steps; staff only owns the Cash Count.
+      { label: 'End of Day', href: '/reconciliation/end-of-day', section: 'Daily Close', managerOnly: true },
       { label: 'Shift Cash Count', href: '/reconciliation/cash', section: 'Daily Close' },
-      { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm', section: 'Daily Close' },
+      { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm', section: 'Daily Close', managerOnly: true },
       // Periodic trio — scheduled rhythm rather than daily must-do: Tip and
       // Commission settle semi-monthly, AR cadence depends on each billing
       // destination's credit terms. Rendered in a muted "Periodic" segment so
-      // it visually de-emphasises versus the Daily Close cluster above.
-      { label: 'Tip Settlement', href: '/reconciliation/tips', section: 'Periodic' },
-      { label: 'Commission Settlement', href: '/reconciliation/commission', section: 'Periodic' },
-      { label: 'Accounts Receivable', href: '/reconciliation/soa', section: 'Periodic' },
+      // it visually de-emphasises versus the Daily Close cluster above. All
+      // three are manager+ surfaces (back-office settlements).
+      { label: 'Tip Settlement', href: '/reconciliation/tips', section: 'Periodic', managerOnly: true },
+      { label: 'Commission Settlement', href: '/reconciliation/commission', section: 'Periodic', managerOnly: true },
+      { label: 'Accounts Receivable', href: '/reconciliation/soa', section: 'Periodic', managerOnly: true },
     ],
   },
   { label: 'Reports', href: '/reports', icon: BarChart3 },

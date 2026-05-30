@@ -48,17 +48,22 @@ function NavLink({
   item,
   pathname,
   isAdmin,
+  isManager,
 }: {
   item: NavItem;
   pathname: string;
   isAdmin: boolean;
+  isManager: boolean;
 }) {
-  // Strip admin-only sub-items / sub-groups up front so the chevron / active
-  // detection both see the post-filter view (a sub-group that ends up empty
-  // disappears entirely rather than rendering as a blank header).
-  const filteredChildren = item.children?.filter((c) => !c.adminOnly || isAdmin);
+  // Strip admin-only / manager-only sub-items + sub-groups up front so the
+  // chevron / active detection both see the post-filter view (a sub-group
+  // that ends up empty after filtering disappears entirely rather than
+  // rendering as a blank header).
+  const allowed = (c: { adminOnly?: boolean; managerOnly?: boolean }) =>
+    (!c.adminOnly || isAdmin) && (!c.managerOnly || isManager);
+  const filteredChildren = item.children?.filter(allowed);
   const filteredChildGroups = item.childGroups
-    ?.map((g) => ({ ...g, items: g.items.filter((c) => !c.adminOnly || isAdmin) }))
+    ?.map((g) => ({ ...g, items: g.items.filter(allowed) }))
     .filter((g) => g.items.length > 0);
   const flatChildren = filteredChildren ?? filteredChildGroups?.flatMap((g) => g.items);
   const hasChildren = !!flatChildren?.length;
@@ -246,7 +251,13 @@ export function Sidebar({
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <div className="flex flex-col gap-1">
           {visibleNav.map((item) => (
-            <NavLink key={item.label} item={item} pathname={pathname} isAdmin={isAdmin} />
+            <NavLink
+              key={item.label}
+              item={item}
+              pathname={pathname}
+              isAdmin={isAdmin}
+              isManager={isManager}
+            />
           ))}
         </div>
       </nav>

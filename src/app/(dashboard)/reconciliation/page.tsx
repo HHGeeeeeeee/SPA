@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { loadReconStatus } from '@/lib/recon-status';
 import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
+import { currentSession, isManager } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,7 @@ function peso(cents: number): string {
 }
 
 export default async function ReconciliationHubPage() {
+  const viewerIsManager = isManager(await currentSession());
   const s = await loadReconStatus();
   const overdueItems = s.branches
     .filter((b) => b.overdueClose)
@@ -24,6 +26,9 @@ export default async function ReconciliationHubPage() {
     }));
 
   // tone: 'attention' = amber dot (something to do), 'clear' = green dot.
+  // `managerOnly` cards drop off entirely for staff / external booker so the
+  // landing only shows the surfaces they can actually open — matches the
+  // sidebar's managerOnly filter on the same routes.
   const modules = [
     {
       href: '/reconciliation/cash', label: 'Shift Cash Count', icon: Banknote,
@@ -36,32 +41,37 @@ export default async function ReconciliationHubPage() {
       desc: 'Daily close — move paid and AR-completed orders to Closed.',
       metric: s.pendingConfirm > 0 ? `${s.pendingConfirm} order(s) pending · ${peso(s.pendingConfirmCents)}` : 'Nothing pending today',
       attention: s.pendingConfirm > 0,
+      managerOnly: true,
     },
     {
       href: '/reconciliation/tips', label: 'Tip Settlement', icon: HandCoins,
       desc: 'Half-month PAYMAYA tip payout to therapists (to AP).',
       metric: s.openTipsCount > 0 ? `${s.openTipsCount} open tip(s) · ${peso(s.openTipsCents)}` : 'No open tips',
       attention: s.openTipsCount > 0,
+      managerOnly: true,
     },
     {
       href: '/reconciliation/commission', label: 'Commission Settlement', icon: Percent,
       desc: 'Therapist commission per period from rendered services.',
       metric: s.unsettledCommissionLines > 0 ? `${s.unsettledCommissionLines} unsettled line(s)` : 'Nothing unsettled',
       attention: s.unsettledCommissionLines > 0,
+      managerOnly: true,
     },
     {
       href: '/reconciliation/soa', label: 'Accounts Receivable', icon: Wallet,
       desc: 'Outstanding receivables — open statements + un-stated closed AR, by billing destination.',
       metric: s.arOutstandingCents > 0 ? `${peso(s.arOutstandingCents)} outstanding` : 'Nothing outstanding',
       attention: s.arOutstandingCents > 0,
+      managerOnly: true,
     },
     {
       href: '/reconciliation/soa?view=generate', label: 'Generate SOA', icon: FileText,
       desc: 'Bill closed AR into statements — intercompany vs third-party.',
       metric: s.soaUnstated > 0 ? `${s.soaUnstated} closed AR order(s) un-stated` : 'All AR stated',
       attention: s.soaUnstated > 0,
+      managerOnly: true,
     },
-  ];
+  ].filter((m) => !m.managerOnly || viewerIsManager);
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,7 +82,10 @@ export default async function ReconciliationHubPage() {
         </p>
       </div>
 
-      <OverdueCloseBanner items={overdueItems} />
+      {/* Overdue close is a manager problem (only manager+ can run End of Day
+          / force close). Staff seeing an action banner they can't act on is
+          worse than not seeing it. */}
+      {viewerIsManager && <OverdueCloseBanner items={overdueItems} />}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {modules.map((m) => (

@@ -1,5 +1,7 @@
+import { redirect } from 'next/navigation';
 import { createServiceClient } from '@/lib/supabase/server';
 import { getAllowedBranches } from '@/lib/branch-access';
+import { currentSession, isManager } from '@/lib/auth';
 import { CommissionSettlementWorkspace, type CommHistoryRow } from '@/components/reconciliation/commission-settlement-workspace';
 import { loadCommissionGroups } from './actions';
 
@@ -20,6 +22,7 @@ function halfMonthRange(): { from: string; to: string } {
 }
 
 export default async function CommissionSettlementPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
+  if (!isManager(await currentSession())) redirect('/dashboard');
   const sp = await searchParams;
   const supabase = createServiceClient();
   const branches = await getAllowedBranches();

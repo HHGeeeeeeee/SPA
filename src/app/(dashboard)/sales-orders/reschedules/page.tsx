@@ -15,61 +15,121 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { MarkFulfilledButton } from '@/components/sales-orders/mark-fulfilled-button';
+import { RescheduleRowActions } from '@/components/sales-orders/reschedule-row-actions';
 
 export const dynamic = 'force-dynamic';
+
+function one<T>(v: T | T[] | null): T | null {
+  return Array.isArray(v) ? (v[0] ?? null) : v;
+}
 
 interface PendingItem {
   id: string;
   order_id: string;
-  order_no: number;
+  order_no: number | string;
   service_date: string;
+  branch_id: string;
   branch_code: string;
-  customer_name: string | null;
+  source_id: string | null;
+  customer_name: string;
+  customer_phone: string | null;
   service_name: string;
+  service_item_id: string | null;
+  service_category_id: string | null;
   interrupted_at: string;
   reason_label: string | null;
   notes: string | null;
 }
 
-async function fetchPending(): Promise<PendingItem[]> {
+async function fetchData() {
   const supabase = createServiceClient();
   const allowed = await getAllowedBranchIds();
-  // Reschedule ledger — every interrupted service marked 'reschedule' that
-  // hasn't been cleared. Branch-scoped: a manager only sees pending
-  // reschedules for the branches they have access to.
-  const q = supabase
-    .from('order_items')
-    .select(`
-      id, interruption_at, interruption_reason, interruption_notes,
-      service:service_items ( name ),
-      order:orders!order_items_order_id_fkey ( id, order_no, service_date, branch_id, branch:branches!orders_branch_id_fkey ( code ) ),
-      customer:order_customers!order_items_order_customer_id_fkey ( customer_name )
-    `)
-    .eq('interruption_handling', 'reschedule')
-    .is('reschedule_fulfilled_at', null)
-    .in('order.branch_id', [...allowed])
-    .order('interruption_at', { ascending: false });
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => {
-    const svc = Array.isArray(row.service) ? row.service[0] : row.service;
-    const ord = Array.isArray(row.order) ? row.order[0] : row.order;
-    const br = Array.isArray(ord?.branch) ? ord?.branch[0] : ord?.branch;
-    const cust = Array.isArray(row.customer) ? row.customer[0] : row.customer;
+  // Two queries in parallel: the pending reschedule rows themselves (filtered
+  // by branch access) and the dropdown source data the NewReservationDialog
+  // needs to render its pickers (branches / sources / categories / items).
+  const [pendingRes, brRes, srcRes, catRes, siRes] = await Promise.all([
+    supabase
+      .from('order_items')
+      .select(`
+        id, service_item_id, interruption_at, interruption_reason, interruption_notes,
+        service:service_items ( name, service_category_id ),
+        order:orders!order_items_order_id_fkey (
+          id, order_no, service_date, branch_id, source_id,
+          branch:branches!orders_branch_id_fkey ( code )
+        ),
+        customer:order_customers!order_items_order_customer_id_fkey ( customer_name, customer_phone )
+      `)
+      .eq('interruption_handling', 'reschedule')
+      .is('reschedule_fulfilled_at', null)
+      .in('order.branch_id', [...allowed])
+      .order('interruption_at', { ascending: false }),
+    supabase
+      .from('branches')
+      .select('id, code, name, branch_business_units ( business_unit_id )')
+      .eq('active', true)
+      .eq('reservation_enabled', true)
+      .order('code'),
+    supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
+    supabase
+      .from('service_categories')
+      .select('id, code, name, required_resource_type, service_category_business_units ( business_unit_id )')
+      .eq('active', true)
+      .order('code'),
+    supabase.from('service_items').select('id, name, service_group, service_category_id, duration_minutes').eq('active', true).order('service_group'),
+  ]);
+  if (pendingRes.error) throw new Error(pendingRes.error.message);
+  if (brRes.error) throw new Error(brRes.error.message);
+  if (srcRes.error) throw new Error(srcRes.error.message);
+  if (catRes.error) throw new Error(catRes.error.message);
+
+  const branches = (brRes.data ?? []).filter((b) => allowed.has(b.id)).map((b) => ({
+    id: b.id,
+    code: b.code,
+    name: b.name,
+    businessUnitIds: (b.branch_business_units ?? []).map((x) => x.business_unit_id),
+  }));
+  const serviceCategories = (catRes.data ?? []).map((c) => ({
+    id: c.id,
+    code: c.code,
+    name: c.name,
+    businessUnitIds: (c.service_category_business_units ?? []).map((x) => x.business_unit_id),
+    requiredResourceType: c.required_resource_type,
+  }));
+  const serviceItems = (siRes.data ?? [])
+    .filter((s) => s.service_group)
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      group: s.service_group as string,
+      categoryId: s.service_category_id as string,
+      durationMinutes: s.duration_minutes ?? null,
+    }));
+
+  const items: PendingItem[] = (pendingRes.data ?? []).map((row) => {
+    const svc = one(row.service);
+    const ord = one(row.order);
+    const br = one(ord?.branch ?? null);
+    const cust = one(row.customer);
     return {
       id: row.id,
       order_id: ord?.id ?? '',
       order_no: ord?.order_no ?? 0,
       service_date: ord?.service_date ?? '',
+      branch_id: ord?.branch_id ?? '',
       branch_code: br?.code ?? '—',
-      customer_name: cust?.customer_name ?? null,
+      source_id: ord?.source_id ?? null,
+      customer_name: cust?.customer_name ?? '',
+      customer_phone: cust?.customer_phone ?? null,
       service_name: svc?.name ?? '—',
+      service_item_id: row.service_item_id,
+      service_category_id: svc?.service_category_id ?? null,
       interrupted_at: row.interruption_at ?? '',
       reason_label: row.interruption_reason,
       notes: row.interruption_notes,
     };
   });
+
+  return { items, branches, sources: srcRes.data ?? [], serviceCategories, serviceItems };
 }
 
 function daysAgo(iso: string): number {
@@ -77,9 +137,15 @@ function daysAgo(iso: string): number {
   return Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 86400000));
 }
 
+function summaryFor(it: PendingItem): string {
+  const date = it.interrupted_at ? new Date(it.interrupted_at).toLocaleDateString('en-PH', { dateStyle: 'medium' }) : it.service_date;
+  const reason = it.reason_label ? ` (${it.reason_label})` : '';
+  return `Order #${it.order_no} · ${it.service_name} · interrupted ${date}${reason}`;
+}
+
 export default async function PendingReschedulesPage() {
   if (!isManager(await currentSession())) redirect('/dashboard');
-  const items = await fetchPending();
+  const { items, branches, sources, serviceCategories, serviceItems } = await fetchData();
 
   return (
     <div className="flex flex-col gap-6">
@@ -97,7 +163,8 @@ export default async function PendingReschedulesPage() {
         </h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">
           Interrupted services marked for reschedule that the guest hasn’t come back to redo yet.
-          Mark fulfilled once the make-up service is rendered (or the request is abandoned).
+          Click “Create reservation” to book the make-up (the entry drops off automatically), or
+          “Mark fulfilled” for an abandoned request.
         </p>
       </div>
 
@@ -112,7 +179,7 @@ export default async function PendingReschedulesPage() {
               <TableHead className="font-bold">Reason</TableHead>
               <TableHead className="font-bold">Interrupted</TableHead>
               <TableHead className="font-bold">Pending</TableHead>
-              <TableHead className="w-32 text-right" />
+              <TableHead className="w-72 text-right" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -141,7 +208,7 @@ export default async function PendingReschedulesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-semibold">
-                      {it.customer_name ?? <span className="text-muted-foreground">—</span>}
+                      {it.customer_name || <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="font-semibold">{it.service_name}</TableCell>
                     <TableCell>
@@ -169,7 +236,22 @@ export default async function PendingReschedulesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <MarkFulfilledButton itemId={it.id} />
+                      <RescheduleRowActions
+                        itemId={it.id}
+                        summary={summaryFor(it)}
+                        prefill={{
+                          branchId: it.branch_id,
+                          sourceId: it.source_id,
+                          guestName: it.customer_name,
+                          guestPhone: it.customer_phone,
+                          categoryIds: it.service_category_id ? [it.service_category_id] : [],
+                          serviceItemId: it.service_item_id,
+                        }}
+                        branches={branches}
+                        sources={sources}
+                        serviceCategories={serviceCategories}
+                        serviceItems={serviceItems}
+                      />
                     </TableCell>
                   </TableRow>
                 );

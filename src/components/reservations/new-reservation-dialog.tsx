@@ -85,6 +85,27 @@ interface Props {
   // Lock the branch to a fixed one (the desk's home branch) — non-admins can't
   // book for another branch. Admin omits this to keep the picker.
   lockBranchId?: string;
+  // Reschedule pre-fill: when opened from /sales-orders/reschedules to book a
+  // make-up service. The FK gets passed to createReservation (server marks
+  // the original order_item fulfilled), and the banner shows what this
+  // reservation is making up for.
+  rescheduleFrom?: {
+    itemId: string;
+    /** One-line summary rendered in the banner. e.g. "Order #123 · Pedicure ·
+     *  interrupted 2026-05-25 (Guest dissatisfaction)" */
+    summary: string;
+  };
+  /** Initial values for create mode — used by the reschedule flow to seed
+   *  Guest / Branch / Source / Service from the original interrupted line.
+   *  Ignored in edit mode (the existing reservation drives everything). */
+  initial?: {
+    branchId?: string;
+    sourceId?: string;
+    guestName?: string;
+    guestPhone?: string | null;
+    categoryIds?: string[];
+    serviceItemId?: string | null;
+  };
 }
 
 const LOCATION_TYPES = [
@@ -114,6 +135,8 @@ export function NewReservationDialog({
   prefillConfirmed = false,
   lockedBed,
   lockBranchId,
+  rescheduleFrom,
+  initial,
 }: Props) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -123,8 +146,14 @@ export function NewReservationDialog({
 
   const defaultSourceId = sources.find((s) => s.code === 'WALK-IN')?.id ?? sources[0]?.id ?? '';
 
-  const [branchId, setBranchId] = useState(reservation?.branch_id ?? lockBranchId ?? branches[0]?.id ?? '');
-  const [sourceId, setSourceId] = useState(reservation?.source_id ?? defaultSourceId);
+  // `initial` is the reschedule pre-fill seed (Guest / Source / Branch / Service
+  // copied from the original interrupted line). It takes precedence over the
+  // walk-in / desk-board defaults but yields to an explicit `reservation` prop
+  // in edit mode and to `lockBranchId` (the staff's home-branch lock).
+  const [branchId, setBranchId] = useState(
+    reservation?.branch_id ?? lockBranchId ?? initial?.branchId ?? branches[0]?.id ?? '',
+  );
+  const [sourceId, setSourceId] = useState(reservation?.source_id ?? initial?.sourceId ?? defaultSourceId);
   // Auto-prefill Service Types when the dialog is opened from a specific bed
   // on the schedule board: pick whichever category requires that bed's type
   // (massage_bed → Massage, hair_chair → Hair Salon, nail_station → Nail
@@ -132,6 +161,7 @@ export function NewReservationDialog({
   // not a lock. The reservation prop (edit mode) always wins.
   const [categoryIds, setCategoryIds] = useState<string[]>(() => {
     if (reservation?.service_category_ids?.length) return reservation.service_category_ids;
+    if (initial?.categoryIds?.length) return initial.categoryIds;
     if (lockedBed?.type) {
       const matching = serviceCategories
         .filter((c) => c.requiredResourceType === lockedBed.type)
@@ -140,8 +170,8 @@ export function NewReservationDialog({
     }
     return reservation?.service_category_ids ?? [];
   });
-  const [guestName, setGuestName] = useState(reservation?.guest_name ?? '');
-  const [guestPhone, setGuestPhone] = useState(reservation?.guest_phone ?? '');
+  const [guestName, setGuestName] = useState(reservation?.guest_name ?? initial?.guestName ?? '');
+  const [guestPhone, setGuestPhone] = useState(reservation?.guest_phone ?? initial?.guestPhone ?? '');
   const [pax, setPax] = useState(String(reservation?.pax ?? 1));
   const [genderPref, setGenderPref] = useState(reservation?.gender_preference ?? '__none__');
   const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : '');
@@ -158,7 +188,7 @@ export function NewReservationDialog({
   const [beds, setBeds] = useState<FreeBed[] | null>(null);
   const [finding, setFinding] = useState(false);
   const [walkInMsg, setWalkInMsg] = useState<string | null>(null);
-  const [specificItemId, setSpecificItemId] = useState(reservation?.service_item_id ?? ''); // '' = any service in the category
+  const [specificItemId, setSpecificItemId] = useState(reservation?.service_item_id ?? initial?.serviceItemId ?? ''); // '' = any service in the category
 
   // Capacity snapshot for the chosen branch + window (used per resource type).
   const [avail, setAvail] = useState<Record<string, { capacity: number; used: number }> | null>(null);
@@ -372,6 +402,11 @@ export function NewReservationDialog({
       seat_together: locationType === 'external_hotel' ? false : seatTogether && paxNum > 1,
       confirmed: walkIn || prefillConfirmed, // walk-in / desk-placed → confirmed, holds the bed
       service_item_id: specificItemId || null, // optional specific service
+      // Reschedule origin (when opened from /sales-orders/reschedules) — the
+      // server uses this to back-link the reservation AND mark the original
+      // interrupted line fulfilled. Always undefined in edit mode (you can't
+      // re-origin an existing reservation through this dialog).
+      rescheduled_from_order_item_id: !isEdit && rescheduleFrom ? rescheduleFrom.itemId : null,
     };
     startTransition(async () => {
       const r = isEdit
@@ -400,6 +435,21 @@ export function NewReservationDialog({
           </DialogHeader>
 
           <div className="grid grid-cols-2 gap-4 py-4">
+            {rescheduleFrom && !isEdit && (
+              // Origin banner — shown only on the create flow opened from
+              // /sales-orders/reschedules. The make-up reservation will be
+              // back-linked to the order_item summarised here, and the
+              // pending entry will drop off the reschedule list on submit.
+              <div className="col-span-2 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+                <span className="text-base">↩</span>
+                <div className="text-sm">
+                  <div className="font-bold text-amber-900 dark:text-amber-200">Rescheduling a previous interrupt</div>
+                  <div className="text-xs font-medium text-amber-800 dark:text-amber-300/90">
+                    {rescheduleFrom.summary}
+                  </div>
+                </div>
+              </div>
+            )}
             {lockedBed && (
               <div className="col-span-2 flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
                 <span className="text-base">📍</span>

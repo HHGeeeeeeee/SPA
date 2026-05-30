@@ -2544,6 +2544,7 @@ export type Database = {
           id: string
           note: string | null
           pax: number
+          rescheduled_from_order_item_id: string | null
           reservation_no: string
           seat_together: boolean
           service_category_id: string | null
@@ -2574,6 +2575,7 @@ export type Database = {
           id?: string
           note?: string | null
           pax: number
+          rescheduled_from_order_item_id?: string | null
           reservation_no: string
           seat_together?: boolean
           service_category_id?: string | null
@@ -2604,6 +2606,7 @@ export type Database = {
           id?: string
           note?: string | null
           pax?: number
+          rescheduled_from_order_item_id?: string | null
           reservation_no?: string
           seat_together?: boolean
           service_category_id?: string | null
@@ -2642,6 +2645,13 @@ export type Database = {
             columns: ["created_by_staff_id"]
             isOneToOne: false
             referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_rescheduled_from_order_item_id_fkey"
+            columns: ["rescheduled_from_order_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_items"
             referencedColumns: ["id"]
           },
           {

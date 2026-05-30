@@ -36,6 +36,11 @@ const schema = z.object({
   confirmed: z.boolean().optional().default(false),
   // Optional specific service (within a chosen category). Null = decide later.
   service_item_id: z.string().uuid().optional().nullable(),
+  // Back-link to the interrupted order_item being made up. Set by the
+  // Pending Reschedules flow; null on every other path. When set we ALSO
+  // mark the source line `reschedule_fulfilled_at` so it drops off the
+  // pending list — creating the make-up reservation IS the resolution.
+  rescheduled_from_order_item_id: z.string().uuid().optional().nullable(),
 });
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
@@ -121,12 +126,28 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
     seat_together: d.seat_together,
     service_item_id: d.service_item_id ?? null,
     status: d.confirmed ? 'confirmed' : 'reserved',
+    rescheduled_from_order_item_id: d.rescheduled_from_order_item_id ?? null,
   }).select('id').single();
   if (error || !created) return { ok: false, error: error?.message ?? 'Insert failed' };
   const linkErr = await syncReservationCategories(created.id, d.service_category_ids);
   if (linkErr) return { ok: false, error: linkErr.message };
   const pinErr = await syncReservationResources(created.id, pinned.ids);
   if (pinErr) return { ok: false, error: pinErr.message };
+
+  // Reservation booked → close out the pending reschedule. We do this AFTER
+  // the reservation insert succeeded; if the mark-fulfilled fails (unlikely)
+  // the reservation still stands and the pending entry just won't drop off
+  // the list — a manager can clear it manually from /sales-orders/reschedules.
+  if (d.rescheduled_from_order_item_id) {
+    await supabase
+      .from('order_items')
+      .update({ reschedule_fulfilled_at: new Date().toISOString() })
+      .eq('id', d.rescheduled_from_order_item_id)
+      .eq('interruption_handling', 'reschedule')
+      .is('reschedule_fulfilled_at', null);
+    revalidatePath('/sales-orders/reschedules');
+  }
+
   revalidatePath('/reservations');
   revalidatePath('/shift-schedule');
   return { ok: true };

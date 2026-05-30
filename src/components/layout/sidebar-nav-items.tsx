@@ -60,7 +60,14 @@ export const mainNavItems: NavItem[] = [
   // Shift Schedule first — the desk's daily-start workflow (set up the
   // therapist/room board) precedes taking individual orders against it.
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarClock },
-  { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },
+  {
+    label: 'Sales Orders',
+    href: '/sales-orders',
+    icon: Receipt,
+    children: [
+      { label: 'Pending Reschedules', href: '/sales-orders/reschedules', managerOnly: true },
+    ],
+  },
   { label: 'Reservations', href: '/reservations', icon: CalendarDays },
   { label: 'Customers', href: '/customers', icon: Users, managerOnly: true },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the

@@ -9,6 +9,10 @@ import { isBusinessDayClosed } from '@/app/(dashboard)/reconciliation/end-of-day
 import { canAccessBranch } from '@/lib/branch-access';
 import { canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 import { assertBedMatchesServiceItem } from '@/lib/resource-compatibility';
+import {
+  INTERRUPT_REASON_CODES_BY_HANDLING,
+  interruptReasonLabel,
+} from '@/lib/interrupt-taxonomy';
 
 // Shared guard for operational order actions: enforce a logged-in session AND
 // branch scoping by looking up the order's branch_id. Used by the service-flow
@@ -900,12 +904,21 @@ export async function skipOrderItem(itemId: string, orderId: string): Promise<Ac
 const interruptSchema = z.object({
   item_id: z.string().uuid(),
   order_id: z.string().uuid(),
-  reason: z.string().min(3).max(300),
+  // Per-handling reason taxonomy (see @/lib/interrupt-taxonomy). We accept
+  // 'partial_charge' here only for the internal switchService() fallback that
+  // still uses it; the UI no longer offers it for new interrupts.
   handling: z.enum(['no_charge', 'partial_charge', 'full_charge', 'reschedule']),
+  reason_code: z.string().min(1).max(80),
+  notes: z.string().max(500).optional().nullable(),
+  // Legacy free-text field — switchService() still passes a sentence here so
+  // we keep the input shape backwards compatible. New UI submits via
+  // reason_code + notes and leaves this empty.
+  reason: z.string().min(3).max(300).optional(),
 });
 
 // Interrupt an in-service line. Handling decides the charge: full keeps it,
-// no_charge/reschedule zero it, partial prorates by actual vs planned minutes.
+// no_charge/reschedule zero it, partial prorates by actual vs planned minutes
+// (legacy path used by switchService — not exposed in the UI).
 export async function interruptOrderItem(input: unknown): Promise<ActionResult> {
   const parsed = interruptSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -913,6 +926,17 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
   const auth = await requireItemBranchAccess(d.item_id);
   if (!auth.ok) return auth;
   const supabase = await createAuditedClient();
+
+  // Reject a reason_code that doesn't belong to the picked handling — stops
+  // a stale form (or a hand-crafted API call) from submitting e.g. a
+  // no_charge reason while billing full. switchService passes the literal
+  // sentence as reason + a sentinel reason_code, so we let it through.
+  if (d.reason_code !== '__switch_service__' && d.handling !== 'partial_charge') {
+    const allowed = INTERRUPT_REASON_CODES_BY_HANDLING[d.handling as 'no_charge' | 'full_charge' | 'reschedule'] ?? [];
+    if (!allowed.includes(d.reason_code)) {
+      return { ok: false, error: 'Reason does not match the handling mode' };
+    }
+  }
 
   const { data: item } = await supabase
     .from('order_items')
@@ -939,17 +963,30 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
     discount = item.list_price_cents - final;
   }
 
+  // The legacy `interruption_reason` column keeps showing a human label so
+  // existing Change History UI keeps working without a join. New rows fill
+  // both code + label + (optional) free notes.
+  const handlingForLabel = d.handling === 'partial_charge' ? 'no_charge' : d.handling;
+  const label =
+    d.reason ?? interruptReasonLabel(handlingForLabel as 'no_charge' | 'full_charge' | 'reschedule', d.reason_code);
+
   const { error } = await supabase
     .from('order_items')
     .update({
       status: 'interrupted',
-      interruption_reason: d.reason,
-      interruption_at: now,
       interruption_handling: d.handling,
+      interruption_reason_code: d.reason_code,
+      interruption_reason: label,
+      interruption_notes: d.notes ?? null,
+      interruption_at: now,
       actual_end: now,
       actual_duration_minutes: actualMin,
       discount_amount_cents: discount,
       final_amount_cents: final,
+      // Reschedule starts in the "pending follow-up" state. Manager clears it
+      // from the Pending Reschedules list once the make-up service has been
+      // rendered (or the customer abandoned the request).
+      reschedule_fulfilled_at: null,
     })
     .eq('id', d.item_id);
   if (error) return { ok: false, error: error.message };
@@ -957,6 +994,31 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
   // Interrupting the last active service also wraps up the order.
   await maybeAutoComplete(d.order_id);
   revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
+/** Manager-only: clear a pending reschedule once the make-up service has
+ *  been rendered (or the customer abandoned the request). Pure bookkeeping
+ *  — does not touch billing or the original order. */
+export async function markRescheduleFulfilled(itemId: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const supabase = await createAuditedClient();
+  const { data: row } = await supabase
+    .from('order_items')
+    .select('order_id, interruption_handling, reschedule_fulfilled_at')
+    .eq('id', itemId)
+    .single();
+  if (!row) return { ok: false, error: 'Service line not found' };
+  if (row.interruption_handling !== 'reschedule') return { ok: false, error: 'Not a rescheduled line' };
+  if (row.reschedule_fulfilled_at) return { ok: false, error: 'Already marked fulfilled' };
+  const { error } = await supabase
+    .from('order_items')
+    .update({ reschedule_fulfilled_at: new Date().toISOString() })
+    .eq('id', itemId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/sales-orders/reschedules');
+  revalidatePath(`/sales-orders/${row.order_id}`);
   return { ok: true };
 }
 
@@ -1018,7 +1080,14 @@ export async function switchService(itemId: string, orderId: string): Promise<Ac
   if (!ord) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
 
-  const r = await interruptOrderItem({ item_id: itemId, order_id: orderId, reason: 'Switched to another service', handling: 'no_charge' });
+  const r = await interruptOrderItem({
+    item_id: itemId,
+    order_id: orderId,
+    handling: 'no_charge',
+    reason_code: '__switch_service__',
+    reason: 'Switched to another service',
+    notes: null,
+  });
   if (!r.ok) return r;
 
   const { data: order } = await supabase.from('orders').select('status').eq('id', orderId).single();

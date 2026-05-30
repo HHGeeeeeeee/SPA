@@ -23,9 +23,21 @@ const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KE
  * AUTH_BYPASS path in currentSession still works for local development.
  */
 export async function updateSession(request: NextRequest) {
-  // No Supabase config → let everything through. currentSession()'s
-  // AUTH_BYPASS fallback covers dev work without a real auth backend.
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  // Dev / preview bypass — same triad as ENGO Back Office plus our explicit
+  // AUTH_BYPASS escape hatch. Any of these triggers middleware to let every
+  // request through so the AUTH_BYPASS fallback in currentSession() can
+  // synthesise a session for local development.
+  //
+  //   - AUTH_BYPASS=true               -> explicit local dev opt-in
+  //   - Supabase env missing/placeholder -> not configured yet
+  //   - ACUMATICA_BASE_URL missing       -> ERP not wired (preview / staging)
+  if (
+    process.env.AUTH_BYPASS === 'true'
+    || !SUPABASE_URL
+    || SUPABASE_URL.includes('placeholder')
+    || !SUPABASE_PUBLISHABLE_KEY
+    || !process.env.ACUMATICA_BASE_URL
+  ) {
     return NextResponse.next({ request });
   }
 

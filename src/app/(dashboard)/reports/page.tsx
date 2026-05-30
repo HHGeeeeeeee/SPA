@@ -1,4 +1,7 @@
+import { redirect } from 'next/navigation';
+
 import { createServiceClient } from '@/lib/supabase/server';
+import { currentSession, isManager } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -60,6 +63,7 @@ async function fetchData() {
 }
 
 export default async function ReportsPage() {
+  if (!isManager(await currentSession())) redirect('/dashboard');
   const { orders, payments, label } = await fetchData();
 
   const gross = orders.reduce((s, o) => s + o.subtotal_cents, 0);

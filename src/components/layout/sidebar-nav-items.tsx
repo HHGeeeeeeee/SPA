@@ -28,6 +28,11 @@ export interface NavSubItem {
   /** Hide from non-admin viewers. Matches the same flag on NavItem; used for
    *  child links inside admin-only sub-menus (e.g. Settings → Users). */
   adminOnly?: boolean;
+  /** Hide from non-manager viewers (staff / external booker). Matches the
+   *  same flag on NavItem; used for child links inside an otherwise-mixed
+   *  sub-menu (e.g. Reconciliation → all back-office settlements; Shift Cash
+   *  Count stays open). */
+  managerOnly?: boolean;
 }
 
 export interface NavSubGroup {
@@ -83,7 +88,7 @@ export const mainNavItems: NavItem[] = [
       { label: 'Accounts Receivable', href: '/reconciliation/soa', section: 'Periodic', managerOnly: true },
     ],
   },
-  { label: 'Reports', href: '/reports', icon: BarChart3 },
+  { label: 'Reports', href: '/reports', icon: BarChart3, managerOnly: true },
   { label: 'Incidents', href: '/incidents', icon: CircleAlert },
   { label: 'Help', href: '/help', icon: BookOpen },
   {

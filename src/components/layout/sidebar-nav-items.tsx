@@ -42,6 +42,10 @@ export interface NavItem {
   /** Hide this item unless the viewer is admin. Used for modules that aren't
    *  rolled out to staff / manager yet (e.g. Stored Value Cards). */
   adminOnly?: boolean;
+  /** Hide this item unless the viewer is manager+ (manager or admin). Used to
+   *  scope manager-and-up surfaces like Settings, keeping staff / external
+   *  booker out of administrative areas entirely. */
+  managerOnly?: boolean;
   children?: NavSubItem[];
   childGroups?: NavSubGroup[];
 }
@@ -83,6 +87,7 @@ export const mainNavItems: NavItem[] = [
   {
     label: 'Settings',
     icon: Settings,
+    managerOnly: true,
     childGroups: [
       {
         label: 'Organization',

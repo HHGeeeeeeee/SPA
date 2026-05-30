@@ -190,12 +190,23 @@ function ChildLink({
   );
 }
 
-export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
+export function Sidebar({
+  isAdmin = false,
+  isManager = false,
+}: {
+  isAdmin?: boolean;
+  /** manager-or-above (admin always counts as manager). Drives the
+   *  managerOnly nav-item filter — Settings, mainly. */
+  isManager?: boolean;
+}) {
   const pathname = usePathname();
   const { collapsed, toggle } = useSidebar();
-  // Hide nav items flagged adminOnly when the viewer isn't admin. Matches the
-  // server-side gate on those routes — keeps the menu honest.
-  const visibleNav = mainNavItems.filter((item) => !item.adminOnly || isAdmin);
+  // Hide nav items flagged adminOnly / managerOnly when the viewer doesn't
+  // match. Mirrors the server-side gates on those routes — keeps the menu
+  // honest (no link the viewer can't actually open).
+  const visibleNav = mainNavItems.filter(
+    (item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager),
+  );
 
   return (
     // Collapsed = full hide (width 0, border off) — matches the ENGO Back Office

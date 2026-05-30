@@ -198,7 +198,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // collection) when its billing destination defaults to the AR method. Those
   // orders stay Completed until the daily Revenue Confirm closes them. Everyone
   // else pays at the counter (cash / PAYMAYA / stored value), flexible.
-  const arMethodId = paymentMethods.find((m) => m.code === 'ar')?.id ?? null;
+  const arMethodId = paymentMethods.find((m) => m.code?.toLowerCase() === 'ar')?.id ?? null;
   const arBilled = !!billing?.default_payment_method_id && billing.default_payment_method_id === arMethodId;
   const paymentPolicy = {
     arBilled,

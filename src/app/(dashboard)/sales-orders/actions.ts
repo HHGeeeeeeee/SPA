@@ -1322,7 +1322,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
 
   // Stored-value redemption: deduct the card balance and ledger the consume.
   let svcCard: { id: string; current_balance_cents: number; branch_id: string; status: string } | null = null;
-  if (method?.code === 'stored_value_card') {
+  if (method?.code?.toLowerCase() === 'stored_value_card') {
     if (!d.stored_value_card_id) return { ok: false, error: 'Select a stored value card' };
     const { data: card } = await supabase
       .from('stored_value_cards')
@@ -1520,7 +1520,7 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
 
   // Stored-value refund → load the amount back onto the card.
   let card: { current_balance_cents: number; branch_id: string } | null = null;
-  if (method?.code === 'stored_value_card') {
+  if (method?.code?.toLowerCase() === 'stored_value_card') {
     if (!d.stored_value_card_id) return { ok: false, error: 'Select a stored value card to refund onto' };
     const { data: c } = await supabase
       .from('stored_value_cards')

@@ -101,7 +101,7 @@ async function cashReceivedCents(branchId: string, date: string, win: [number, n
   const counterCash = (counter ?? [])
     .filter((p) => {
       const ord = one(p.order); const m = one(p.method);
-      return !!ord && ord.branch_id === branchId && ord.status !== 'void' && m?.code === 'cash' && inWindow(p.paid_at);
+      return !!ord && ord.branch_id === branchId && ord.status !== 'void' && (m?.code ?? '').toLowerCase() === 'cash' && inWindow(p.paid_at);
     })
     .reduce((s, p) => s + p.amount_cents, 0);
 

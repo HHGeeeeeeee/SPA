@@ -46,7 +46,7 @@ export function PaymentAdjust({
 }) {
   const [pending, start] = useTransition();
   const router = useRouter();
-  const defaultMethod = methods.find((m) => m.code === 'cash')?.id ?? methods[0]?.id ?? '';
+  const defaultMethod = methods.find((m) => m.code?.toLowerCase() === 'cash')?.id ?? methods[0]?.id ?? '';
 
   const [collectOpen, setCollectOpen] = useState(false);
   const [cAmount, setCAmount] = useState('');

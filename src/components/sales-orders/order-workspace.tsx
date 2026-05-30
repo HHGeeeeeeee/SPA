@@ -237,10 +237,10 @@ export function OrderWorkspace({
 
   // Counter payment methods only — AR is an invoice arrangement, not a counter
   // collection, so it is never offered here. AR-billed orders skip payment.
-  const allowedPaymentMethods = paymentMethods.filter((p) => p.code !== 'ar');
+  const allowedPaymentMethods = paymentMethods.filter((p) => p.code?.toLowerCase() !== 'ar');
   const defaultMethodIsCounter = allowedPaymentMethods.some((p) => p.id === paymentPolicy.defaultMethodId);
   const defaultPayMethod = (defaultMethodIsCounter ? paymentPolicy.defaultMethodId : null)
-    ?? allowedPaymentMethods.find((p) => p.code === 'cash')?.id
+    ?? allowedPaymentMethods.find((p) => p.code?.toLowerCase() === 'cash')?.id
     ?? allowedPaymentMethods[0]?.id
     ?? '';
   const [payMode, setPayMode] = useState<'split' | 'together'>('split');

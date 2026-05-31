@@ -50,6 +50,7 @@ import {
 } from '@/app/(dashboard)/sales-orders/actions';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
+import { AuditTrail } from '@/components/sales-orders/audit-trail';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
 import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
@@ -119,6 +120,11 @@ interface Props {
   items: OrderItem[];
   payments: PaymentRecord[];
   history: { at: string; label: string; reason: string | null; who: string | null }[];
+  /** Rich per-row audit trail (orders + items + customers + payments + tips
+   *  + feedback) — feeds the Change History tab's timeline + diff UI. The
+   *  legacy `history` prop stays for the curated status-only narrative
+   *  (status_log + edit_log entries) that the tab still optionally shows. */
+  auditTrail: import('@/lib/order-audit-trail').AuditEntry[];
   serviceItems: ServiceVariant[];
   employees: Opt[];
   borrowableEmployees: BorrowOpt[];
@@ -180,6 +186,7 @@ export function OrderWorkspace({
   items,
   payments,
   history,
+  auditTrail,
   serviceItems,
   employees,
   borrowableEmployees,
@@ -1215,28 +1222,40 @@ export function OrderWorkspace({
         </TabsContent>
 
         <TabsContent value="history">
-          {history.length === 0 ? (
-            <p className="text-sm font-medium text-muted-foreground px-1">No changes logged yet.</p>
-          ) : (
+          {/* Two views stacked: the curated status-only narrative (concise —
+              draft → open / first service started / …) at the top, then the
+              full row-level audit trail below with field-level diffs from
+              audit_log. The narrative is built from order_status_log +
+              order_edit_log so it carries the human reason text the trigger-
+              based audit can't see; the audit trail is the complete record
+              of every column change on every row tied to this order. */}
+          <div className="flex flex-col gap-4">
+            {history.length > 0 && (
+              <Card>
+                <CardContent className="py-3">
+                  <ul className="flex flex-col gap-2">
+                    {history.map((h, i) => (
+                      <li key={i} className="flex items-start justify-between gap-3 text-sm border-b border-border last:border-0 pb-2 last:pb-0">
+                        <div className="min-w-0">
+                          <span className="font-semibold capitalize">{h.label.replace(/_/g, ' ')}</span>
+                          {h.reason && <span className="ml-2 font-medium text-muted-foreground">{h.reason}</span>}
+                        </div>
+                        <div className="shrink-0 text-right text-xs font-medium text-muted-foreground">
+                          <div>{h.who ?? 'system'}</div>
+                          <div className="tabular">{new Date(h.at).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short' })}</div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
             <Card>
-              <CardContent className="py-3">
-                <ul className="flex flex-col gap-2">
-                  {history.map((h, i) => (
-                    <li key={i} className="flex items-start justify-between gap-3 text-sm border-b border-border last:border-0 pb-2 last:pb-0">
-                      <div className="min-w-0">
-                        <span className="font-semibold capitalize">{h.label.replace(/_/g, ' ')}</span>
-                        {h.reason && <span className="ml-2 font-medium text-muted-foreground">{h.reason}</span>}
-                      </div>
-                      <div className="shrink-0 text-right text-xs font-medium text-muted-foreground">
-                        <div>{h.who ?? 'system'}</div>
-                        <div className="tabular">{new Date(h.at).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short' })}</div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+              <CardContent>
+                <AuditTrail entries={auditTrail} />
               </CardContent>
             </Card>
-          )}
+          </div>
         </TabsContent>
       </Tabs>
 

@@ -12,6 +12,7 @@ import { OrderStatusActions } from '@/components/sales-orders/order-status-actio
 import { ServiceBadge, PaymentBadge } from '@/components/sales-orders/order-badges';
 import { RetryOrderPostingButton } from '@/components/sales-orders/retry-order-posting-button';
 import { ReportIncidentDialog } from '@/components/incidents/report-incident-dialog';
+import { loadOrderAuditTrail } from '@/lib/order-audit-trail';
 
 export const dynamic = 'force-dynamic';
 
@@ -316,6 +317,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     })),
   ].sort((a, b) => (a.at < b.at ? 1 : -1));
 
+  // Full audit trail — every row change on the order + child entities (items,
+  // customers, payments, tips, feedback) with field-level diffs. Powers the
+  // rich timeline UI in the Change History tab.
+  const auditTrail = await loadOrderAuditTrail(id);
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -422,6 +428,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         items={items}
         payments={payments}
         history={history}
+        auditTrail={auditTrail}
         serviceItems={serviceItems}
         employees={employees}
         borrowableEmployees={borrowableEmployees}

@@ -509,11 +509,17 @@ interface PreparedSettleSoa {
   id: string;
   soa_no: string;
   branch_id: string;
+  /** SPA branch (the providing side) — used as the journal-level branch and
+   *  the CR (AR clear) line's branch. */
   branchCode: string;
   period_to: string;
   total_cents: number;
   intercompany_account: string;
   intercompany_sub: string;
+  /** Billing destination's code (HHO / HJH / HCC / …). This is the hotel's
+   *  own Acumatica branch — the DR side of an intercompany settle lands on
+   *  the hotel's books, not the SPA's. */
+  billing_branch_code: string;
 }
 
 /**
@@ -526,7 +532,7 @@ async function loadSettleable(ids: string[]): Promise<{ ok: true; rows: Prepared
   const supabase = await createAuditedClient();
   const { data } = await supabase
     .from('revenue_soa')
-    .select('id, soa_no, status, total_cents, settlement_type, branch_id, period_to, billing:billing_destinations ( intercompany_account, intercompany_sub ), branch:branches ( code )')
+    .select('id, soa_no, status, total_cents, settlement_type, branch_id, period_to, billing:billing_destinations ( code, intercompany_account, intercompany_sub ), branch:branches ( code )')
     .in('id', ids);
   if (!data || data.length === 0) return { ok: false, error: 'SOA not found' };
   const rows: PreparedSettleSoa[] = [];
@@ -535,7 +541,8 @@ async function loadSettleable(ids: string[]): Promise<{ ok: true; rows: Prepared
     if (soa.settlement_type !== 'intercompany') return { ok: false, error: `${soa.soa_no}: third-party statements are settled via Record Payment` };
     if (soa.status !== 'issued') return { ok: false, error: `${soa.soa_no}: only an issued statement can be settled` };
     try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
-    const billing = one<{ intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
+    const billing = one<{ code: string | null; intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
+    if (!billing?.code) return { ok: false, error: `${soa.soa_no}: billing destination missing a code (intercompany branch unknown)` };
     rows.push({
       id: soa.id,
       soa_no: soa.soa_no,
@@ -545,6 +552,7 @@ async function loadSettleable(ids: string[]): Promise<{ ok: true; rows: Prepared
       total_cents: soa.total_cents,
       intercompany_account: billing?.intercompany_account ?? '50170',
       intercompany_sub: billing?.intercompany_sub ?? '000000T03',
+      billing_branch_code: billing.code,
     });
   }
   return { ok: true, rows };
@@ -573,12 +581,22 @@ async function postSoaSettleBatch(group: PreparedSettleSoa[]): Promise<{ ok: tru
 
   // Build all DR cost / CR AR lines up front so a render failure on one PDF
   // doesn't half-post the journal.
+  //
+  // Intercompany branch placement:
+  //   - DR cost (50170): lands on the HOTEL's branch (HCC, HHO, HJH, …) —
+  //     that's where the cost should appear since the hotel is bearing it.
+  //     `branch` override on the line forces this regardless of the
+  //     journal-level branch.
+  //   - CR AR (10200):   stays on the SPA's branch (HSPA2) — clears the
+  //     receivable from the SPA's books. Left without a per-line branch so
+  //     it inherits the journal's `branch` (= group's branchCode = SPA).
   const allLines: GLLine[] = group.flatMap((s) => {
     const amount = s.total_cents / 100;
     return [
       {
         account: s.intercompany_account,
         sub_account: s.intercompany_sub,
+        branch: s.billing_branch_code,
         debit_amount: amount,
         credit_amount: null,
         transaction_desc: `${s.soa_no} intercompany cost`,

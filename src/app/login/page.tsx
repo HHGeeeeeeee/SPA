@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { createClient } from '@/lib/supabase/client';
 import { login } from './actions';
 
 // The form reads ?next= via useSearchParams, so it must sit under a Suspense
@@ -24,10 +25,29 @@ function LoginForm() {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      // On success the server action issues a server-side redirect (which also
-      // commits the auth cookie), so control only returns here on failure.
-      const r = await login({ username, password, next: params.get('next') ?? undefined });
-      if (r && !r.ok) setError(r.error);
+      // 1. Server validates credentials (ERP / local bcrypt) and ensures the
+      //    Supabase Auth user exists with the synced password.
+      const r = await login({ username, password });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      // 2. The *browser* completes the Supabase sign-in so the session cookie
+      //    is written client-side — reliable on Vercel, unlike a Server Action
+      //    Set-Cookie. r.email is the account resolved server-side.
+      const supabase = createClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: r.email,
+        password,
+      });
+      if (signInError) {
+        setError(signInError.message);
+        return;
+      }
+      // 3. Hard navigation so the just-written cookie rides the next request.
+      const next = params.get('next');
+      const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+      window.location.assign(dest);
     });
   }
 

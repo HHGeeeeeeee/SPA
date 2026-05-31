@@ -25,7 +25,7 @@ export function bypassTargetEmail(): string | null {
 }
 
 export type LoginResult =
-  | { ok: true; acuCookie: string | null }
+  | { ok: true; acuCookie: string | null; email: string }
   | { ok: false; error: string };
 
 /**
@@ -89,7 +89,7 @@ async function authenticateViaAcumatica(username: string, password: string): Pro
   }
 
   await svc.from('staff_users').update({ last_login_at: new Date().toISOString() }).eq('id', u.id);
-  return { ok: true, acuCookie: res.cookie || null };
+  return { ok: true, acuCookie: res.cookie || null, email: u.email };
 }
 
 /**
@@ -112,7 +112,7 @@ async function authenticateLocally(emailOrUsername: string, password: string): P
   if (!bridged.ok) return { ok: false, error: bridged.error };
 
   await svc.from('staff_users').update({ last_login_at: new Date().toISOString() }).eq('id', u.id);
-  return { ok: true, acuCookie: null };
+  return { ok: true, acuCookie: null, email: u.email };
 }
 
 /**

@@ -102,9 +102,17 @@ export async function updateSession(request: NextRequest) {
   // bounces to /login. Log what it sees so we can tell why getUser() here can
   // disagree with currentSession() on the same cookie.
   const sbCookies = request.cookies.getAll().filter((c) => c.name.startsWith('sb-')).map((c) => c.name);
+  const allCookieNames = request.cookies.getAll().map((c) => c.name);
+  const isPrefetch =
+    request.headers.get('next-router-prefetch') === '1' ||
+    request.headers.get('purpose') === 'prefetch' ||
+    request.headers.get('x-middleware-prefetch') === '1';
   console.error('[diag middleware]', JSON.stringify({
     path,
+    method: request.method,
+    isPrefetch,
     sbCookies,
+    allCookieNames,
     hasUser: !!user,
     userId: user?.id ?? null,
     getUserError: getUserError?.message ?? null,

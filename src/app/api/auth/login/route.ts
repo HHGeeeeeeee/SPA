@@ -1,3 +1,4 @@
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -35,6 +36,14 @@ export async function POST(req: Request) {
   }
 
   if (r.acuCookie) await setAcuSessionCookie(r.acuCookie);
+
+  // TEMP DIAGNOSTIC: confirm the bridge actually wrote the session cookie into
+  // this route's cookie jar (so it ships on the response). Remove once resolved.
+  try {
+    const jar = await cookies();
+    const sb = jar.getAll().filter((c) => c.name.startsWith('sb-')).map((c) => c.name);
+    console.error('[diag login-route]', JSON.stringify({ ok: true, sbCookiesSet: sb }));
+  } catch { /* ignore */ }
 
   return NextResponse.json({ ok: true });
 }

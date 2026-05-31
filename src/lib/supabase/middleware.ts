@@ -30,22 +30,26 @@ function isBypassActive(): boolean {
  * AUTH_BYPASS path in currentSession still works for local development.
  */
 export async function updateSession(request: NextRequest) {
-  // Dev / preview bypass — same triad as ENGO Back Office plus our explicit
-  // AUTH_BYPASS escape hatch. Any of these triggers middleware to let every
-  // request through so the AUTH_BYPASS fallback in currentSession() can
-  // synthesise a session for local development.
+  // Dev bypass — let every request through so the AUTH_BYPASS fallback in
+  // currentSession() can synthesise a session for local development.
   //
   //   - AUTH_BYPASS any truthy value       -> explicit local dev opt-in
   //     ("true" for the seeded admin, or an email like
   //      "staff-osp1@acumatica.local" for role-switching).
   //   - Supabase env missing / "placeholder" -> not configured yet
-  //   - ACUMATICA_BASE_URL missing           -> ERP not wired (preview / staging)
+  //
+  // NOTE: this deliberately does NOT key off ACUMATICA_BASE_URL. Token refresh
+  // is Supabase's job and must run on every request once Supabase is wired,
+  // regardless of whether the ERP is connected — otherwise the access token
+  // expires with nothing to renew it, currentSession() in Server Components
+  // (which can't persist a refreshed cookie) silently goes null, and the user
+  // gets bounced to /login or hit with "not signed in". The ERP being optional
+  // (setup / preview phase) is orthogonal to keeping the auth session alive.
   if (
     isBypassActive()
     || !SUPABASE_URL
     || SUPABASE_URL.includes('placeholder')
     || !SUPABASE_PUBLISHABLE_KEY
-    || !process.env.ACUMATICA_BASE_URL
   ) {
     return NextResponse.next({ request });
   }

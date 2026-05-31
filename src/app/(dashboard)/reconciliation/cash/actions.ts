@@ -81,10 +81,11 @@ export async function setCashShiftConfig(input: { open: number; shifts: { name: 
   return { ok: true };
 }
 
-/** Cash received during a shift window on a date (by payment time, PHT). Counts
- * both counter payments (orders) and third-party AR collections taken in cash —
- * both physically land in the till. */
-async function cashReceivedCents(branchId: string, date: string, win: [number, number]): Promise<number> {
+/** Cash received during a shift window on a date (by payment time, PHT).
+ * Returns the breakdown so the UI can show "from SO / from AR settle" —
+ * both physically land in the same till, but they come from different
+ * surfaces (counter payment vs SOA collection). */
+async function cashSourcesCents(branchId: string, date: string, win: [number, number]): Promise<{ counterCashCents: number; arSettleCashCents: number }> {
   const supabase = await createAuditedClient();
   const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
   const [ws, we] = win;
@@ -98,7 +99,7 @@ async function cashReceivedCents(branchId: string, date: string, win: [number, n
     .select('amount_cents, paid_at, method:payment_methods!payments_payment_method_id_fkey ( code ), order:orders!payments_order_id_fkey ( branch_id, status )')
     .gte('paid_at', from)
     .lt('paid_at', to);
-  const counterCash = (counter ?? [])
+  const counterCashCents = (counter ?? [])
     .filter((p) => {
       const ord = one(p.order); const m = one(p.method);
       return !!ord && ord.branch_id === branchId && ord.status !== 'void' && (m?.code ?? '').toLowerCase() === 'cash' && inWindow(p.paid_at);
@@ -111,14 +112,14 @@ async function cashReceivedCents(branchId: string, date: string, win: [number, n
     .select('amount_cents, paid_at, payment_method, soa:revenue_soa ( branch_id )')
     .gte('paid_at', from)
     .lt('paid_at', to);
-  const arCash = (arPays ?? [])
+  const arSettleCashCents = (arPays ?? [])
     .filter((p) => {
       const soa = one(p.soa);
       return !!soa && soa.branch_id === branchId && (p.payment_method ?? '').toLowerCase() === 'cash' && inWindow(p.paid_at);
     })
     .reduce((s, p) => s + p.amount_cents, 0);
 
-  return counterCash + arCash;
+  return { counterCashCents, arSettleCashCents };
 }
 
 /** Per-shift status for a branch/day, with opening float inherited from the
@@ -137,12 +138,16 @@ export async function loadDayShifts(branchId: string, date: string): Promise<Shi
   let prevClosing = 0;
   for (let i = 0; i < windows.length; i++) {
     const w = windows[i];
-    const received = await cashReceivedCents(branchId, date, [w.start, w.end]);
+    const { counterCashCents, arSettleCashCents } = await cashSourcesCents(branchId, date, [w.start, w.end]);
+    const received = counterCashCents + arSettleCashCents;
     const opening = i === 0 ? 0 : prevClosing; // first shift has no handover float
     const row = closedByLabel.get(w.name);
     out.push({
       label: w.name, windowLabel: formatWindow(w.start, w.end), firstOfDay: i === 0,
-      openingCents: opening, receivedCents: received, expectedCents: opening + received,
+      openingCents: opening,
+      receivedCents: received,
+      counterCashCents, arSettleCashCents,
+      expectedCents: opening + received,
       closed: row ? { actualCents: row.closing_count_cents ?? 0, varianceCents: row.variance_cents ?? 0, reason: row.variance_reason } : null,
     });
     if (row) prevClosing = row.closing_count_cents ?? 0;

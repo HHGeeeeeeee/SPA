@@ -93,6 +93,12 @@ export interface ShiftStatus {
   firstOfDay: boolean; // first shift opens with no handover float
   openingCents: number;
   receivedCents: number;
+  /** Counter cash — from order-level payments (sales orders paid in cash at
+   *  the till). receivedCents = counterCashCents + arSettleCashCents. */
+  counterCashCents: number;
+  /** AR-settle cash — from SOA collections (third-party customer paid their
+   *  monthly statement in cash). Same till impact, different origin. */
+  arSettleCashCents: number;
   expectedCents: number;
   closed: { actualCents: number; varianceCents: number; reason: string | null } | null;
 }

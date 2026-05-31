@@ -105,6 +105,22 @@ export function CashReconForm({ branchId, date, shift, canReopen, siblings = [] 
         <span className="font-medium text-muted-foreground">Cash received this shift</span>
         <span className="font-bold tabular">{peso(shift.receivedCents)}</span>
       </div>
+      {/* Source breakdown — only render when there's actually cash, otherwise
+          the two zero rows are noise. The two lines always sum to the row
+          above; useful for the cashier to know whether the till delta came
+          from counter sales or from collecting an AR settlement. */}
+      {shift.receivedCents > 0 && (
+        <div className="ml-3 flex flex-col gap-0.5 text-xs">
+          <div className="flex items-center justify-between text-muted-foreground">
+            <span>· from Sales Orders (counter)</span>
+            <span className="tabular">{peso(shift.counterCashCents)}</span>
+          </div>
+          <div className="flex items-center justify-between text-muted-foreground">
+            <span>· from AR Settle (SOA payment)</span>
+            <span className="tabular">{peso(shift.arSettleCashCents)}</span>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between border-t border-border pt-1">
         <span className="font-medium text-muted-foreground">Expected in drawer</span>
         <span className="font-bold tabular">{peso(shift.expectedCents)}</span>

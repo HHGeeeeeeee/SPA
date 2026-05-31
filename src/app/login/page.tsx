@@ -8,8 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { createClient } from '@/lib/supabase/client';
-import { login } from './actions';
 
 // The form reads ?next= via useSearchParams, so it must sit under a Suspense
 // boundary (otherwise the static prerender of /login bails out and the build
@@ -25,40 +23,26 @@ function LoginForm() {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      // 1. Server validates credentials (ERP / local bcrypt) and ensures the
-      //    Supabase Auth user exists with the synced password.
-      const r = await login({ username, password });
-      if (!r.ok) {
-        setError(r.error);
-        return;
-      }
-      // 2. The *browser* completes the Supabase sign-in so the session cookie
-      //    is written client-side — reliable on Vercel, unlike a Server Action
-      //    Set-Cookie. r.email is the account resolved server-side.
-      const supabase = createClient();
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: r.email,
-        password,
+      // Login via the /api/auth/login route handler: it validates credentials
+      // and writes the Supabase session cookie on the response (reliable on
+      // Vercel, and the middleware matcher excludes /api/ so nothing strips it).
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
       });
-      if (signInError) {
-        setError(signInError.message);
+      const r = (await res.json().catch(() => null)) as
+        | { ok: true }
+        | { ok: false; error: string }
+        | null;
+      if (!r || !r.ok) {
+        setError(r && !r.ok ? r.error : 'Sign in failed');
         return;
       }
-      // TEMP DIAGNOSTIC: confirm the browser actually got a session AND wrote a
-      // JS-visible sb-* cookie. Show it on screen and do NOT navigate, so we can
-      // read it without digging through Vercel logs. Remove once resolved.
-      const sbCookieNames = document.cookie
-        .split(';')
-        .map((c) => c.trim().split('=')[0])
-        .filter((n) => n.startsWith('sb-'));
-      const next = params.get('next') ?? '/dashboard';
-      setError(
-        `DIAG — session=${signInData.session ? 'yes' : 'no'} · ` +
-          `expires_in=${signInData.session?.expires_in ?? '?'} · ` +
-          `sbCookies=[${sbCookieNames.join(', ') || 'NONE'}] · next=${next}`,
-      );
-      // Navigation intentionally disabled while diagnosing — read the line above.
-      return;
+      // Hard navigation so the freshly set cookie rides the next request.
+      const next = params.get('next');
+      const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+      window.location.assign(dest);
     });
   }
 

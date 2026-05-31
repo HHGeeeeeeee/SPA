@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import type { Database } from '@/types/database';
-import { requireAdmin } from '@/lib/auth';
+import { requireManager } from '@/lib/auth';
 
 type PolicyUpdate = Database['public']['Tables']['commission_policies']['Update'];
 
@@ -42,7 +42,7 @@ async function syncBands(policyId: string, bands: { min_minutes: number | null; 
 }
 
 export async function createCommissionPolicy(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -64,7 +64,7 @@ export async function createCommissionPolicy(input: unknown): Promise<ActionResu
 }
 
 export async function updateCommissionPolicy(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -87,7 +87,7 @@ export async function updateCommissionPolicy(input: unknown): Promise<ActionResu
 }
 
 export async function setCommissionPolicyActive(id: string, active: boolean): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('commission_policies').update({ active }).eq('id', id);

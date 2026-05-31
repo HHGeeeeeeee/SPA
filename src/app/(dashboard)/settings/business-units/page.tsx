@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { ChevronLeft, Plus } from 'lucide-react';
 
+import { currentSession, isAdmin } from '@/lib/auth';
 import { createServiceClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +31,7 @@ async function fetchUnits() {
 }
 
 export default async function BusinessUnitsPage() {
+  if (!isAdmin(await currentSession())) redirect('/dashboard');
   const items = await fetchUnits();
   const activeCount = items.filter((i) => i.active).length;
 

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 
 import { createAuditedClient } from '@/lib/supabase/server';
-import { requireAdmin } from '@/lib/auth';
+import { requireManager } from '@/lib/auth';
 import type { Database } from '@/types/database';
 
 type StaffUserUpdate = Database['public']['Tables']['staff_users']['Update'];
@@ -54,7 +54,7 @@ async function syncBranches(staffUserId: string, branchIds: string[]) {
 }
 
 export async function createStaffUser(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -86,7 +86,7 @@ export async function createStaffUser(input: unknown): Promise<ActionResult> {
 }
 
 export async function updateStaffUser(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -112,7 +112,7 @@ export async function updateStaffUser(input: unknown): Promise<ActionResult> {
 }
 
 export async function setStaffUserActive(id: string, active: boolean): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('staff_users').update({ active }).eq('id', id);
@@ -122,7 +122,7 @@ export async function setStaffUserActive(id: string, active: boolean): Promise<A
 }
 
 export async function setStaffUserPassword(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = passwordSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid password' };
@@ -138,7 +138,7 @@ export async function setStaffUserPassword(input: unknown): Promise<ActionResult
 }
 
 export async function setManagerPin(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = pinSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid PIN' };
@@ -159,7 +159,7 @@ export async function setManagerPin(input: unknown): Promise<ActionResult> {
 }
 
 export async function clearManagerPin(id: string): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase

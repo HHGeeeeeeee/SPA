@@ -1,8 +1,6 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { ChevronLeft, KeyRound, Plus } from 'lucide-react';
 
-import { currentSession, isAdmin } from '@/lib/auth';
 import { createServiceClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -61,7 +59,10 @@ function roleBadge(role: UserRole) {
 }
 
 export default async function UsersPage() {
-  if (!isAdmin(await currentSession())) redirect('/dashboard');
+  // Manager+ may view + manage users (2026-05-31 matrix change — was admin
+  // only). The /settings layout already enforces isManager; this page no
+  // longer adds an isAdmin redirect on top. requireManager on the actions
+  // is the matching write-side guard.
   const { users, branches } = await fetchData();
   const activeCount = users.filter((u) => u.active).length;
 

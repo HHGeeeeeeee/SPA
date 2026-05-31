@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
-import { requireAdmin } from '@/lib/auth';
+import { requireManager } from '@/lib/auth';
 
 const schema = z
   .object({
@@ -32,7 +32,7 @@ const updateSchema = z.object({
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function createDiscountClass(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -48,7 +48,7 @@ export async function createDiscountClass(input: unknown): Promise<ActionResult>
 }
 
 export async function updateDiscountClass(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -61,7 +61,7 @@ export async function updateDiscountClass(input: unknown): Promise<ActionResult>
 }
 
 export async function setDiscountClassActive(id: string, active: boolean): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('discount_classes').update({ active }).eq('id', id);

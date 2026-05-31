@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import type { Database } from '@/types/database';
-import { requireAdmin } from '@/lib/auth';
+import { requireManager } from '@/lib/auth';
 
 type EmployeeUpdate = Database['public']['Tables']['employees']['Update'];
 
@@ -82,7 +82,7 @@ export async function nextEmployeeCode(homeBranchId: string | null): Promise<str
 }
 
 export async function createEmployee(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = baseSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -108,7 +108,7 @@ export async function createEmployee(input: unknown): Promise<ActionResult> {
 }
 
 export async function updateEmployee(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -140,7 +140,7 @@ export async function setEmployeeStatus(
   id: string,
   status: 'active' | 'inactive' | 'on_leave',
 ): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('employees').update({ status }).eq('id', id);

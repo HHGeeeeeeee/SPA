@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import type { Database } from '@/types/database';
-import { requireAdmin } from '@/lib/auth';
+import { requireManager } from '@/lib/auth';
 
 type ServiceItemUpdate = Database['public']['Tables']['service_items']['Update'];
 
@@ -65,7 +65,7 @@ function deriveServiceGroup(name: string): string {
 }
 
 export async function createServiceItem(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -98,7 +98,7 @@ export async function createServiceItem(input: unknown): Promise<ActionResult> {
 }
 
 export async function updateServiceItem(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -195,7 +195,7 @@ const scheduleSchema = z.object({
 
 /** Schedule a price change: cap the open segment, then open a new one. */
 export async function scheduleServicePriceChange(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const parsed = scheduleSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -234,7 +234,7 @@ export async function scheduleServicePriceChange(input: unknown): Promise<Action
 
 /** Edit the price of a not-yet-effective (future) segment. */
 export async function updateFuturePrice(priceId: string, pricePhp: number): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   if (!(pricePhp > 0)) return { ok: false, error: 'Price must be greater than 0' };
   const supabase = await createAuditedClient();
@@ -249,7 +249,7 @@ export async function updateFuturePrice(priceId: string, pricePhp: number): Prom
 
 /** Cancel the latest future price change, re-opening the prior segment. */
 export async function deleteFuturePrice(priceId: string): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { data: row } = await supabase
@@ -366,7 +366,7 @@ export async function batchScheduleServicePriceChange(
 }
 
 export async function setServiceItemActive(id: string, active: boolean): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('service_items').update({ active }).eq('id', id);

@@ -106,7 +106,7 @@ export const mainNavItems: NavItem[] = [
       {
         label: 'Organization',
         items: [
-          { label: 'Business Units', href: '/settings/business-units' },
+          { label: 'Business Units', href: '/settings/business-units', adminOnly: true },
           { label: 'Branches', href: '/settings/branches' },
           { label: 'Therapist Sharing', href: '/settings/therapist-groups' },
           { label: 'Positions', href: '/settings/positions' },
@@ -130,15 +130,18 @@ export const mainNavItems: NavItem[] = [
           { label: 'Customer Sources', href: '/settings/customer-sources' },
           { label: 'Billing Destinations', href: '/settings/billing-destinations' },
           { label: 'Payment Methods', href: '/settings/payment-methods' },
-          { label: 'Transaction Codes', href: '/settings/transaction-codes' },
+          { label: 'Transaction Codes', href: '/settings/transaction-codes', adminOnly: true },
         ],
       },
       {
         label: 'System',
         items: [
-          { label: 'Users', href: '/settings/users', adminOnly: true },
-          { label: 'System Settings', href: '/settings/system' },
-          { label: 'Audit Log', href: '/settings/audit-log' },
+          // Users is manager+ (sees + manages) per the 2026-05-31 permission
+          // matrix — was admin-only briefly. Other System items stay admin.
+          { label: 'Users', href: '/settings/users' },
+          { label: 'System Settings', href: '/settings/system', adminOnly: true },
+          { label: 'Roles & Permissions', href: '/settings/roles', adminOnly: true },
+          { label: 'Audit Log', href: '/settings/audit-log', adminOnly: true },
         ],
       },
     ],

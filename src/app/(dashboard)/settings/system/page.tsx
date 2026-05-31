@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { ChevronLeft, Plus } from 'lucide-react';
 
+import { currentSession, isAdmin } from '@/lib/auth';
 import { createServiceClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +38,7 @@ async function fetchData() {
 }
 
 export default async function SystemSettingsPage() {
+  if (!isAdmin(await currentSession())) redirect('/dashboard');
   const { settings, branches } = await fetchData();
   const globalCount = settings.filter((s) => s.scope === 'global').length;
 

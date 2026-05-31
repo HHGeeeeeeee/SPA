@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import {
   ChevronLeft,
   ShieldCheck,
@@ -9,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { currentSession, isAdmin } from '@/lib/auth';
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -81,6 +83,7 @@ const ROLES = [
 ] as const;
 
 export default async function RolesPage() {
+  if (!isAdmin(await currentSession())) redirect('/dashboard');
   // Future: load role_permissions overrides
   const supabase = createServiceClient();
   const { data: overrides } = await supabase

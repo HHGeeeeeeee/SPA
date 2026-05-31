@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { ChevronLeft, Plus } from 'lucide-react';
 
+import { currentSession, isAdmin } from '@/lib/auth';
 import { createServiceClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +59,7 @@ function GLCell({ acct, sub, branch }: { acct: string | null; sub: string | null
 }
 
 export default async function TransactionCodesPage() {
+  if (!isAdmin(await currentSession())) redirect('/dashboard');
   const { codes, branches, paymentMethods } = await fetchData();
   const activeCount = codes.filter((c) => c.active).length;
 

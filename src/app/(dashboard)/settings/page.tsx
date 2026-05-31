@@ -29,11 +29,14 @@ type SectionItem = {
   adminOnly?: boolean;
 };
 
+// adminOnly hides the card from non-admin viewers (matches the page-level
+// guard + sidebar filter). Manager-editable items are unmarked — manager
+// sees them and the actions accept manager auth.
 const sections: { group: string; items: SectionItem[] }[] = [
   {
     group: 'Core Business',
     items: [
-      { icon: Layers, label: 'Business Units', href: '/settings/business-units', desc: 'Business lines (SPA, Gym, …)' },
+      { icon: Layers, label: 'Business Units', href: '/settings/business-units', desc: 'Business lines (SPA, Gym, …)', adminOnly: true },
       { icon: Building2, label: 'Branches', href: '/settings/branches', desc: 'Manage shop locations' },
       { icon: Users, label: 'Therapist Sharing', href: '/settings/therapist-groups', desc: 'Branches that share a therapist pool' },
       { icon: BadgeCheck, label: 'Positions', href: '/settings/positions', desc: 'Job titles (Massage Therapist, Hair Stylist…)' },
@@ -52,16 +55,16 @@ const sections: { group: string; items: SectionItem[] }[] = [
       { icon: Users, label: 'Customer Sources', href: '/settings/customer-sources', desc: 'WALK-IN / Hotels / VIP / Third-Party' },
       { icon: Receipt, label: 'Billing Destinations', href: '/settings/billing-destinations', desc: 'Intercompany / Third-party billing' },
       { icon: CreditCard, label: 'Payment Methods', href: '/settings/payment-methods', desc: 'Cash / PAYMAYA / AR / SVC' },
-      { icon: Banknote, label: 'Transaction Codes', href: '/settings/transaction-codes', desc: 'ERP GL postings' },
+      { icon: Banknote, label: 'Transaction Codes', href: '/settings/transaction-codes', desc: 'ERP GL postings', adminOnly: true },
     ],
   },
   {
     group: 'System',
     items: [
-      { icon: UserCog, label: 'Users', href: '/settings/users', desc: 'Staff accounts and roles', adminOnly: true },
-      { icon: KeySquare, label: 'Roles & Permissions', href: '/settings/roles', desc: 'Role-based access (future)' },
-      { icon: Cog, label: 'System Settings', href: '/settings/system', desc: 'Magic numbers & thresholds' },
-      { icon: History, label: 'Audit Log', href: '/settings/audit-log', desc: 'Who changed what & when (admin)' },
+      { icon: UserCog, label: 'Users', href: '/settings/users', desc: 'Staff accounts and roles' },
+      { icon: KeySquare, label: 'Roles & Permissions', href: '/settings/roles', desc: 'Role-based access (future)', adminOnly: true },
+      { icon: Cog, label: 'System Settings', href: '/settings/system', desc: 'Magic numbers & thresholds', adminOnly: true },
+      { icon: History, label: 'Audit Log', href: '/settings/audit-log', desc: 'Who changed what & when', adminOnly: true },
     ],
   },
 ];

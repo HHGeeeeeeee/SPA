@@ -54,6 +54,19 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
+  // Let Next.js Server Actions through untouched. They POST to the current
+  // route with a `next-action` header; running the Supabase client here calls
+  // getUser(), which — for a request that has no (or a stale) session, e.g. the
+  // login POST itself — emits cookie-clearing Set-Cookie headers on our
+  // response. Those then clobber the brand-new session cookie the login action
+  // is trying to write, so it never reaches the browser and every following
+  // request looks unauthenticated (→ bounced to /login). The page hosting the
+  // action is already auth-guarded and actions do their own permission checks,
+  // so skipping the session plumbing for action POSTs is safe.
+  if (request.headers.get('next-action')) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {

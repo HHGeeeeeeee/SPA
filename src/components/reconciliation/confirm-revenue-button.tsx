@@ -33,7 +33,17 @@ export function ConfirmRevenueButton({ branchId, date, count, disabled }: Props)
             { duration: 12000 },
           );
         } else {
-          toast.success(`Confirmed — ${closed} order(s) closed`);
+          // Surface the Acumatica GL batch number when posted — it's what
+          // the manager/accountant looks up in the ERP to verify the entry.
+          // batchNbr is null in dev mode (ACUMATICA_BASE_URL not set) — in
+          // that case the toast just confirms the local close.
+          const batchNbr = r.data?.batchNbr;
+          toast.success(
+            batchNbr
+              ? `Confirmed — ${closed} order(s) closed · Batch #${batchNbr}`
+              : `Confirmed — ${closed} order(s) closed`,
+            { duration: batchNbr ? 8000 : 4000 },
+          );
         }
       } else toast.error(r.error);
     });

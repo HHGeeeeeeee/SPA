@@ -33,9 +33,11 @@ interface Props {
   shift: ShiftStatus;
   canReopen?: boolean;
   /** Other shifts on the same business day, with their cash received. Drives
-   *  the cross-shift hint — without it, a Shift-1 staff who took a cash
-   *  payment at 17:01 would see "Cash received = 0" here with no clue the
-   *  payment landed in Shift-2's bucket. Empty array = no hint. */
+   *  the cross-shift hint AND the always-render-breakdown decision (we want
+   *  the data rows above the input to line up across sibling cards — if any
+   *  shift on the day got cash we render the SO/AR breakdown on every card,
+   *  including the ones with zero, so Expected/Counted sit at the same Y).
+   *  Empty array = no hint, no breakdown. */
   siblings?: { label: string; receivedCents: number }[];
 }
 
@@ -70,6 +72,10 @@ export function CashReconForm({ branchId, date, shift, canReopen, siblings = [] 
   // noise. The case we care about is "you took cash but it's not here" (it's
   // in another shift because of the paid_at clock).
   const siblingsWithCash = siblings.filter((s) => s.receivedCents > 0);
+  // Cross-shift "any cash today?" — drives whether to render the SO/AR
+  // breakdown on every card (so the Expected/Counted lines align), or
+  // suppress on quiet days where everything would be zero.
+  const anyCashToday = shift.receivedCents > 0 || siblings.some((s) => s.receivedCents > 0);
 
   const rows = (
     <div className="flex flex-col gap-1 text-sm">
@@ -105,11 +111,13 @@ export function CashReconForm({ branchId, date, shift, canReopen, siblings = [] 
         <span className="font-medium text-muted-foreground">Cash received this shift</span>
         <span className="font-bold tabular">{peso(shift.receivedCents)}</span>
       </div>
-      {/* Source breakdown — only render when there's actually cash, otherwise
-          the two zero rows are noise. The two lines always sum to the row
-          above; useful for the cashier to know whether the till delta came
-          from counter sales or from collecting an AR settlement. */}
-      {shift.receivedCents > 0 && (
+      {/* Source breakdown — rendered on every card when ANY shift today got
+          cash, so the rows below (Expected / Counted) align across sibling
+          cards even when this card has zero. Suppressed entirely on quiet
+          days where all shifts are zero. The two lines always sum to the
+          row above; useful for the cashier to know whether the till delta
+          came from counter sales or from collecting an AR settlement. */}
+      {anyCashToday && (
         <div className="ml-3 flex flex-col gap-0.5 text-xs">
           <div className="flex items-center justify-between text-muted-foreground">
             <span>· from Sales Orders (counter)</span>

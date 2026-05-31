@@ -144,6 +144,13 @@ function summaryFor(it: PendingItem): string {
 }
 
 export default async function PendingReschedulesPage() {
+  // Reschedule feature temporarily disabled (2026-05-31) — interrupt no longer
+  // offers Reschedule, sidebar entry removed. Direct URL hits bounce back to
+  // the orders list. To re-enable: remove this redirect AND re-add the
+  // reschedule option in src/lib/interrupt-taxonomy.ts.
+  redirect('/sales-orders');
+
+  // eslint-disable-next-line no-unreachable
   if (!isManager(await currentSession())) redirect('/dashboard');
   const { items, branches, sources, serviceCategories, serviceItems } = await fetchData();
 

@@ -2,17 +2,20 @@
 // dropdowns and the server action validates against the same arrays — single
 // source of truth so a typo can't slip into one side without the other.
 //
-// `partial_charge` is intentionally absent here: the schema CHECK still allows
-// it (so historical rows remain valid), but the UI/server no longer offer it
-// for new interrupts. If we ever re-introduce prorated billing, add it back
-// here in both arrays.
+// Hidden from the UI but accepted by the server / schema (so historical rows
+// stay valid + we can re-enable without a migration):
+//   - `partial_charge`  legacy prorated billing
+//   - `reschedule`      paused 2026-05-31 per user request; the Pending
+//                       Reschedules page + sidebar entry are also hidden.
+//                       Re-enable by adding it back to INTERRUPT_HANDLINGS
+//                       below AND un-hiding /sales-orders/reschedules.
 
 export type InterruptHandling = 'full_charge' | 'no_charge' | 'reschedule';
 
 export const INTERRUPT_HANDLINGS: { value: InterruptHandling; label: string }[] = [
   { value: 'full_charge', label: 'Full charge' },
   { value: 'no_charge', label: 'No charge' },
-  { value: 'reschedule', label: 'Reschedule (no charge)' },
+  // { value: 'reschedule', label: 'Reschedule (no charge)' },  // disabled — see header note
 ];
 
 // Every handling has its own short reason list. "Other" is always available

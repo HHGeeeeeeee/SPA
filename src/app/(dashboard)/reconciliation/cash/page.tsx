@@ -96,8 +96,10 @@ export default async function CashReconciliationPage({
       )}
 
       {/* Per-transaction breakdown — collapsible so it doesn't take screen
-          unless the cashier wants to drill into a specific shift's number. */}
-      {branchId && <CashDetailCard rows={cashDetail} />}
+          unless the cashier wants to drill into a specific shift's number.
+          shiftLabels feeds the per-shift filter tabs (so a quiet shift is
+          still listed even with zero rows). */}
+      {branchId && <CashDetailCard rows={cashDetail} shiftLabels={shifts.map((s) => s.label)} />}
     </div>
   );
 }

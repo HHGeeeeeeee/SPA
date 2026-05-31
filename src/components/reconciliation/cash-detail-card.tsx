@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import type { CashDetailRow } from '@/app/(dashboard)/reconciliation/cash/actions';
 
@@ -32,17 +33,28 @@ function hhmm(iso: string): string {
 
 interface Props {
   rows: CashDetailRow[];
+  /** All shift labels for the day, in order. Drives the tab list so a shift
+   *  with zero cash still shows up as a tab (the cashier knows nothing's
+   *  hidden — that shift genuinely has no rows). */
+  shiftLabels: string[];
 }
 
+const ALL_TAB = '__all__';
+
 // Collapsible per-transaction list of every cash payment counted into today's
-// shifts. Hand-rolled (no Collapsible primitive in src/components/ui), one
-// chevron-toggle button as the card header. Starts collapsed — the cashier
-// only opens it when chasing a variance.
-export function CashDetailCard({ rows }: Props) {
+// shifts, with a per-shift filter tab. Hand-rolled chevron (no Collapsible
+// primitive in src/components/ui). Starts collapsed — the cashier only opens
+// it when chasing a variance.
+export function CashDetailCard({ rows, shiftLabels }: Props) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<string>(ALL_TAB);
   const total = rows.reduce((s, r) => s + r.amountCents, 0);
   const counter = rows.filter((r) => r.kind === 'order').reduce((s, r) => s + r.amountCents, 0);
   const ar = total - counter;
+  // Per-tab filtered slice — ALL keeps everything; a shift tab keeps only
+  // rows whose shiftLabel matches.
+  const filtered = tab === ALL_TAB ? rows : rows.filter((r) => r.shiftLabel === tab);
+  const filteredTotal = filtered.reduce((s, r) => s + r.amountCents, 0);
 
   return (
     <Card className="p-0 overflow-hidden">
@@ -71,56 +83,82 @@ export function CashDetailCard({ rows }: Props) {
           </div>
         ) : (
           <div className="border-t border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-20 font-bold">Time</TableHead>
-                  <TableHead className="w-28 font-bold">Shift</TableHead>
-                  <TableHead className="w-24 font-bold">Source</TableHead>
-                  <TableHead className="font-bold">Reference</TableHead>
-                  <TableHead className="font-bold">Detail</TableHead>
-                  <TableHead className="w-28 text-right font-bold">Amount</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r, i) => (
-                  <TableRow key={`${r.kind}-${r.refId}-${i}`}>
-                    <TableCell className="font-mono font-semibold tabular text-xs">
-                      {hhmm(r.paidAt)}
-                    </TableCell>
-                    <TableCell className="text-xs font-semibold">{r.shiftLabel}</TableCell>
-                    <TableCell>
-                      {r.kind === 'order' ? (
-                        <Badge variant="secondary" className="font-bold gap-1">
-                          <Banknote className="size-3" />
-                          SO
-                        </Badge>
-                      ) : (
-                        <Badge variant="default" className="font-bold gap-1">
-                          <FileText className="size-3" />
-                          AR
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono font-bold text-xs">
-                      {r.kind === 'order' ? (
-                        <Link className="hover:text-primary" href={`/sales-orders/${r.refId}`}>
-                          {r.refNo}
-                        </Link>
-                      ) : (
-                        <Link className="hover:text-primary" href={`/reconciliation/soa?id=${r.refId}`}>
-                          {r.refNo}
-                        </Link>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-medium text-sm">{r.refLabel}</TableCell>
-                    <TableCell className="text-right font-bold tabular">
-                      {peso(r.amountCents)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <Tabs value={tab} onValueChange={(v) => v && setTab(v)}>
+              <div className="px-4 py-2 flex items-center gap-3 border-b border-border">
+                <TabsList variant="line">
+                  <TabsTrigger value={ALL_TAB}>All ({rows.length})</TabsTrigger>
+                  {shiftLabels.map((label) => {
+                    const count = rows.filter((r) => r.shiftLabel === label).length;
+                    return (
+                      <TabsTrigger key={label} value={label}>
+                        {label} ({count})
+                      </TabsTrigger>
+                    );
+                  })}
+                </TabsList>
+                <span className="ml-auto text-xs font-semibold text-muted-foreground tabular">
+                  {tab === ALL_TAB ? 'Total' : tab}: ₱{peso(filteredTotal)}
+                </span>
+              </div>
+              <TabsContent value={tab}>
+                {filtered.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-sm font-medium text-muted-foreground">
+                    No cash transactions in {tab}.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-20 font-bold">Time</TableHead>
+                        <TableHead className="w-28 font-bold">Shift</TableHead>
+                        <TableHead className="w-24 font-bold">Source</TableHead>
+                        <TableHead className="font-bold">Reference</TableHead>
+                        <TableHead className="font-bold">Detail</TableHead>
+                        <TableHead className="w-28 text-right font-bold">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((r, i) => (
+                        <TableRow key={`${r.kind}-${r.refId}-${i}`}>
+                          <TableCell className="font-mono font-semibold tabular text-xs">
+                            {hhmm(r.paidAt)}
+                          </TableCell>
+                          <TableCell className="text-xs font-semibold">{r.shiftLabel}</TableCell>
+                          <TableCell>
+                            {r.kind === 'order' ? (
+                              <Badge variant="secondary" className="font-bold gap-1">
+                                <Banknote className="size-3" />
+                                SO
+                              </Badge>
+                            ) : (
+                              <Badge variant="default" className="font-bold gap-1">
+                                <FileText className="size-3" />
+                                AR
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono font-bold text-xs">
+                            {r.kind === 'order' ? (
+                              <Link className="hover:text-primary" href={`/sales-orders/${r.refId}`}>
+                                {r.refNo}
+                              </Link>
+                            ) : (
+                              <Link className="hover:text-primary" href={`/reconciliation/soa?id=${r.refId}`}>
+                                {r.refNo}
+                              </Link>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-medium text-sm">{r.refLabel}</TableCell>
+                          <TableCell className="text-right font-bold tabular">
+                            {peso(r.amountCents)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </TabsContent>
+            </Tabs>
           </div>
         )
       )}

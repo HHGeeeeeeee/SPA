@@ -6,9 +6,10 @@ import { currentSession, isAdmin, isManager } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { CashReconForm } from '@/components/reconciliation/cash-recon-form';
+import { CashDetailCard } from '@/components/reconciliation/cash-detail-card';
 import { CashShiftConfig } from '@/components/reconciliation/cash-shift-config';
 import { ReconDatePicker } from '@/components/reconciliation/recon-date-picker';
-import { loadDayShifts, getBranchShifts, getBranchShiftConfig } from './actions';
+import { loadDayShifts, getBranchShifts, getBranchShiftConfig, loadCashDetail } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,7 @@ export default async function CashReconciliationPage({
   const shifts = branchId ? await loadDayShifts(branchId, date) : [];
   const configured = branchId ? await getBranchShifts(branchId) : [];
   const shiftConfig = branchId ? await getBranchShiftConfig(branchId) : null;
+  const cashDetail = branchId ? await loadCashDetail(branchId, date) : [];
   const allClosed = shifts.length > 0 && shifts.every((s) => s.closed);
 
   return (
@@ -92,6 +94,10 @@ export default async function CashReconciliationPage({
           </CardContent>
         </Card>
       )}
+
+      {/* Per-transaction breakdown — collapsible so it doesn't take screen
+          unless the cashier wants to drill into a specific shift's number. */}
+      {branchId && <CashDetailCard rows={cashDetail} />}
     </div>
   );
 }

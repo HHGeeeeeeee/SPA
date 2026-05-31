@@ -161,6 +161,106 @@ export async function isDayCashClosed(branchId: string, date: string): Promise<b
   return shifts.length > 0 && shifts.every((s) => s.closed);
 }
 
+/** One row per cash payment recorded today at the branch — both counter
+ *  payments (order_no + customer name) and AR collections (SOA #). Powers
+ *  the collapsible "Cash detail" card so the cashier can see exactly which
+ *  transactions add up to each shift's Cash received. Sorted by paid_at
+ *  ascending so the list reads chronologically. */
+export interface CashDetailRow {
+  kind: 'order' | 'ar';
+  paidAt: string;
+  amountCents: number;
+  shiftLabel: string;
+  /** order_no for kind='order', soa_no for kind='ar'. */
+  refNo: string;
+  /** Order's customer guest name OR the SOA's billing destination code. */
+  refLabel: string;
+  /** For deep-linking from the detail row. */
+  refId: string;
+}
+
+export async function loadCashDetail(branchId: string, date: string): Promise<CashDetailRow[]> {
+  const supabase = await createAuditedClient();
+  const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
+  const cfg = await getBranchShiftConfig(branchId);
+  const windows = windowsFromConfig(cfg);
+  // Find which shift window an ISO timestamp falls into (PHT minute-of-day).
+  const shiftLabelFor = (iso: string): string => {
+    const mod = minuteOfDayPHT(iso);
+    const w = windows.find((win) => mod >= win.start && mod < win.end);
+    return w?.name ?? '—';
+  };
+  const from = `${date}T00:00:00+08:00`;
+  const to = `${nextDate(date)}T00:00:00+08:00`;
+
+  // Counter cash (order payments). Pull order_no + first guest name so the
+  // detail row labels read like "#SO-… · Maria Santos" with no extra lookup.
+  const counterP = supabase
+    .from('payments')
+    .select(`
+      id, amount_cents, paid_at,
+      method:payment_methods!payments_payment_method_id_fkey ( code ),
+      order:orders!payments_order_id_fkey (
+        id, order_no, branch_id, status,
+        customers:order_customers ( customer_name, seq_no )
+      )
+    `)
+    .gte('paid_at', from)
+    .lt('paid_at', to);
+
+  // AR settle cash (SOA payments). Pull SOA no + billing destination code.
+  const arP = supabase
+    .from('revenue_soa_payments')
+    .select(`
+      id, amount_cents, paid_at, payment_method,
+      soa:revenue_soa ( id, soa_no, branch_id, billing:billing_destinations ( code ) )
+    `)
+    .gte('paid_at', from)
+    .lt('paid_at', to);
+
+  const [{ data: counter }, { data: arPays }] = await Promise.all([counterP, arP]);
+
+  const rows: CashDetailRow[] = [];
+
+  for (const p of counter ?? []) {
+    const m = one(p.method);
+    const ord = one(p.order);
+    if (!ord || ord.branch_id !== branchId || ord.status === 'void') continue;
+    if ((m?.code ?? '').toLowerCase() !== 'cash') continue;
+    // First-seat guest gets billed as the row label — multi-guest orders
+    // still show the order_no which is the canonical identifier.
+    const firstGuest = (ord.customers ?? []).slice().sort((a, b) => (a.seq_no ?? 0) - (b.seq_no ?? 0))[0];
+    rows.push({
+      kind: 'order',
+      paidAt: p.paid_at,
+      amountCents: p.amount_cents,
+      shiftLabel: shiftLabelFor(p.paid_at),
+      refNo: ord.order_no,
+      refLabel: firstGuest?.customer_name ?? '—',
+      refId: ord.id,
+    });
+  }
+
+  for (const p of arPays ?? []) {
+    const soa = one(p.soa);
+    if (!soa || soa.branch_id !== branchId) continue;
+    if ((p.payment_method ?? '').toLowerCase() !== 'cash') continue;
+    const billing = one<{ code: string | null }>(soa.billing);
+    rows.push({
+      kind: 'ar',
+      paidAt: p.paid_at,
+      amountCents: p.amount_cents,
+      shiftLabel: shiftLabelFor(p.paid_at),
+      refNo: soa.soa_no ?? '—',
+      refLabel: billing?.code ?? '—',
+      refId: soa.id,
+    });
+  }
+
+  rows.sort((a, b) => a.paidAt.localeCompare(b.paidAt));
+  return rows;
+}
+
 const schema = z.object({
   branch_id: z.string().uuid(),
   date: z.string().min(1),

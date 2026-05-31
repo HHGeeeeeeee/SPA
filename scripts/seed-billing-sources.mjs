@@ -219,9 +219,22 @@ async function main() {
     for (const tc of txCodes) {
       const { error } = await supabase.from('transaction_codes').upsert(
         { ...tc, active: true },
-        { onConflict: 'code' },
+        { onConflict: 'code,branch_id' },
       );
-      if (error) throw error;
+      // The partial unique index transaction_codes_logical_key (20260530150000)
+      // locks one active row per (branch, type, method, credit_account). Two of
+      // these SAMPLE settle rows (AR-INTERCOMPANY vs AR-THIRDPARTY) share that
+      // logical key — they differ only by debit_account — so the second one
+      // collides. Skip-with-warning instead of aborting the batch: the real GL
+      // mappings get configured per-branch via the Master Data UI once ERP is
+      // wired up; this loader only lays down illustrative defaults.
+      if (error) {
+        if (error.code === '23505') {
+          console.log(`    ⚠ skipped ${tc.code} — logical-key clash with an existing active row (configure via UI)`);
+          continue;
+        }
+        throw error;
+      }
     }
   }
 

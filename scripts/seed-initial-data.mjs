@@ -113,9 +113,11 @@ async function main() {
   if (e4) throw e4;
 
   // Service categories
+  // NOTE: business_unit was migrated from a TEXT column on this table to the
+  // service_category_business_units junction (20260519164258). We upsert the
+  // categories first, then link each to the 'spa' business unit below.
   console.log('  · service_categories');
   const sc = (overrides) => ({
-    business_unit: 'spa',
     commission_applicable: true,
     tip_applicable: true,
     active: true,
@@ -133,6 +135,27 @@ async function main() {
       { onConflict: 'code' },
     );
   if (e5) throw e5;
+
+  // Link every category to the SPA business unit via the junction table.
+  console.log('  · service_category_business_units');
+  const { data: spaUnit } = await supabase
+    .from('business_units')
+    .select('id')
+    .eq('code', 'spa')
+    .single();
+  const { data: cats } = await supabase
+    .from('service_categories')
+    .select('id')
+    .in('code', ['MASSAGE', 'HAIR', 'NAIL', 'REST']);
+  if (spaUnit && cats?.length) {
+    const { error: e6 } = await supabase
+      .from('service_category_business_units')
+      .upsert(
+        cats.map((c) => ({ service_category_id: c.id, business_unit_id: spaUnit.id })),
+        { onConflict: 'service_category_id,business_unit_id', ignoreDuplicates: true },
+      );
+    if (e6) throw e6;
+  }
 
   console.log('Done.');
 }

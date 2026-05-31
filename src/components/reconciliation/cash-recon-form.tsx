@@ -76,32 +76,62 @@ export function CashReconForm({ branchId, date, shift, canReopen, siblings = [] 
   // breakdown on every card (so the Expected/Counted lines align), or
   // suppress on quiet days where everything would be zero.
   const anyCashToday = shift.receivedCents > 0 || siblings.some((s) => s.receivedCents > 0);
+  // Reservation rules: when there are multiple shifts on the day, AT LEAST one
+  // card will render the heads-up chip and the Opening float row. The other
+  // card(s) reserve the same vertical slot with a placeholder / muted "—" so
+  // Expected/Counted/Variance line up horizontally across cards. Without this
+  // the card without those extras floats higher and the rows zig-zag.
+  const reserveHeadsUp = anyCashToday && siblings.length > 0;
+  const reserveOpeningFloat = siblings.length > 0;
 
   const rows = (
     <div className="flex flex-col gap-1 text-sm">
-      {siblingsWithCash.length > 0 && (
+      {reserveHeadsUp && (
         // Cross-shift context — payments are attributed by paid_at clock, not
         // by who was on duty, so a 17:01 cash sale by a Shift-1 cashier lands
         // in Shift-2. Without this line, the cashier sees "Cash received = 0"
         // here, counts what's actually in their drawer, and gets a positive
         // variance they can't explain.
         //
-        // Placed at the very top of the rows block (same vertical slot the
-        // Opening float row would occupy on a non-first shift), so Counted
-        // cash inputs across sibling cards line up — adding the warning
-        // doesn't push this card's input down relative to the others.
-        <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-2 py-1 text-xs font-medium text-amber-900 dark:text-amber-200">
-          <span className="font-bold">Heads up:</span> other shifts today —{' '}
-          {siblingsWithCash.map((s, i) => (
-            <span key={s.label}>
-              {i > 0 ? ', ' : ''}
-              <span className="font-bold">{s.label}</span> ₱{peso(s.receivedCents)}
-            </span>
-          ))}
-          . If the cash is in your drawer it may have been paid after the shift boundary.
-        </div>
+        // When this card has no message but a sibling does, render an
+        // invisible placeholder of the same shape so the rows below line up.
+        siblingsWithCash.length > 0 ? (
+          <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-2 py-1 text-xs font-medium text-amber-900 dark:text-amber-200">
+            <span className="font-bold">Heads up:</span> other shifts today —{' '}
+            {siblingsWithCash.map((s, i) => (
+              <span key={s.label}>
+                {i > 0 ? ', ' : ''}
+                <span className="font-bold">{s.label}</span> ₱{peso(s.receivedCents)}
+              </span>
+            ))}
+            . If the cash is in your drawer it may have been paid after the shift boundary.
+          </div>
+        ) : (
+          <div
+            aria-hidden="true"
+            className="invisible rounded-md border px-2 py-1 text-xs font-medium"
+          >
+            <span className="font-bold">Heads up:</span> placeholder — reserves the same vertical
+            slot as the chip shown on the sibling card so the rows below align.
+          </div>
+        )
       )}
-      {!shift.firstOfDay && (
+      {reserveOpeningFloat ? (
+        // Always render the row when more than one shift exists today, so
+        // firstOfDay cards reserve the slot with "—" instead of leaving the
+        // row missing (which would float Cash received up vs sibling cards).
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-muted-foreground">Opening float (handover)</span>
+          {shift.firstOfDay ? (
+            <span className="font-medium tabular text-muted-foreground">—</span>
+          ) : (
+            <span className="font-bold tabular">{peso(shift.openingCents)}</span>
+          )}
+        </div>
+      ) : !shift.firstOfDay && (
+        // Single-shift day with handover (shouldn't normally happen — the
+        // first shift of a day has no handover by definition — but kept for
+        // safety so a misconfigured day still shows the float).
         <div className="flex items-center justify-between">
           <span className="font-medium text-muted-foreground">Opening float (handover)</span>
           <span className="font-bold tabular">{peso(shift.openingCents)}</span>

@@ -9,27 +9,31 @@ import { useEffect, useState } from 'react';
  * Remove once the Vercel session issue is resolved.
  */
 export function DiagBanner() {
-  const [info, setInfo] = useState('checking…');
+  const [jsInfo, setJsInfo] = useState('checking…');
+  const [serverInfo, setServerInfo] = useState('checking…');
 
   useEffect(() => {
-    const read = () => {
-      const names = document.cookie
-        .split(';')
-        .map((c) => c.trim().split('=')[0])
-        .filter(Boolean);
-      const sb = names.filter((n) => n.startsWith('sb-'));
-      setInfo(
-        `sbCookie=${sb.length ? sb.join(',') : 'NONE'} · allCookies=${names.length ? names.join(',') : 'NONE'}`,
-      );
-    };
-    read();
-    const t = setInterval(read, 1000);
-    return () => clearInterval(t);
+    const names = document.cookie
+      .split(';')
+      .map((c) => c.trim().split('=')[0])
+      .filter(Boolean);
+    setJsInfo(`jsCookies=${names.length ? names.join(',') : 'NONE'}`);
+
+    // Ask the server, via a client-initiated fetch (same kind of request a
+    // client-side nav makes), whether it sees the session.
+    fetch('/api/auth/whoami', { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then((d) =>
+        setServerInfo(
+          `serverSeesSession=${d.hasUser ? 'YES' : 'NO'} · serverSbCookies=[${(d.sbCookiesSeenByServer || []).join(',') || 'NONE'}]${d.error ? ' · err=' + d.error : ''}`,
+        ),
+      )
+      .catch((e) => setServerInfo('whoami fetch failed: ' + String(e)));
   }, []);
 
   return (
     <div className="sticky top-0 z-50 bg-amber-500 px-3 py-1 text-center text-xs font-mono font-bold text-black">
-      DIAG · {info}
+      DIAG · {jsInfo} · {serverInfo}
     </div>
   );
 }

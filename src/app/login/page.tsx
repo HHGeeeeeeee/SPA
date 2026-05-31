@@ -36,7 +36,7 @@ function LoginForm() {
       //    is written client-side — reliable on Vercel, unlike a Server Action
       //    Set-Cookie. r.email is the account resolved server-side.
       const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: r.email,
         password,
       });
@@ -44,10 +44,21 @@ function LoginForm() {
         setError(signInError.message);
         return;
       }
-      // 3. Hard navigation so the just-written cookie rides the next request.
-      const next = params.get('next');
-      const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
-      window.location.assign(dest);
+      // TEMP DIAGNOSTIC: confirm the browser actually got a session AND wrote a
+      // JS-visible sb-* cookie. Show it on screen and do NOT navigate, so we can
+      // read it without digging through Vercel logs. Remove once resolved.
+      const sbCookieNames = document.cookie
+        .split(';')
+        .map((c) => c.trim().split('=')[0])
+        .filter((n) => n.startsWith('sb-'));
+      const next = params.get('next') ?? '/dashboard';
+      setError(
+        `DIAG — session=${signInData.session ? 'yes' : 'no'} · ` +
+          `expires_in=${signInData.session?.expires_in ?? '?'} · ` +
+          `sbCookies=[${sbCookieNames.join(', ') || 'NONE'}] · next=${next}`,
+      );
+      // Navigation intentionally disabled while diagnosing — read the line above.
+      return;
     });
   }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useState, useTransition } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,6 @@ import { login } from './actions';
 // boundary (otherwise the static prerender of /login bails out and the build
 // fails). The page provides that boundary; the form is the client child.
 function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -25,14 +24,10 @@ function LoginForm() {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const r = await login({ username, password });
-      if (r.ok) {
-        const next = params.get('next') || '/dashboard';
-        router.replace(next);
-        router.refresh();
-      } else {
-        setError(r.error);
-      }
+      // On success the server action issues a server-side redirect (which also
+      // commits the auth cookie), so control only returns here on failure.
+      const r = await login({ username, password, next: params.get('next') ?? undefined });
+      if (r && !r.ok) setError(r.error);
     });
   }
 

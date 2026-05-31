@@ -50,8 +50,12 @@ async function main() {
     bd({ code: 'HNBV', name: 'Nacpan Beach Villa' }),
     bd({ code: 'HNBR', name: 'Nacpan Beach Resto' }),
     bd({ code: 'HNBG', name: 'Nacpan Beach Glamping' }),
-    // ENGO is a THIRD-PARTY partner settled in cash (Record Payment → DR cash /
-    // CR AR), NOT intercompany. Must override the bd() intercompany default.
+    // ENGO is a THIRD-PARTY partner with 30-day credit terms — orders are
+    // AR-billed at service time (the bd() helper default of payment_method=ar
+    // is correct, do NOT override). Counter collection is NOT taken; the
+    // monthly SOA → Record Payment flow does DR cash/bank / CR AR when the
+    // remittance arrives. settlement_type='third_party' (vs intercompany)
+    // controls how the SOA's GL is built; default_payment_method_id stays AR.
     bd({
       code: 'ENGO',
       name: 'Elnido Go',

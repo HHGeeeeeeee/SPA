@@ -313,6 +313,8 @@ function roundPeso(cents: number): number {
 export async function batchScheduleServicePriceChange(
   input: unknown,
 ): Promise<ActionResult<{ applied: number; skipped: { label: string; reason: string }[] }>> {
+  const denied = await requireManager();
+  if (denied) return { ok: false, error: denied };
   const parsed = batchSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const { service_item_ids, mode, value, effective_from } = parsed.data;

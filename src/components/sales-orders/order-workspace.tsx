@@ -139,6 +139,12 @@ interface Props {
   capabilityByEmployee: Record<string, string[]>;
   defaultGenderPref?: string | null; // from the source reservation, if any
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
+  /** Active managers with a PIN set — drives the inline approval picker
+   *  when staff picks No charge on the Interrupt dialog. */
+  pinManagers: { id: string; name: string }[];
+  /** Whether the caller is themselves manager+ — when true the PIN section
+   *  hides (server records them as approver automatically). */
+  viewerIsManager: boolean;
 }
 
 const NONE = '__none__';
@@ -199,6 +205,8 @@ export function OrderWorkspace({
   paymentMethods,
   storedValueCards,
   paymentPolicy,
+  pinManagers,
+  viewerIsManager,
   capabilityByEmployee,
   defaultGenderPref = null,
 }: Props) {
@@ -1276,6 +1284,8 @@ export function OrderWorkspace({
           serviceName={interruptItem.service_name}
           open={!!interruptItem}
           onOpenChange={(o) => { if (!o) setInterruptItem(null); }}
+          pinManagers={pinManagers}
+          viewerIsManager={viewerIsManager}
         />
       )}
 

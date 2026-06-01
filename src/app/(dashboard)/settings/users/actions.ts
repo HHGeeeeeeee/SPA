@@ -9,34 +9,42 @@ import { currentSession, requireManager, isAdmin } from '@/lib/auth';
 import type { Database } from '@/types/database';
 
 /**
- * Privilege-escalation guard for the User management actions.
+ * Scope guard for the User management actions.
  *
- * Manager can manage staff/manager/external_booker rows, but MUST NOT be
- * able to (a) create users with role='admin' or (b) edit/touch an existing
- * admin's row in any way. Either would let a manager self-promote: just
- * create themselves a fresh admin, log in as that, escalation done.
+ * Two-tier policy:
+ *   - Admin     → can manage anyone
+ *   - Manager   → can manage role='staff' only (NOT other managers,
+ *                 NOT external_booker, NOT admin)
  *
- * Admin sees no restrictions.
+ * Why so narrow on the manager side: every direction other than staff is
+ * an escalation path or peer-tampering surface.
+ *   - manager → admin   = self-promote by minting a fresh admin
+ *   - manager → manager = take over a peer's account (reset password / PIN
+ *                          → log in as them and bypass own action limits)
+ *   - manager → booker  = no operational reason; bookers self-serve
  *
- * Pass `targetUserId` when modifying an existing row so we can refuse if
- * the row's current role is 'admin'. Pass `payloadRole` when the action is
- * creating or assigning a role so we can refuse 'admin' from a non-admin.
+ * Pass `targetUserId` when modifying an existing row (we look up the row's
+ * current role). Pass `payloadRole` when the action is creating or
+ * assigning a role (we refuse anything other than 'staff' from a manager).
+ *
+ * Manager's own row: blocked too — self-edit lives on /account, not here.
  */
-async function guardAgainstAdminEscalation(args: {
+async function guardUserMgmt(args: {
   targetUserId?: string;
   payloadRole?: string;
 }): Promise<string | null> {
   const session = await currentSession();
   if (isAdmin(session)) return null; // admin can do everything
 
-  if (args.payloadRole === 'admin') {
-    return 'Only an admin can assign the admin role';
+  // Manager beyond this point.
+  if (args.payloadRole && args.payloadRole !== 'staff') {
+    return 'Manager can only create or assign the staff role';
   }
   if (args.targetUserId) {
     const sb = createServiceClient();
     const { data } = await sb.from('staff_users').select('role').eq('id', args.targetUserId).maybeSingle();
-    if (data?.role === 'admin') {
-      return 'Only an admin can edit an admin user';
+    if (data && data.role !== 'staff') {
+      return 'Manager can only edit staff users';
     }
   }
   return null;
@@ -93,7 +101,7 @@ export async function createStaffUser(input: unknown): Promise<ActionResult> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
-  const guard = await guardAgainstAdminEscalation({ payloadRole: d.role });
+  const guard = await guardUserMgmt({ payloadRole: d.role });
   if (guard) return { ok: false, error: guard };
   const email = `${d.acumatica_user_id.toLowerCase()}@acumatica.local`;
   const supabase = await createAuditedClient();
@@ -129,7 +137,7 @@ export async function updateStaffUser(input: unknown): Promise<ActionResult> {
   const d = parsed.data;
   // Block both directions: (a) editing an existing admin's row, (b) promoting
   // anyone else TO admin. Either lets a manager self-elevate.
-  const guard = await guardAgainstAdminEscalation({ targetUserId: d.id, payloadRole: d.role });
+  const guard = await guardUserMgmt({ targetUserId: d.id, payloadRole: d.role });
   if (guard) return { ok: false, error: guard };
   const patch: StaffUserUpdate = {};
   if (d.display_name !== undefined) patch.display_name = d.display_name || null;
@@ -156,7 +164,7 @@ export async function setStaffUserActive(id: string, active: boolean): Promise<A
   if (denied) return { ok: false, error: denied };
   // Don't let a manager deactivate (or reactivate) an admin — same
   // escalation surface: deactivate the last admin to lock out the company.
-  const guard = await guardAgainstAdminEscalation({ targetUserId: id });
+  const guard = await guardUserMgmt({ targetUserId: id });
   if (guard) return { ok: false, error: guard };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('staff_users').update({ active }).eq('id', id);
@@ -171,7 +179,7 @@ export async function setStaffUserPassword(input: unknown): Promise<ActionResult
   const parsed = passwordSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid password' };
   // A manager resetting an admin's password = takes over the admin account.
-  const guard = await guardAgainstAdminEscalation({ targetUserId: parsed.data.id });
+  const guard = await guardUserMgmt({ targetUserId: parsed.data.id });
   if (guard) return { ok: false, error: guard };
   const hash = await bcrypt.hash(parsed.data.password, 10);
   const supabase = await createAuditedClient();
@@ -190,7 +198,7 @@ export async function setManagerPin(input: unknown): Promise<ActionResult> {
   const parsed = pinSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid PIN' };
   // Setting an admin's PIN = same attack surface as resetting their password.
-  const guard = await guardAgainstAdminEscalation({ targetUserId: parsed.data.id });
+  const guard = await guardUserMgmt({ targetUserId: parsed.data.id });
   if (guard) return { ok: false, error: guard };
   const hash = await bcrypt.hash(parsed.data.pin, 10);
   const supabase = await createAuditedClient();
@@ -211,7 +219,7 @@ export async function setManagerPin(input: unknown): Promise<ActionResult> {
 export async function clearManagerPin(id: string): Promise<ActionResult> {
   const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
-  const guard = await guardAgainstAdminEscalation({ targetUserId: id });
+  const guard = await guardUserMgmt({ targetUserId: id });
   if (guard) return { ok: false, error: guard };
   const supabase = await createAuditedClient();
   const { error } = await supabase

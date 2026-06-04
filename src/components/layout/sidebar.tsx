@@ -33,7 +33,7 @@ function groupChildrenBySection(children: NavSubItem[]): { section?: string; ite
 const SECTION_STYLES: Record<string, { border: string; label: string }> = {};
 const NEUTRAL_SECTION_STYLE = {
   border: 'border-l border-sidebar-border',
-  label: 'text-muted-foreground/80',
+  label: 'text-sidebar-foreground/55',
 };
 
 function isActive(pathname: string, href?: string, children?: { href: string }[]): boolean {
@@ -155,7 +155,7 @@ function NavLink({
             <div className="border-l border-sidebar-border pl-3 flex flex-col gap-px">
               {filteredChildGroups.map((group, idx) => (
                 <div key={group.label} className={cn('flex flex-col gap-px', idx > 0 && 'mt-2')}>
-                  <p className="mx-3 pt-1 pb-1 mb-1 border-b border-sidebar-border text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  <p className="mx-3 pt-1 pb-1 mb-1 border-b border-sidebar-border text-[10px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/55">
                     {group.label}
                   </p>
                   {group.items.map((c) => (
@@ -231,19 +231,19 @@ export function Sidebar({
     // during the transition.
     <aside
       className={cn(
-        'flex h-screen shrink-0 flex-col bg-sidebar transition-[width] duration-200 overflow-hidden',
+        'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200 overflow-hidden',
         collapsed ? 'w-0 border-r-0' : 'w-64 border-r border-sidebar-border',
       )}
       aria-hidden={collapsed}
     >
       {/* Logo + collapse button */}
       <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-5">
-        <div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+        <div className="grid size-10 place-items-center rounded-xl bg-sidebar-primary/20 text-sidebar-primary">
           <SpaLeaf className="size-7" />
         </div>
         <div className="flex flex-col leading-tight">
           <span className="text-base font-bold tracking-tight">HHG-SPA</span>
-          <span className="text-[10px] font-semibold text-muted-foreground tracking-[0.15em] uppercase">
+          <span className="text-[10px] font-semibold text-sidebar-foreground/55 tracking-[0.15em] uppercase">
             POS System
           </span>
         </div>
@@ -252,7 +252,7 @@ export function Sidebar({
           onClick={toggle}
           aria-label="Collapse sidebar"
           tabIndex={collapsed ? -1 : 0}
-          className="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          className="ml-auto grid size-7 place-items-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         >
           <PanelLeftClose className="size-4" strokeWidth={2} />
         </button>

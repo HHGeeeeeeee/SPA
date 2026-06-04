@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Users, BedDouble, CalendarDays, Clock, Hotel
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { TopBarPortal } from '@/components/layout/topbar-portal';
 import {
   Select,
   SelectContent,
@@ -98,12 +99,16 @@ export function ShiftControls({ branches, branchId, weekStart, day, view, scale,
         </div>
       )}
 
-      <Select items={branchOptions} value={branchId} onValueChange={(v) => v && go({ branch: v })}>
-        <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      {/* Branch switcher lives in the global top bar (top-right), not inline
+          with the toolbar — hoisted there via the topbar portal slot. */}
+      <TopBarPortal>
+        <Select items={branchOptions} value={branchId} onValueChange={(v) => v && go({ branch: v })}>
+          <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </TopBarPortal>
 
       {scale === 'day' ? (
         <div className="flex items-center gap-1">

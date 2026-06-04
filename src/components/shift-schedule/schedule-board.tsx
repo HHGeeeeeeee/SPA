@@ -333,6 +333,7 @@ export function ScheduleBoard({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const suppressClick = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   // Click an empty slot → open the prefilled New Reservation dialog directly
@@ -385,6 +386,13 @@ export function ScheduleBoard({
   useEffect(() => {
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsedTypes])); } catch { /* defensive */ }
   }, [collapsedTypes, STORAGE_KEY]);
+  // On open, jump the horizontal scroll to ~2h before "now" so the desk lands on
+  // the live part of the 24h board instead of at 00:00. Only when viewing today
+  // (nowMin set); other days stay at the start.
+  useEffect(() => {
+    if (nowMin == null || !scrollRef.current) return;
+    scrollRef.current.scrollLeft = Math.max(0, (nowMin - 120 - windowStartMin) * PX_PER_MIN);
+  }, [nowMin, windowStartMin]);
   const toggleType = (t: string) =>
     setCollapsedTypes((p) => { const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n; });
 
@@ -509,7 +517,7 @@ export function ScheduleBoard({
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <Card className="relative p-0 overflow-auto max-h-[calc(100vh-16rem)]">
+      <Card ref={scrollRef} className="relative p-0 overflow-auto max-h-[calc(100vh-16rem)]">
         <div
           className="relative"
           style={{ minWidth: LABEL_W + trackWidth }}

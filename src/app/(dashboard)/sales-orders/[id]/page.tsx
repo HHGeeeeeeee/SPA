@@ -429,7 +429,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Discount</dt><dd className="font-bold tabular text-destructive">-{peso(order.discount_cents)}</dd></div>
               <div className="flex justify-between border-t border-border pt-2"><dt className="font-bold">Total</dt><dd className="font-extrabold tabular text-lg">{peso(order.total_cents)}</dd></div>
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Paid</dt><dd className="font-bold tabular">{peso(order.paid_cents)}</dd></div>
-              <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Due</dt><dd className="font-bold tabular">{peso(Math.max(0, order.total_cents - order.paid_cents))}</dd></div>
+              <div className={`flex justify-between ${order.total_cents - order.paid_cents > 0 ? 'text-destructive' : ''}`}><dt className="font-bold">Due</dt><dd className="font-extrabold tabular text-lg">{peso(Math.max(0, order.total_cents - order.paid_cents))}</dd></div>
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Tips (PAYMAYA)</dt><dd className="font-bold tabular text-primary">{peso(payments.reduce((s, p) => s + p.tip_cents, 0))}</dd></div>
             </dl>
           </CardContent>

@@ -202,8 +202,9 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   const reservations: ReservationBlock[] = (subject === 'station' ? inStoreRows.filter((r) => r.pending || r.pinnedIds.length === 0 || r.overdue) : inStoreRows)
     .map((r) => ({ id: r.id, guest: r.guest, line2: r.line2, startMin: r.startMin, endMin: r.endMin, external: r.external, overdue: r.overdue, pending: r.pending }));
   for (const r of reservations) allMins.push(r.startMin, r.endMin);
-  const windowStartMin = allMins.length ? Math.min(540, Math.floor(Math.min(...allMins) / 60) * 60) : 540;
-  const windowEndMin = allMins.length ? Math.max(1320, Math.ceil(Math.max(...allMins) / 60) * 60) : 1320;
+  // 24-hour operation: the board always spans the full day (00:00–24:00).
+  const windowStartMin = 0;
+  const windowEndMin = 1440;
   return { rows, windowStartMin, windowEndMin, reservations };
 }
 
@@ -320,8 +321,9 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     mins.push(startMin, endMin);
   }
 
-  const windowStartMin = mins.length ? Math.min(540, Math.floor(Math.min(...mins) / 60) * 60) : 540;
-  const windowEndMin = mins.length ? Math.max(1320, Math.ceil(Math.max(...mins) / 60) * 60) : 1320;
+  // 24-hour operation: the board always spans the full day (00:00–24:00).
+  const windowStartMin = 0;
+  const windowEndMin = 1440;
   // Service-providing positions only — receptionists / managers are on shift
   // but never relevant for "who's free to take a booking". Same prefix rule as
   // computeNowAvailability so the two views agree on who counts.

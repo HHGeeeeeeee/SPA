@@ -102,7 +102,10 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
   let arPaymentCents = 0;
   for (const o of orders ?? []) {
     for (const it of o.order_items ?? []) {
-      if (it.status === 'cancelled') continue;
+      // Only delivered work is revenue. Excludes the pre-revenue states
+      // (unassigned / scheduled / no_show) that can ride inside an otherwise-paid
+      // multi-pax order — e.g. one guest no-shows while the rest are billed.
+      if (!['in_service', 'service_completed', 'interrupted'].includes(it.status)) continue;
       const cid = one<{ service_category_id: string }>(it.service)?.service_category_id;
       const name = (cid && catName.get(cid)) || 'Service';
       revenueByCat.set(name, (revenueByCat.get(name) ?? 0) + (it.final_amount_cents ?? 0));

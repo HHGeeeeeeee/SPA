@@ -117,7 +117,7 @@ async function fetchData(id: string) {
   const cleaning = await supabase
     .from('order_items')
     .select('resource_id, actual_end, service:service_items ( cleanup_after_minutes )')
-    .in('status', ['service_completed', 'feedback_done', 'interrupted'])
+    .in('status', ['service_completed', 'interrupted'])
     .not('resource_id', 'is', null)
     .not('actual_end', 'is', null)
     .is('bed_released_at', null);
@@ -237,7 +237,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const customers = (order.order_customers ?? []).map((c) => {
     const subtotal = orderItemsRaw
       .filter((it) => it.order_customer_id === c.id && it.status !== 'cancelled')
-      .reduce((s, it) => s + it.final_amount_cents, 0);
+      .reduce((s, it) => s + (it.final_amount_cents ?? 0), 0);
     const paid = orderPayments
       .filter((p) => p.order_customer_id === c.id)
       .reduce((s, p) => s + p.amount_cents, 0);
@@ -284,9 +284,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       actual_start: it.actual_start,
       actual_end: it.actual_end,
       bed_released_at: it.bed_released_at,
-      list_price_cents: it.list_price_cents,
+      list_price_cents: it.list_price_cents ?? 0,
       discount_amount_cents: it.discount_amount_cents,
-      final_amount_cents: it.final_amount_cents,
+      final_amount_cents: it.final_amount_cents ?? 0,
       status: it.status,
       // A line stopped via "Switch" is interrupted with this reason — shown as
       // "Switched" (not Interrupted) and offered no Redo (the replacement is added).

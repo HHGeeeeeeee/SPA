@@ -247,12 +247,12 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
   const closeHH = (brHours?.close_time ?? '02:00').slice(0, 5);
   const rangeStart = `${day}T${openHH}:00+08:00`;
   const rangeEnd = `${crossesMidnight ? dayPlusOne(day) : day}T${closeHH}:00+08:00`;
-  const [bedsRes, itemsRes, resvRes, shiftRes, graceMin] = await Promise.all([
+  const [bedsRes, itemsRes, resvRes, shiftRes, graceMin, unassignedRes] = await Promise.all([
     supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
       .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, order_customers ( id ) )')
-      .in('status', ['scheduled', 'in_service', 'service_completed', 'feedback_done', 'interrupted'])
+      .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
     supabase
       .from('reservations')
@@ -267,6 +267,12 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
       .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
       .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     getReservationGraceMinutes(),
+    // Unassigned lines (a booking with no bed yet) — they ride the unallocated
+    // rail. No resource filter (they have none); branch/day filtered in the loop.
+    supabase
+      .from('order_items')
+      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
+      .eq('status', 'unassigned'),
   ]);
 
   const beds: BoardBed[] = (bedsRes.data ?? []).map((b) => ({ id: b.id, name: b.resource_name, type: b.resource_type }));
@@ -305,6 +311,31 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
       therapistId: it.therapist_id ?? null,
     });
     mins.push(startMin, endMin);
+  }
+
+  // Unassigned lines (booking with no bed yet) → the unallocated rail. Timed ones
+  // (scheduled_start set) get an axis position + feed the per-hour pending band;
+  // untimed ones sit in the rail's "no time yet" section.
+  for (const it of unassignedRes.data ?? []) {
+    const ord = one(it.order);
+    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || ord.status === 'void') continue;
+    const dur = it.duration_minutes ?? 60;
+    const timed = !!it.scheduled_start;
+    const startMin = timed ? place(tsToMin(it.scheduled_start!)) : windowStartMin;
+    const endMin = startMin + dur;
+    blocks.push({
+      key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: null,
+      guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
+      line1: one(it.service)?.name ?? one(it.category)?.name ?? 'Service',
+      line2: one(it.therapist)?.name ?? undefined,
+      startMin, endMin, durationMin: dur,
+      prepMin: one(it.service)?.prep_before_minutes ?? 0,
+      cleanupMin: one(it.service)?.cleanup_after_minutes ?? 0,
+      variant: 'scheduled', draggable: true, orderId: ord.id,
+      therapistId: it.therapist_id ?? null,
+      untimed: !timed,
+    });
+    if (timed) mins.push(startMin, endMin);
   }
 
   for (const r of resvRes.data ?? []) {

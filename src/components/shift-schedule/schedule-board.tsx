@@ -47,6 +47,10 @@ export interface BoardBlock {
   cleanupMin: number; // bed turnover after the service
   variant: BlockVariant;
   draggable: boolean;
+  /** Floating booking with no time yet — lives in the rail's "no time" section
+   *  and never appears on the axis or in the per-hour pending band. startMin is
+   *  a placeholder (windowStartMin) for these. */
+  untimed?: boolean;
   orderId?: string;
   editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
   /** Therapist on this block. Used by the hover popup to mark staff busy at
@@ -328,6 +332,45 @@ function BedRow({
   );
 }
 
+// A draggable card in the left "Unallocated" rail. It carries no axis position;
+// dragging it onto a bed row places it (a timed card keeps its booked time, an
+// untimed card lands at the drop point).
+function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock) => void }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: block.key,
+    data: { block },
+    disabled: !block.draggable,
+  });
+  const style: React.CSSProperties = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+    touchAction: 'none',
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      onClick={(e) => { e.stopPropagation(); onOpen(block); }}
+      style={style}
+      className={`rounded px-2 py-1.5 flex flex-col gap-0.5 overflow-hidden text-[11px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
+      title={`${block.guest ? `${block.guest} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''}${block.untimed ? '' : ` · ${hhmm(block.startMin)}`}`}
+    >
+      {block.guest && (
+        <span className="truncate font-bold">
+          {block.pax && block.pax > 1 ? <Users className="mr-0.5 -mt-0.5 inline size-3" /> : null}
+          {block.guest}
+          {block.pax && block.pax > 1 ? <span className="ml-1 font-extrabold">· {block.pax}p</span> : null}
+        </span>
+      )}
+      <span className={`truncate ${block.guest ? 'font-semibold opacity-90' : 'font-bold'}`}>{block.line1}</span>
+      {block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>}
+      {!block.untimed && <span className="truncate font-semibold tabular-nums opacity-70">{hhmm(block.startMin)}</span>}
+    </div>
+  );
+}
+
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
 }: {
@@ -346,6 +389,9 @@ export function ScheduleBoard({
   const [, startTransition] = useTransition();
   const suppressClick = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The grid's full-width content div — used to turn a drop's pointer-X into a
+  // time when an untimed rail card is dropped onto a bed.
+  const contentRef = useRef<HTMLDivElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   // Click an empty slot → open the prefilled New Reservation dialog directly
@@ -364,6 +410,17 @@ export function ScheduleBoard({
   for (let h = firstHour; h <= lastHour; h++) hours.push(h);
 
   const floating = blocks.filter((b) => b.bedId === null);
+  // Rail sections: "no time yet" (untimed) vs "needs a bed" (timed but bedless),
+  // the latter sorted by their booked time.
+  const untimedFloating = floating.filter((b) => b.untimed);
+  const timedFloating = floating.filter((b) => !b.untimed).sort((a, b) => a.startMin - b.startMin);
+  // Per-hour pending demand (甲): timed-but-bedless bookings bucketed by start
+  // hour. Drops to zero for an hour as those bookings get a bed.
+  const pendingByHour = new Map<number, number>();
+  for (const b of timedFloating) {
+    const h = Math.floor(b.startMin / 60);
+    pendingByHour.set(h, (pendingByHour.get(h) ?? 0) + 1);
+  }
   const blocksByBed = new Map<string, BoardBlock[]>();
   for (const b of blocks) if (b.bedId) blocksByBed.set(b.bedId, [...(blocksByBed.get(b.bedId) ?? []), b]);
 
@@ -503,8 +560,21 @@ export function ScheduleBoard({
     const overId = e.over?.id as string | undefined;
     if (!block || !overId || !overId.startsWith('bed:')) return;
     const bedId = overId.slice(4);
-    const deltaMin = Math.round(e.delta.x / PX_PER_MIN);
-    const newStart = Math.min(windowEndMin - 15, Math.max(windowStartMin, snapMin(block.startMin + deltaMin)));
+    // Where it lands on the time axis:
+    //  - untimed rail card → the drop point (absolute pointer X over the grid)
+    //  - timed rail card → its booked time, locked (you only pick the bed)
+    //  - a block already on a bed → its time shifted by the horizontal drag delta
+    let newStart: number;
+    if (block.bedId === null && block.untimed) {
+      const finalX = (e.activatorEvent as PointerEvent).clientX + e.delta.x;
+      const contentLeft = contentRef.current?.getBoundingClientRect().left ?? 0;
+      newStart = snapMin(windowStartMin + (finalX - contentLeft - LABEL_W) / PX_PER_MIN);
+    } else if (block.bedId === null) {
+      newStart = block.startMin;
+    } else {
+      newStart = snapMin(block.startMin + Math.round(e.delta.x / PX_PER_MIN));
+    }
+    newStart = Math.min(windowEndMin - 15, Math.max(windowStartMin, newStart));
     if (bedId === block.bedId && newStart === block.startMin) return; // no-op
     startTransition(async () => {
       const r = block.kind === 'reservation'
@@ -529,8 +599,38 @@ export function ScheduleBoard({
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <Card ref={scrollRef} className="relative p-0 overflow-auto max-h-[calc(100vh-16rem)]">
+      <div className="flex items-start gap-3">
+      {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
+      <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
+        <div className="sticky top-0 z-10 border-b border-border bg-muted px-3 py-2">
+          <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Unallocated</div>
+          <div className="text-[11px] font-semibold text-muted-foreground">{floating.length} to assign · drag onto a bed</div>
+        </div>
+        <div className="flex flex-col gap-3 p-2">
+          {floating.length === 0 ? (
+            <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">Nothing to assign</p>
+          ) : (
+            <>
+              {untimedFloating.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">No time yet · {untimedFloating.length}</div>
+                  {untimedFloating.map((b) => <RailCard key={b.key} block={b} onOpen={openBlock} />)}
+                </div>
+              )}
+              {timedFloating.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Needs a bed · {timedFloating.length}</div>
+                  {timedFloating.map((b) => <RailCard key={b.key} block={b} onOpen={openBlock} />)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </Card>
+
+      <Card ref={scrollRef} className="relative flex-1 p-0 overflow-auto max-h-[calc(100vh-16rem)]">
         <div
+          ref={contentRef}
           className="relative"
           style={{ minWidth: LABEL_W + trackWidth }}
           onMouseMove={(e) => {
@@ -592,28 +692,25 @@ export function ScheduleBoard({
             </div>
           </div>
 
-          {/* floating reservations to place — drag down onto a bed */}
-          {floating.length > 0 && (() => {
-            const { lanes, count } = assignLanes(floating);
-            return (
-              <div className="flex border-b-2 border-violet-500/30 bg-violet-500/5">
-                <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center sticky left-0 z-20 bg-card">
-                  <div className="font-semibold text-sm text-violet-700 dark:text-violet-300">Unallocated</div>
-                  <div className="font-bold text-xs text-muted-foreground">drag onto a bed</div>
-                </div>
-                <div className="relative my-1" style={{ height: count * LANE_H, minWidth: trackWidth }}>
-                  {hours.map((h) => (
-                    <div key={h} className="absolute top-0 bottom-0 border-l border-border/60" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN }} />
-                  ))}
-                  {floating.map((b, i) => (
-                    <div key={b.key} className="absolute inset-x-0" style={{ top: lanes[i] * LANE_H }}>
-                      <BlockView block={b} windowStartMin={windowStartMin} onOpen={openBlock} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+          {/* Per-hour pending demand (甲): how many timed bookings still need a
+              bed in each hour. Aligned to the time axis; clears as they're placed. */}
+          <div className="flex border-b border-border bg-amber-500/5">
+            <div className="w-40 shrink-0 px-2 py-1 flex items-center sticky left-0 z-20 bg-card text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+              Pending / hr
+            </div>
+            <div className="relative" style={{ height: 26, minWidth: trackWidth }}>
+              {hours.slice(0, -1).map((h) => {
+                const n = pendingByHour.get(h) ?? 0;
+                return (
+                  <div key={h} className="absolute top-0 bottom-0 flex items-center justify-center" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN, width: PX_PER_HOUR }}>
+                    {n > 0 && (
+                      <span className="flex size-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold tabular-nums text-white">{n}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
           {beds.length === 0 ? (
             <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No active stations for this branch.</div>
@@ -677,6 +774,7 @@ export function ScheduleBoard({
         </div>
 
       </Card>
+      </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-muted-foreground">
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/25" /> Reservation — confirmed</span>

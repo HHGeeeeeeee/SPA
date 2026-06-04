@@ -154,6 +154,135 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
+// Retirement path: a booking IS a draft order + unassigned order_items, with no
+// reservation row. Combines what createReservation + convertReservationToOrder
+// used to do. One draft order; one order_customer per pax (gender carried on the
+// customer); one unassigned line per guest holding the primary category + booked
+// time + pinned bed. Concrete service + price are decided later in the workspace.
+export async function createBooking(input: unknown): Promise<ActionResult<{ orderId: string }>> {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  if (new Date(d.desired_service_end) <= new Date(d.desired_service_start)) {
+    return { ok: false, error: 'End time must be after start time' };
+  }
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
+  const supabase = await createAuditedClient();
+
+  const { data: source } = await supabase
+    .from('customer_sources')
+    .select('phone_required, default_billing_to_id, default_discount_class_id')
+    .eq('id', d.source_id)
+    .maybeSingle();
+  if (!source) return { ok: false, error: 'Customer source not found' };
+  if (source.phone_required && !d.guest_phone?.trim()) {
+    return { ok: false, error: 'A guest phone is required for this source' };
+  }
+
+  // Resolve beds: explicit override, else seat-together auto-assign, else none.
+  const pinned = await resolveEffectiveBeds({
+    branchId: d.branch_id, resourceIds: d.resource_ids, seatTogether: d.seat_together,
+    categoryIds: d.service_category_ids, pax: d.pax,
+    start: d.desired_service_start, end: d.desired_service_end,
+    locationType: d.service_location_type, excludeReservationId: null,
+  });
+  if (!pinned.ok) return { ok: false, error: pinned.error };
+
+  // Duration: the chosen service's, else 60 (a category-only booking).
+  let durationMin = 60;
+  if (d.service_item_id) {
+    const { data: svc } = await supabase.from('service_items').select('duration_minutes').eq('id', d.service_item_id).maybeSingle();
+    durationMin = svc?.duration_minutes ?? 60;
+  }
+
+  const serviceDate = d.desired_service_start.slice(0, 10);
+  const order_no = await nextOrderNo(supabase, serviceDate);
+  const { data: order, error: oe } = await supabase
+    .from('orders')
+    .insert({
+      order_no,
+      branch_id: d.branch_id,
+      source_id: d.source_id,
+      billing_to_id: source.default_billing_to_id ?? null,
+      // order_type's CHECK allows walk_in/reservation/package_use/stored_value/
+      // external — 'reservation' is the booking-origin value (kept until the
+      // enum is renamed in the final cleanup).
+      order_type: 'reservation',
+      service_location_type: d.service_location_type,
+      service_date: serviceDate,
+      note: d.note || null,
+      status: 'draft',
+    })
+    .select('id')
+    .single();
+  if (oe || !order) return { ok: false, error: oe?.message ?? 'Could not create booking' };
+
+  // One order_customer per pax (first keeps the contact; gender preference rides
+  // on the customer so service start can still match a therapist's gender).
+  const pax = Math.max(1, d.pax);
+  const { data: customers, error: ce } = await supabase
+    .from('order_customers')
+    .insert(
+      Array.from({ length: pax }, (_, i) => ({
+        order_id: order.id,
+        customer_name: i === 0 ? d.guest_name : `Guest ${i + 1}`,
+        customer_phone: i === 0 ? (d.guest_phone || null) : null,
+        gender: d.gender_preference || null,
+        seq_no: i + 1,
+      })),
+    )
+    .select('id, seq_no');
+  if (ce) return { ok: false, error: ce.message };
+  const sortedCustomers = [...(customers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
+
+  // Discount class: the source's default, else DIS-00 (no discount).
+  let discountClassId = source.default_discount_class_id ?? null;
+  if (!discountClassId) {
+    const { data: dis0 } = await supabase.from('discount_classes').select('id').eq('code', 'DIS-00').maybeSingle();
+    discountClassId = dis0?.id ?? null;
+  }
+  if (!discountClassId) return { ok: false, error: 'No default discount class configured' };
+
+  // One unassigned line per guest: primary category + booked time + (pinned) bed.
+  const beds = pinned.ids;
+  const primaryCategory = d.service_category_ids[0];
+  for (let i = 0; i < sortedCustomers.length; i++) {
+    const bedId = beds[i] ?? null;
+    const { error: ie } = await supabase.from('order_items').insert({
+      order_id: order.id,
+      order_customer_id: sortedCustomers[i].id,
+      service_category_id: primaryCategory,
+      service_item_id: d.service_item_id ?? null,
+      scheduled_start: d.desired_service_start,
+      duration_minutes: durationMin,
+      resource_id: bedId,
+      external_room_no: null,
+      discount_class_id: discountClassId,
+      discount_amount_cents: 0,
+      list_price_cents: null,
+      final_amount_cents: null,
+      // On a bed ⇒ scheduled (sits on the board); else unassigned (rail).
+      status: bedId ? 'scheduled' : 'unassigned',
+    });
+    if (ie) return { ok: false, error: ie.message };
+  }
+
+  // Booking made → close out a pending reschedule, if this was one.
+  if (d.rescheduled_from_order_item_id) {
+    await supabase
+      .from('order_items')
+      .update({ reschedule_fulfilled_at: new Date().toISOString() })
+      .eq('id', d.rescheduled_from_order_item_id)
+      .eq('interruption_handling', 'reschedule')
+      .is('reschedule_fulfilled_at', null);
+    revalidatePath('/sales-orders/reschedules');
+  }
+
+  revalidatePath('/shift-schedule');
+  revalidatePath('/sales-orders');
+  return { ok: true, data: { orderId: order.id } };
+}
+
 const updateSchema = z.object({
   id: z.string().uuid(),
   branch_id: z.string().uuid(),

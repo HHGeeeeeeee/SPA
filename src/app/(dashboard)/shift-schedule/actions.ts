@@ -22,11 +22,22 @@ function isoMinPHT(iso: string): number {
 function datePHT(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 }
-// A Manila wall-clock timestamp for `day` at `min` minutes past midnight.
+// A Manila wall-clock timestamp for `day` at `min` minutes past midnight. On a
+// past-midnight board, `min` can exceed 1439 (e.g. 1470 = 00:30 the next clock
+// day); roll the date and wrap the clock so the timestamp stays valid.
 function makeIso(day: string, min: number): string {
-  const hh = String(Math.floor(min / 60)).padStart(2, '0');
-  const mm = String(min % 60).padStart(2, '0');
-  return `${day}T${hh}:${mm}:00+08:00`;
+  const d = min >= 1440 ? dayPlusOne(day) : day;
+  const clock = ((min % 1440) + 1440) % 1440;
+  const hh = String(Math.floor(clock / 60)).padStart(2, '0');
+  const mm = String(clock % 60).padStart(2, '0');
+  return `${d}T${hh}:${mm}:00+08:00`;
+}
+// 'YYYY-MM-DD' + 1 calendar day (UTC math, tz-agnostic for the date string).
+function dayPlusOne(day: string): string {
+  const [y, m, dd] = day.split('-').map(Number);
+  const x = new Date(Date.UTC(y, m - 1, dd + 1));
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${x.getUTCFullYear()}-${p(x.getUTCMonth() + 1)}-${p(x.getUTCDate())}`;
 }
 const overlaps = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1;
 
@@ -114,7 +125,7 @@ async function pickGroupBeds(
 const placeSchema = z.object({
   reservation_id: z.string().uuid(),
   bed_id: z.string().uuid(),
-  start_min: z.number().int().min(0).max(1439),
+  start_min: z.number().int().min(0).max(2879),
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   // The bed the dragged block currently sits on (a group's bed). When set and the
   // booking has several beds, only this one moves; the rest stay put.
@@ -205,14 +216,15 @@ export async function placeReservationOnBed(input: unknown): Promise<ActionResul
 const moveSchema = z.object({
   item_id: z.string().uuid(),
   bed_id: z.string().uuid(),
-  start_min: z.number().int().min(0).max(1439),
+  start_min: z.number().int().min(0).max(2879),
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 /**
- * Drag a not-yet-started (scheduled) order item to a new bed/time. Once a
- * service is in-service or done its bed is locked, so this only moves scheduled
- * items. Rejects on a bed/time clash.
+ * Drag a not-yet-started order item onto a bed/time. Works for both `unassigned`
+ * (a booking in the unallocated rail — placing it onto a bed promotes it to
+ * `scheduled`) and an already-`scheduled` line being re-timed/moved. Once a
+ * service is in-service or done its bed is locked. Rejects on a bed/time clash.
  */
 export async function moveScheduledOrderItem(input: unknown): Promise<ActionResult> {
   const parsed = moveSchema.safeParse(input);
@@ -226,7 +238,7 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
     .eq('id', item_id)
     .single();
   if (!it) return { ok: false, error: 'Order item not found' };
-  if (it.status !== 'scheduled') return { ok: false, error: 'Service already started — its bed is locked' };
+  if (!['unassigned', 'scheduled'].includes(it.status)) return { ok: false, error: 'Service already started — its bed is locked' };
   const branchId = one(it.order)?.branch_id;
   if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
 
@@ -235,7 +247,9 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
   if (await bedHasConflict(supabase, bed_id, day, start_min, endMin, { itemId: item_id })) {
     return { ok: false, error: 'That bed is already booked for this time' };
   }
-  // Resource-type guard for the same reason as placeReservationOnBed.
+  // Resource-type guard for the same reason as placeReservationOnBed. (A deferred
+  // line with no concrete service yet skips this — the category check belongs to
+  // the picker; nothing to type-match until the service is chosen.)
   if (it.service_item_id) {
     const compat = await assertBedMatchesServiceItem(bed_id, it.service_item_id);
     if (!compat.ok) return { ok: false, error: compat.error };
@@ -243,9 +257,10 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
 
   const startIso = makeIso(day, start_min);
   const endIso = new Date(Date.parse(startIso) + durationMin * 60000).toISOString();
+  // Placing on a bed makes it scheduled (it now sits on the board axis).
   const { error } = await supabase
     .from('order_items')
-    .update({ resource_id: bed_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso })
+    .update({ resource_id: bed_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso, status: 'scheduled' })
     .eq('id', item_id);
   if (error) return { ok: false, error: error.message };
   revalidatePath('/shift-schedule');

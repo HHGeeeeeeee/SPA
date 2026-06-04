@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select';
 
 import {
-  createReservation,
+  createBooking,
   updateReservation,
   getReservationAvailability,
   getFreeBeds,
@@ -414,7 +414,7 @@ export function NewReservationDialog({
     startTransition(async () => {
       const r = isEdit
         ? await updateReservation({ id: reservation!.id, ...payload })
-        : await createReservation(payload);
+        : await createBooking(payload);
       if (r.ok) {
         toast.success(isEdit ? 'Reservation updated' : walkIn ? 'Walk-in booked (confirmed)' : 'Reservation created');
         setOpen(false);

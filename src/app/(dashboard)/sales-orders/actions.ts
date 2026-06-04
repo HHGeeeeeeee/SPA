@@ -447,14 +447,20 @@ export async function updateOrderBranchUnit(input: unknown): Promise<ActionResul
 
 async function recomputeTotals(orderId: string) {
   const supabase = await createAuditedClient();
+  // The order total is the bill (what the guest will owe), so it keeps the
+  // not-yet-delivered states (unassigned / scheduled) as expected charges. Only
+  // the zero-revenue terminal states drop out: cancelled, and no_show (a booked
+  // line the guest never came for — no charge).
   const { data: items } = await supabase
     .from('order_items')
     .select('list_price_cents, discount_amount_cents, final_amount_cents')
     .eq('order_id', orderId)
-    .neq('status', 'cancelled');
-  const subtotal = (items ?? []).reduce((s, i) => s + i.list_price_cents, 0);
-  const discount = (items ?? []).reduce((s, i) => s + i.discount_amount_cents, 0);
-  const total = (items ?? []).reduce((s, i) => s + i.final_amount_cents, 0);
+    .not('status', 'in', '(cancelled,no_show)');
+  // Price columns are nullable now (a service whose concrete item isn't chosen
+  // yet has no price) — coalesce so a pending line contributes 0, not NaN.
+  const subtotal = (items ?? []).reduce((s, i) => s + (i.list_price_cents ?? 0), 0);
+  const discount = (items ?? []).reduce((s, i) => s + (i.discount_amount_cents ?? 0), 0);
+  const total = (items ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
   await supabase
     .from('orders')
     .update({ subtotal_cents: subtotal, discount_cents: discount, total_cents: total })
@@ -471,7 +477,9 @@ async function maybeAutoComplete(orderId: string) {
     .select('status')
     .eq('order_id', orderId);
   if (!items || items.length === 0) return; // nothing to complete yet
-  if (items.some((i) => ['scheduled', 'in_service'].includes(i.status))) return; // work still pending
+  // unassigned/scheduled lines are still pending work — an order full of
+  // not-yet-started bookings must not auto-complete.
+  if (items.some((i) => ['unassigned', 'scheduled', 'in_service'].includes(i.status))) return; // work still pending
   const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single();
   if (ord && ['open', 'in_service'].includes(ord.status)) {
     await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
@@ -575,12 +583,24 @@ export async function updateOrderCustomer(input: unknown): Promise<ActionResult>
 const addItemSchema = z.object({
   order_id: z.string().uuid(),
   order_customer_id: z.string().uuid(),
-  service_item_id: z.string().uuid(),
+  // Concrete service is optional: a booking can reserve a time + category and
+  // pick the exact service later. When omitted, service_category_id is required
+  // and the line is created unpriced.
+  service_item_id: z.string().uuid().optional().nullable(),
+  service_category_id: z.string().uuid().optional().nullable(),
+  // Booked start (ISO, +08:00). Optional — an untimed booking sits in the
+  // unallocated lane with no position on the board axis.
+  scheduled_start: z.string().optional().nullable(),
+  // Used only when no concrete service is chosen (else duration comes from the
+  // service item). Defaults to 60 min server-side.
+  duration_minutes: z.coerce.number().int().positive().optional().nullable(),
   therapist_id: z.string().uuid().optional().nullable(),
   resource_id: z.string().uuid().optional().nullable(),
   discount_class_id: z.string().uuid(),
   // Manager-entered amount for variable discounts (DIS-91 / DIS-99), in pesos.
   discount_override: z.coerce.number().min(0).optional().nullable(),
+}).refine((d) => d.service_item_id || d.service_category_id, {
+  message: 'Pick a service or at least a service category',
 });
 
 // Special discounts need manager authority (and a variable amount for 91/99).
@@ -718,6 +738,79 @@ async function resolveLinePricing(
   };
 }
 
+// Build the column patch for an add/update of a not-yet-started line, plus the
+// resulting status. Two shapes:
+//   - concrete service chosen → full pricing (resolveLinePricing)
+//   - service deferred → tentative line carrying just category + duration,
+//     unpriced (price resolved later when the guest picks the actual service)
+// Status follows placement: a line on a bed is `scheduled` (sits on the board);
+// without a bed it's `unassigned` (lives in the unallocated lane).
+// The column patch buildLineWrite emits. A deferred (no concrete service yet)
+// line is unpriced, so service_item_id / price columns are nullable.
+interface LineWrite {
+  service_item_id: string | null;
+  service_category_id: string;
+  therapist_id: string | null;
+  therapist_home_branch_id: string | null;
+  resource_id: string | null;
+  duration_minutes: number;
+  list_price_cents: number | null;
+  discount_class_id: string;
+  discount_amount_cents: number;
+  final_amount_cents: number | null;
+  status: string;
+}
+
+async function buildLineWrite(
+  supabase: ReturnType<typeof createServiceClient>,
+  d: {
+    order_id: string;
+    service_item_id?: string | null;
+    service_category_id?: string | null;
+    duration_minutes?: number | null;
+    therapist_id?: string | null;
+    resource_id?: string | null;
+    discount_class_id: string;
+    discount_override?: number | null;
+  },
+): Promise<{ error: string } | { patch: LineWrite }> {
+  // Placed on a bed ⇒ scheduled (sits on the board); otherwise unassigned.
+  const status = d.resource_id ? 'scheduled' : 'unassigned';
+  if (d.service_item_id) {
+    // Server-side backstop for the UI's station-by-type filter. The picker
+    // already hides incompatible stations, but a stale form, a future API
+    // client, or a manual id paste would slip through without this check.
+    if (d.resource_id) {
+      const compat = await assertBedMatchesServiceItem(d.resource_id, d.service_item_id);
+      if (!compat.ok) return { error: compat.error };
+    }
+    const res = await resolveLinePricing(supabase, { ...d, service_item_id: d.service_item_id });
+    if ('error' in res) return { error: res.error };
+    return { patch: { ...res.patch, status } };
+  }
+  if (!d.service_category_id) return { error: 'Pick a service or at least a service category' };
+  let therapistHomeBranch: string | null = null;
+  if (d.therapist_id) {
+    const { data: emp } = await supabase.from('employees').select('home_branch_id').eq('id', d.therapist_id).single();
+    therapistHomeBranch = emp?.home_branch_id ?? null;
+  }
+  return {
+    patch: {
+      service_item_id: null,
+      service_category_id: d.service_category_id,
+      therapist_id: d.therapist_id || null,
+      therapist_home_branch_id: therapistHomeBranch,
+      resource_id: d.resource_id || null,
+      duration_minutes: d.duration_minutes ?? 60,
+      list_price_cents: null,
+      discount_class_id: d.discount_class_id,
+      discount_amount_cents: 0,
+      final_amount_cents: null,
+      status,
+    },
+  };
+}
+
 export async function addOrderItem(input: unknown): Promise<ActionResult> {
   const parsed = addItemSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -729,22 +822,14 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
   if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (!['draft', 'open', 'in_service'].includes(ord.status)) return { ok: false, error: 'This order can no longer be edited' };
 
-  // Server-side backstop for the UI's station-by-type filter. The picker
-  // already hides incompatible stations, but a stale form, a future API
-  // client, or a manual id paste would slip through without this check.
-  if (d.resource_id) {
-    const compat = await assertBedMatchesServiceItem(d.resource_id, d.service_item_id);
-    if (!compat.ok) return { ok: false, error: compat.error };
-  }
-
-  const res = await resolveLinePricing(supabase, d);
-  if ('error' in res) return { ok: false, error: res.error };
+  const r = await buildLineWrite(supabase, d);
+  if ('error' in r) return { ok: false, error: r.error };
 
   const { error } = await supabase.from('order_items').insert({
     order_id: d.order_id,
     order_customer_id: d.order_customer_id,
-    ...res.patch,
-    status: 'scheduled',
+    ...r.patch,
+    scheduled_start: d.scheduled_start ?? null,
   });
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);
@@ -755,16 +840,24 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
 const updateItemSchema = z.object({
   id: z.string().uuid(),
   order_id: z.string().uuid(),
-  service_item_id: z.string().uuid(),
+  // Same as addItemSchema: concrete service optional (defer + price later), else
+  // category is required.
+  service_item_id: z.string().uuid().optional().nullable(),
+  service_category_id: z.string().uuid().optional().nullable(),
+  duration_minutes: z.coerce.number().int().positive().optional().nullable(),
   therapist_id: z.string().uuid().optional().nullable(),
   resource_id: z.string().uuid().optional().nullable(),
   discount_class_id: z.string().uuid(),
   discount_override: z.coerce.number().min(0).optional().nullable(),
+}).refine((d) => d.service_item_id || d.service_category_id, {
+  message: 'Pick a service or at least a service category',
 });
 
 // Edit a not-yet-started line: re-price for the new service/discount and
-// reassign therapist/station. Blocked once the line is in-service or done (the
-// numbers are committed by then — delete + re-add for those).
+// reassign therapist/station. Assigning a bed promotes it to `scheduled`,
+// clearing the bed drops it back to `unassigned` (buildLineWrite derives this).
+// Blocked once the line is in-service or done (the numbers are committed by
+// then — delete + re-add for those).
 export async function updateOrderItem(input: unknown): Promise<ActionResult> {
   const parsed = updateItemSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -773,18 +866,12 @@ export async function updateOrderItem(input: unknown): Promise<ActionResult> {
 
   const { data: existing } = await supabase.from('order_items').select('status').eq('id', d.id).single();
   if (!existing) return { ok: false, error: 'Service line not found' };
-  if (existing.status !== 'scheduled') return { ok: false, error: 'Only a not-yet-started line can be edited' };
+  if (!['unassigned', 'scheduled'].includes(existing.status)) return { ok: false, error: 'Only a not-yet-started line can be edited' };
 
-  // Same backstop as addOrderItem — UI filter is convenience, not security.
-  if (d.resource_id) {
-    const compat = await assertBedMatchesServiceItem(d.resource_id, d.service_item_id);
-    if (!compat.ok) return { ok: false, error: compat.error };
-  }
+  const r = await buildLineWrite(supabase, d);
+  if ('error' in r) return { ok: false, error: r.error };
 
-  const res = await resolveLinePricing(supabase, d);
-  if ('error' in res) return { ok: false, error: res.error };
-
-  const { error } = await supabase.from('order_items').update(res.patch).eq('id', d.id);
+  const { error } = await supabase.from('order_items').update(r.patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);
   revalidatePath(`/sales-orders/${d.order_id}`);
@@ -806,7 +893,7 @@ export async function removeOrderItem(itemId: string, orderId: string): Promise<
   const ord = Array.isArray(item.order) ? item.order[0] : item.order;
   if (!ord) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (item.status !== 'scheduled') {
+  if (!['unassigned', 'scheduled'].includes(item.status)) {
     return { ok: false, error: 'Only a not-yet-started service can be removed. Use Cancel or Interrupt for one that has started.' };
   }
   if (ord.status !== 'draft') {
@@ -815,6 +902,26 @@ export async function removeOrderItem(itemId: string, orderId: string): Promise<
   const { error } = await supabase.from('order_items').delete().eq('id', itemId);
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(orderId);
+  revalidatePath(`/sales-orders/${orderId}`);
+  return { ok: true };
+}
+
+// Mark a not-yet-started booking as a no-show (the guest never came). Manual —
+// the desk decides. Zero revenue, leaves the board, and lets the order wrap up
+// if nothing else is pending. Use Cancel/Interrupt for a line that has started.
+export async function markNoShow(itemId: string, orderId: string): Promise<ActionResult> {
+  const auth = await requireOrderBranchAccess(orderId);
+  if (!auth.ok) return auth;
+  const supabase = await createAuditedClient();
+  const { data: item } = await supabase.from('order_items').select('status').eq('id', itemId).single();
+  if (!item) return { ok: false, error: 'Service line not found' };
+  if (!['unassigned', 'scheduled'].includes(item.status)) {
+    return { ok: false, error: 'Only a not-yet-started booking can be marked no-show.' };
+  }
+  const { error } = await supabase.from('order_items').update({ status: 'no_show' }).eq('id', itemId);
+  if (error) return { ok: false, error: error.message };
+  await recomputeTotals(orderId);
+  await maybeAutoComplete(orderId);
   revalidatePath(`/sales-orders/${orderId}`);
   return { ok: true };
 }
@@ -833,6 +940,12 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     .select('therapist_id, resource_id, service_item_id, order_customer_id, service:service_items ( commission_applicable, required_resource_type, service_group )')
     .eq('id', itemId)
     .single();
+
+  // A tentative booking with no concrete service yet (price unresolved) can't be
+  // started — the desk must pick the actual service first.
+  if (!item?.service_item_id) {
+    return { ok: false, error: 'Choose the service for this line before starting it.' };
+  }
 
   // Can't start a hands-on service with nobody to do it, or a service that needs
   // a station/bed without one assigned. (Rest-room style lines need neither.)
@@ -1118,13 +1231,13 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
   let discount = item.discount_amount_cents;
   let final = item.final_amount_cents;
   if (d.handling === 'no_charge' || d.handling === 'reschedule') {
-    discount = item.list_price_cents;
+    discount = item.list_price_cents ?? 0;
     final = 0;
   } else if (d.handling === 'partial_charge') {
     const planned = item.duration_minutes || 0;
     const ratio = planned > 0 ? Math.min(1, actualMin / planned) : 1;
-    final = Math.round(item.final_amount_cents * ratio);
-    discount = item.list_price_cents - final;
+    final = Math.round((item.final_amount_cents ?? 0) * ratio);
+    discount = (item.list_price_cents ?? 0) - final;
   }
 
   // The legacy `interruption_reason` column keeps showing a human label so
@@ -1275,8 +1388,9 @@ const feedbackSchema = z.object({
   comment: z.string().max(1000).optional().nullable(),
 });
 
-// Customer feedback per service line. Score (1-10) is required; submitting marks
-// the item feedback_done. Spec: feedback submission is the service-complete check.
+// Customer feedback per service line. Score (1-10) is required; the captured
+// score (feedback row / feedback_score) marks feedback as done — the line's
+// status stays service_completed.
 export async function submitFeedback(input: unknown): Promise<ActionResult> {
   const parsed = feedbackSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'A score (1-10) is required' };
@@ -1308,9 +1422,9 @@ export async function submitFeedback(input: unknown): Promise<ActionResult> {
   });
   if (error) return { ok: false, error: error.message };
 
-  if (item.status === 'service_completed') {
-    await supabase.from('order_items').update({ status: 'feedback_done' }).eq('id', d.order_item_id);
-  }
+  // Feedback no longer changes the line's status — a service stays
+  // `service_completed` and the captured score (feedback row / feedback_score)
+  // is what marks "feedback done".
   revalidatePath(`/sales-orders/${d.order_id}`);
   return { ok: true };
 }
@@ -1461,7 +1575,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       .eq('order_id', d.order_id)
       .eq('order_customer_id', d.order_customer_id)
       .neq('status', 'cancelled');
-    const custSubtotal = (custItems ?? []).reduce((s, i) => s + i.final_amount_cents, 0);
+    const custSubtotal = (custItems ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
     const { data: custPays } = await supabase
       .from('payments')
       .select('amount_cents')

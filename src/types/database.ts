@@ -1918,7 +1918,7 @@ export type Database = {
           discount_class_id: string
           duration_minutes: number
           external_room_no: string | null
-          final_amount_cents: number
+          final_amount_cents: number | null
           id: string
           interruption_approved_by_user_id: string | null
           interruption_at: string | null
@@ -1927,7 +1927,7 @@ export type Database = {
           interruption_reason: string | null
           interruption_reason_code: string | null
           item_seq: number | null
-          list_price_cents: number
+          list_price_cents: number | null
           order_customer_id: string
           order_id: string
           reschedule_fulfilled_at: string | null
@@ -1935,7 +1935,7 @@ export type Database = {
           scheduled_start: string | null
           service_category_id: string
           service_end: string | null
-          service_item_id: string
+          service_item_id: string | null
           service_start: string | null
           slot_end: string | null
           slot_start: string | null
@@ -1956,9 +1956,9 @@ export type Database = {
           created_at?: string
           discount_amount_cents?: number
           discount_class_id: string
-          duration_minutes: number
+          duration_minutes?: number
           external_room_no?: string | null
-          final_amount_cents: number
+          final_amount_cents?: number | null
           id?: string
           interruption_approved_by_user_id?: string | null
           interruption_at?: string | null
@@ -1967,7 +1967,7 @@ export type Database = {
           interruption_reason?: string | null
           interruption_reason_code?: string | null
           item_seq?: number | null
-          list_price_cents: number
+          list_price_cents?: number | null
           order_customer_id: string
           order_id: string
           reschedule_fulfilled_at?: string | null
@@ -1975,7 +1975,7 @@ export type Database = {
           scheduled_start?: string | null
           service_category_id: string
           service_end?: string | null
-          service_item_id: string
+          service_item_id?: string | null
           service_start?: string | null
           slot_end?: string | null
           slot_start?: string | null
@@ -1998,7 +1998,7 @@ export type Database = {
           discount_class_id?: string
           duration_minutes?: number
           external_room_no?: string | null
-          final_amount_cents?: number
+          final_amount_cents?: number | null
           id?: string
           interruption_approved_by_user_id?: string | null
           interruption_at?: string | null
@@ -2007,7 +2007,7 @@ export type Database = {
           interruption_reason?: string | null
           interruption_reason_code?: string | null
           item_seq?: number | null
-          list_price_cents?: number
+          list_price_cents?: number | null
           order_customer_id?: string
           order_id?: string
           reschedule_fulfilled_at?: string | null
@@ -2015,7 +2015,7 @@ export type Database = {
           scheduled_start?: string | null
           service_category_id?: string
           service_end?: string | null
-          service_item_id?: string
+          service_item_id?: string | null
           service_start?: string | null
           slot_end?: string | null
           slot_start?: string | null

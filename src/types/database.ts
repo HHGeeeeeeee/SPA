@@ -202,7 +202,6 @@ export type Database = {
           id: string
           name: string
           open_time: string
-          reservation_enabled: boolean
           therapist_share_group: string | null
           updated_at: string
           updated_by: string | null
@@ -217,7 +216,6 @@ export type Database = {
           id?: string
           name: string
           open_time?: string
-          reservation_enabled?: boolean
           therapist_share_group?: string | null
           updated_at?: string
           updated_by?: string | null
@@ -232,7 +230,6 @@ export type Database = {
           id?: string
           name?: string
           open_time?: string
-          reservation_enabled?: boolean
           therapist_share_group?: string | null
           updated_at?: string
           updated_by?: string | null

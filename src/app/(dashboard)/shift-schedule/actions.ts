@@ -63,8 +63,16 @@ async function bedHasConflict(
     if (exclude.itemId && it.id === exclude.itemId) continue;
     const startIso = it.actual_start ?? it.scheduled_start ?? it.service_start ?? it.slot_start;
     if (!startIso) continue;
-    const s = isoMinPHT(startIso);
-    const e = it.actual_end ? isoMinPHT(it.actual_end) : s + (it.duration_minutes ?? 60);
+    // Normalise to the board's minute axis. startMin/endMin can exceed 1439 on a
+    // past-midnight board (00:30 next clock day = 1470), but isoMinPHT only ever
+    // returns a 0–1439 wall-clock minute. A stored slot whose calendar date is
+    // the day *after* this business day is a past-midnight slot, so shift it by
+    // +1440 — otherwise a 00:30 booking reads as 30 and never overlaps a 1470
+    // placement (and a service spanning midnight would have end < start).
+    const s = isoMinPHT(startIso) + (datePHT(startIso) !== day ? 1440 : 0);
+    const e = it.actual_end
+      ? isoMinPHT(it.actual_end) + (datePHT(it.actual_end) !== day ? 1440 : 0)
+      : s + (it.duration_minutes ?? 60);
     if (overlaps(startMin, endMin, s, e)) return true;
   }
   return false;

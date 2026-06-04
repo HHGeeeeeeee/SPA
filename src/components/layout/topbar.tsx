@@ -3,7 +3,6 @@
 import { Bell, PanelLeftOpen, Search } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { CurrencyBadge } from '@/components/ui/currency-badge';
 import { useSidebar } from '@/components/layout/sidebar-context';
 
 export interface TopBarProps {
@@ -46,9 +45,9 @@ export function TopBar({ title, userName }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Single-source currency indicator. Every amount on the POS is in this
-            unit; no per-amount ₱ / PHP symbols are shown downstream. */}
-        <CurrencyBadge />
+        {/* Page-specific header actions portal here (e.g. the Shift Schedule
+            branch switcher). Empty on pages that render nothing into it. */}
+        <div id="topbar-slot" className="flex items-center gap-3 empty:hidden" />
         <button
           type="button"
           className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

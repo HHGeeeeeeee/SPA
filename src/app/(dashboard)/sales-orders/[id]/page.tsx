@@ -35,11 +35,10 @@ async function fetchData(id: string) {
     .select(`
       id, order_no, status, order_type, service_date, note, branch_id, business_unit_id, source_id, billing_to_id,
       subtotal_cents, discount_cents, total_cents, paid_cents,
-      reservation:reservations ( gender_preference ),
       branch:branches!orders_branch_id_fkey ( code, name ),
       source:customer_sources ( code, name, default_discount_class_id, discount_locked ),
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
-      order_customers ( id, customer_name, customer_phone, seq_no ),
+      order_customers ( id, customer_name, customer_phone, seq_no, gender ),
       payments (
         id, order_customer_id, amount_cents, payment_ref, paid_at,
         method:payment_methods ( display_name ),
@@ -117,7 +116,7 @@ async function fetchData(id: string) {
   const cleaning = await supabase
     .from('order_items')
     .select('resource_id, actual_end, service:service_items ( cleanup_after_minutes )')
-    .in('status', ['service_completed', 'feedback_done', 'interrupted'])
+    .in('status', ['service_completed', 'interrupted'])
     .not('resource_id', 'is', null)
     .not('actual_end', 'is', null)
     .is('bed_released_at', null);
@@ -206,7 +205,7 @@ async function fetchData(id: string) {
         }));
     })(),
     // Default the line's therapist-gender filter from the source reservation.
-    defaultGenderPref: one(order.reservation)?.gender_preference ?? null,
+    defaultGenderPref: (order.order_customers ?? []).map((c) => c.gender).find(Boolean) ?? null,
   };
 }
 
@@ -237,7 +236,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const customers = (order.order_customers ?? []).map((c) => {
     const subtotal = orderItemsRaw
       .filter((it) => it.order_customer_id === c.id && it.status !== 'cancelled')
-      .reduce((s, it) => s + it.final_amount_cents, 0);
+      .reduce((s, it) => s + (it.final_amount_cents ?? 0), 0);
     const paid = orderPayments
       .filter((p) => p.order_customer_id === c.id)
       .reduce((s, p) => s + p.amount_cents, 0);
@@ -284,9 +283,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       actual_start: it.actual_start,
       actual_end: it.actual_end,
       bed_released_at: it.bed_released_at,
-      list_price_cents: it.list_price_cents,
+      list_price_cents: it.list_price_cents ?? 0,
       discount_amount_cents: it.discount_amount_cents,
-      final_amount_cents: it.final_amount_cents,
+      final_amount_cents: it.final_amount_cents ?? 0,
       status: it.status,
       // A line stopped via "Switch" is interrupted with this reason — shown as
       // "Switched" (not Interrupted) and offered no Redo (the replacement is added).

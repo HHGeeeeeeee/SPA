@@ -38,6 +38,7 @@ import {
   updateOrderCustomer,
   addOrderItem,
   updateOrderItem,
+  markNoShow,
   removeOrderItem,
   startOrderItem,
   startAllServices,
@@ -62,7 +63,7 @@ function peso(cents: number): string {
 interface OrderItem {
   id: string;
   order_customer_id: string;
-  service_item_id: string;
+  service_item_id: string | null;
   discount_class_id: string | null;
   service_name: string;
   therapist_name: string | null;
@@ -324,7 +325,7 @@ export function OrderWorkspace({
     setEditingItemId(it.id);
     setActiveCustomer(it.order_customer_id);
     setGroupSel(grp);
-    setSvcId(it.service_item_id);
+    setSvcId(it.service_item_id ?? '');
     setTherapistId(it.therapist_id ?? NONE);
     setResourceId(it.resource_id ?? NONE);
     setDiscountId(it.discount_class_id ?? defaultDiscountId);
@@ -370,7 +371,7 @@ export function OrderWorkspace({
     const takenTherapists = new Set<string>(busyTherapistIds);
     const takenStations = new Set<string>(busyResourceIds);
     items
-      .filter((i) => ['scheduled', 'in_service'].includes(i.status))
+      .filter((i) => ['unassigned', 'scheduled', 'in_service'].includes(i.status))
       .forEach((i) => {
         if (i.therapist_id) takenTherapists.add(i.therapist_id);
         if (i.resource_id) takenStations.add(i.resource_id);
@@ -448,6 +449,13 @@ export function OrderWorkspace({
     startTransition(async () => {
       const r = await removeOrderItem(id, order.id);
       if (!r.ok) toast.error(r.error);
+    });
+  }
+
+  function doNoShow(id: string) {
+    startTransition(async () => {
+      const r = await markNoShow(id, order.id);
+      if (r.ok) { toast.success('Marked no-show'); router.refresh(); } else toast.error(r.error);
     });
   }
 
@@ -643,7 +651,7 @@ export function OrderWorkspace({
   // A guest can be removed only while none of their services have started and no
   // payment is attributed to them — mirrors the server guard.
   const customerRemovable = (c: OrderCustomer) =>
-    !items.some((i) => i.order_customer_id === c.id && !['scheduled', 'cancelled'].includes(i.status))
+    !items.some((i) => i.order_customer_id === c.id && !['unassigned', 'scheduled', 'cancelled'].includes(i.status))
     && c.paid_cents === 0;
   const multiCustomer = customers.length > 1;
   // Guests who still owe on their own line (Pay separately shows one card each).
@@ -659,7 +667,7 @@ export function OrderWorkspace({
       .filter((it) =>
         (customerId == null || it.order_customer_id === customerId)
         && it.therapist_id
-        && ['service_completed', 'feedback_done'].includes(it.status))
+        && it.status === 'service_completed')
       .map((it) => ({
         orderItemId: it.id,
         therapistId: it.therapist_id as string,
@@ -783,7 +791,7 @@ export function OrderWorkspace({
                   // A finished line keeps its bed for the cleanup buffer, unless
                   // released early. While cleaning, surface "free ~HH:MM" + Ready now.
                   const cleaningUntil =
-                    ['service_completed', 'feedback_done', 'interrupted'].includes(it.status)
+                    ['service_completed', 'interrupted'].includes(it.status)
                     && it.actual_end && it.resource_id && it.cleanup_minutes > 0 && !it.bed_released_at
                       ? new Date(new Date(it.actual_end).getTime() + it.cleanup_minutes * 60000)
                       : null;
@@ -799,7 +807,7 @@ export function OrderWorkspace({
                   const statusTag =
                     it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
                     : isCleaning ? { t: 'Cleaning', c: 'text-amber-600 dark:text-amber-400' }
-                    : (it.status === 'service_completed' || it.status === 'feedback_done') ? { t: 'Done', c: 'text-primary' }
+                    : (it.status === 'service_completed') ? { t: 'Done', c: 'text-primary' }
                     : it.status === 'interrupted' ? (it.switched ? { t: 'Switched', c: 'text-amber-600 dark:text-amber-400' } : { t: 'Interrupted', c: 'text-destructive' })
                     : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
                     : null;
@@ -851,6 +859,17 @@ export function OrderWorkspace({
                           </ActionBtn>
                         </>
                       )}
+                      {['unassigned', 'scheduled'].includes(it.status) && !['paid', 'closed', 'void'].includes(order.status) && (
+                        <ActionBtn
+                          tip="Guest didn't show — mark this booking no-show (zero charge, leaves the schedule)."
+                          variant="outline"
+                          className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          onClick={() => doNoShow(it.id)}
+                          disabled={pending}
+                        >
+                          No-show
+                        </ActionBtn>
+                      )}
                       {canRunService && it.status === 'in_service' && (
                         <>
                           <ActionBtn
@@ -882,7 +901,7 @@ export function OrderWorkspace({
                         </>
                       )}
                       {/* "Ready now" lives next to the Cleaning status, not here. */}
-                      {['service_completed', 'feedback_done'].includes(it.status) && it.feedback_score == null && (
+                      {it.status === 'service_completed' && it.feedback_score == null && (
                         <ActionBtn
                           tip="Record the guest's feedback — a score is required."
                           variant="outline"
@@ -916,13 +935,13 @@ export function OrderWorkspace({
                           {peso(it.final_amount_cents)}
                         </span>
                       )}
-                      {order.editable && it.status === 'scheduled' && (
+                      {order.editable && ['unassigned', 'scheduled'].includes(it.status) && (
                         <Button size="icon-sm" variant="ghost" onClick={() => startEditItem(it)} disabled={pending} title="Edit service">
                           <Pencil className="size-3.5 text-muted-foreground" />
                         </Button>
                       )}
                       {/* Hard delete only on a draft order; once open, Skip is the remove path. */}
-                      {order.status === 'draft' && it.status === 'scheduled' && (
+                      {order.status === 'draft' && ['unassigned', 'scheduled'].includes(it.status) && (
                         <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending} title="Remove service">
                           <Trash2 className="size-3.5 text-destructive" />
                         </Button>

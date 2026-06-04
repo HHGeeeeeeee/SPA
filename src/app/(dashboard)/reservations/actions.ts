@@ -47,32 +47,12 @@ const schema = z.object({
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
 // Replace a reservation's service-category set (the multi-select source of truth).
-async function syncReservationCategories(reservationId: string, categoryIds: string[]) {
-  const supabase = await createAuditedClient();
-  await supabase.from('reservation_service_categories').delete().eq('reservation_id', reservationId);
-  if (categoryIds.length === 0) return null;
-  const { error } = await supabase.from('reservation_service_categories').insert(
-    categoryIds.map((service_category_id) => ({ reservation_id: reservationId, service_category_id })),
-  );
-  return error;
-}
-
-async function nextReservationNo(branchCode: string, dateIso: string): Promise<string> {
-  const supabase = await createAuditedClient();
-  const ymd = dateIso.slice(0, 10).replace(/-/g, '');
-  const prefix = `RSV-${branchCode}-${ymd}-`;
-  const { data } = await supabase
-    .from('reservations')
-    .select('reservation_no')
-    .like('reservation_no', `${prefix}%`)
-    .order('reservation_no', { ascending: false })
-    .limit(1);
-  const last = data?.[0]?.reservation_no;
-  const lastSeq = last ? Number(last.slice(prefix.length)) : 0;
-  return `${prefix}${String(lastSeq + 1).padStart(3, '0')}`;
-}
-
-export async function createReservation(input: unknown): Promise<ActionResult> {
+// Retirement path: a booking IS a draft order + unassigned order_items, with no
+// reservation row. Combines what createReservation + convertReservationToOrder
+// used to do. One draft order; one order_customer per pax (gender carried on the
+// customer); one unassigned line per guest holding the primary category + booked
+// time + pinned bed. Concrete service + price are decided later in the workspace.
+export async function createBooking(input: unknown): Promise<ActionResult<{ orderId: string }>> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
@@ -81,13 +61,10 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
   }
   if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
   const supabase = await createAuditedClient();
-  const { data: branch, error: be } = await supabase.from('branches').select('code').eq('id', d.branch_id).single();
-  if (be || !branch) return { ok: false, error: 'Branch not found' };
 
-  // The source decides the billing destination and the contact-phone policy.
   const { data: source } = await supabase
     .from('customer_sources')
-    .select('phone_required, default_billing_to_id')
+    .select('phone_required, default_billing_to_id, default_discount_class_id')
     .eq('id', d.source_id)
     .maybeSingle();
   if (!source) return { ok: false, error: 'Customer source not found' };
@@ -95,8 +72,7 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
     return { ok: false, error: 'A guest phone is required for this source' };
   }
 
-  // Resolve beds: explicit staff override, else auto-assign for a "together"
-  // group, else none.
+  // Resolve beds: explicit override, else seat-together auto-assign, else none.
   const pinned = await resolveEffectiveBeds({
     branchId: d.branch_id, resourceIds: d.resource_ids, seatTogether: d.seat_together,
     categoryIds: d.service_category_ids, pax: d.pax,
@@ -105,40 +81,86 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
   });
   if (!pinned.ok) return { ok: false, error: pinned.error };
 
-  const reservation_no = await nextReservationNo(branch.code, d.desired_service_start);
+  // Duration: the chosen service's, else 60 (a category-only booking).
+  let durationMin = 60;
+  if (d.service_item_id) {
+    const { data: svc } = await supabase.from('service_items').select('duration_minutes').eq('id', d.service_item_id).maybeSingle();
+    durationMin = svc?.duration_minutes ?? 60;
+  }
 
-  const { data: created, error } = await supabase.from('reservations').insert({
-    reservation_no,
-    branch_id: d.branch_id,
-    // Channel kept for schema compatibility; the source master is authoritative.
-    source_type: 'phone',
-    source_id: d.source_id,
-    // Single column kept for back-compat; the junction is the source of truth.
-    service_category_id: d.service_category_ids[0],
-    billing_to_id: source.default_billing_to_id ?? null,
-    guest_name: d.guest_name,
-    guest_phone: d.guest_phone || null,
-    pax: d.pax,
-    gender_preference: d.gender_preference || null,
-    desired_service_start: d.desired_service_start,
-    desired_service_end: d.desired_service_end,
-    service_location_type: d.service_location_type,
-    note: d.note || null,
-    seat_together: d.seat_together,
-    service_item_id: d.service_item_id ?? null,
-    status: d.confirmed ? 'confirmed' : 'reserved',
-    rescheduled_from_order_item_id: d.rescheduled_from_order_item_id ?? null,
-  }).select('id').single();
-  if (error || !created) return { ok: false, error: error?.message ?? 'Insert failed' };
-  const linkErr = await syncReservationCategories(created.id, d.service_category_ids);
-  if (linkErr) return { ok: false, error: linkErr.message };
-  const pinErr = await syncReservationResources(created.id, pinned.ids);
-  if (pinErr) return { ok: false, error: pinErr.message };
+  const serviceDate = d.desired_service_start.slice(0, 10);
+  const order_no = await nextOrderNo(supabase, serviceDate);
+  const { data: order, error: oe } = await supabase
+    .from('orders')
+    .insert({
+      order_no,
+      branch_id: d.branch_id,
+      source_id: d.source_id,
+      billing_to_id: source.default_billing_to_id ?? null,
+      // order_type's CHECK allows walk_in/reservation/package_use/stored_value/
+      // external — 'reservation' is the booking-origin value (kept until the
+      // enum is renamed in the final cleanup).
+      order_type: 'reservation',
+      service_location_type: d.service_location_type,
+      service_date: serviceDate,
+      note: d.note || null,
+      status: 'draft',
+    })
+    .select('id')
+    .single();
+  if (oe || !order) return { ok: false, error: oe?.message ?? 'Could not create booking' };
 
-  // Reservation booked → close out the pending reschedule. We do this AFTER
-  // the reservation insert succeeded; if the mark-fulfilled fails (unlikely)
-  // the reservation still stands and the pending entry just won't drop off
-  // the list — a manager can clear it manually from /sales-orders/reschedules.
+  // One order_customer per pax (first keeps the contact; gender preference rides
+  // on the customer so service start can still match a therapist's gender).
+  const pax = Math.max(1, d.pax);
+  const { data: customers, error: ce } = await supabase
+    .from('order_customers')
+    .insert(
+      Array.from({ length: pax }, (_, i) => ({
+        order_id: order.id,
+        customer_name: i === 0 ? d.guest_name : `Guest ${i + 1}`,
+        customer_phone: i === 0 ? (d.guest_phone || null) : null,
+        gender: d.gender_preference || null,
+        seq_no: i + 1,
+      })),
+    )
+    .select('id, seq_no');
+  if (ce) return { ok: false, error: ce.message };
+  const sortedCustomers = [...(customers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
+
+  // Discount class: the source's default, else DIS-00 (no discount).
+  let discountClassId = source.default_discount_class_id ?? null;
+  if (!discountClassId) {
+    const { data: dis0 } = await supabase.from('discount_classes').select('id').eq('code', 'DIS-00').maybeSingle();
+    discountClassId = dis0?.id ?? null;
+  }
+  if (!discountClassId) return { ok: false, error: 'No default discount class configured' };
+
+  // One unassigned line per guest: primary category + booked time + (pinned) bed.
+  const beds = pinned.ids;
+  const primaryCategory = d.service_category_ids[0];
+  for (let i = 0; i < sortedCustomers.length; i++) {
+    const bedId = beds[i] ?? null;
+    const { error: ie } = await supabase.from('order_items').insert({
+      order_id: order.id,
+      order_customer_id: sortedCustomers[i].id,
+      service_category_id: primaryCategory,
+      service_item_id: d.service_item_id ?? null,
+      scheduled_start: d.desired_service_start,
+      duration_minutes: durationMin,
+      resource_id: bedId,
+      external_room_no: null,
+      discount_class_id: discountClassId,
+      discount_amount_cents: 0,
+      list_price_cents: null,
+      final_amount_cents: null,
+      // On a bed ⇒ scheduled (sits on the board); else unassigned (rail).
+      status: bedId ? 'scheduled' : 'unassigned',
+    });
+    if (ie) return { ok: false, error: ie.message };
+  }
+
+  // Booking made → close out a pending reschedule, if this was one.
   if (d.rescheduled_from_order_item_id) {
     await supabase
       .from('order_items')
@@ -149,84 +171,9 @@ export async function createReservation(input: unknown): Promise<ActionResult> {
     revalidatePath('/sales-orders/reschedules');
   }
 
-  revalidatePath('/reservations');
   revalidatePath('/shift-schedule');
-  return { ok: true };
-}
-
-const updateSchema = z.object({
-  id: z.string().uuid(),
-  branch_id: z.string().uuid(),
-  source_id: z.string().uuid(),
-  service_category_ids: z.array(z.string().uuid()).min(1, 'Pick at least one service type'),
-  guest_name: z.string().min(1).max(120),
-  guest_phone: z.string().max(40).optional().nullable(),
-  pax: z.coerce.number().int().min(1).max(50),
-  gender_preference: z.string().max(20).optional().nullable(),
-  desired_service_start: z.string().min(1),
-  desired_service_end: z.string().min(1),
-  service_location_type: z.enum(['on_site', 'external_hotel']),
-  note: z.string().max(500).optional().nullable(),
-  resource_ids: z.array(z.string().uuid()).optional().default([]),
-  seat_together: z.boolean().optional().default(false),
-  service_item_id: z.string().uuid().optional().nullable(),
-});
-
-export async function updateReservation(input: unknown): Promise<ActionResult> {
-  const parsed = updateSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
-  const d = parsed.data;
-  if (new Date(d.desired_service_end) <= new Date(d.desired_service_start)) {
-    return { ok: false, error: 'End time must be after start time' };
-  }
-  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
-  const supabase = await createAuditedClient();
-  const { data: existing } = await supabase.from('reservations').select('status').eq('id', d.id).maybeSingle();
-  if (!existing) return { ok: false, error: 'Reservation not found' };
-  if (['converted', 'cancelled', 'no_show'].includes(existing.status)) {
-    return { ok: false, error: `A ${existing.status.replace('_', ' ')} reservation can't be edited` };
-  }
-  // Source decides billing + the contact-phone policy (same as on create).
-  const { data: source } = await supabase
-    .from('customer_sources')
-    .select('phone_required, default_billing_to_id')
-    .eq('id', d.source_id)
-    .maybeSingle();
-  if (!source) return { ok: false, error: 'Customer source not found' };
-  if (source.phone_required && !d.guest_phone?.trim()) {
-    return { ok: false, error: 'A guest phone is required for this source' };
-  }
-  const pinned = await resolveEffectiveBeds({
-    branchId: d.branch_id, resourceIds: d.resource_ids, seatTogether: d.seat_together,
-    categoryIds: d.service_category_ids, pax: d.pax,
-    start: d.desired_service_start, end: d.desired_service_end,
-    locationType: d.service_location_type, excludeReservationId: d.id,
-  });
-  if (!pinned.ok) return { ok: false, error: pinned.error };
-  const { error } = await supabase.from('reservations').update({
-    branch_id: d.branch_id,
-    source_id: d.source_id,
-    service_category_id: d.service_category_ids[0],
-    billing_to_id: source.default_billing_to_id ?? null,
-    guest_name: d.guest_name,
-    guest_phone: d.guest_phone || null,
-    pax: d.pax,
-    gender_preference: d.gender_preference || null,
-    desired_service_start: d.desired_service_start,
-    desired_service_end: d.desired_service_end,
-    service_location_type: d.service_location_type,
-    note: d.note || null,
-    seat_together: d.seat_together,
-    service_item_id: d.service_item_id ?? null,
-  }).eq('id', d.id);
-  if (error) return { ok: false, error: error.message };
-  const linkErr = await syncReservationCategories(d.id, d.service_category_ids);
-  if (linkErr) return { ok: false, error: linkErr.message };
-  const pinErr = await syncReservationResources(d.id, pinned.ids);
-  if (pinErr) return { ok: false, error: pinErr.message };
-  revalidatePath('/reservations');
-  revalidatePath('/shift-schedule');
-  return { ok: true };
+  revalidatePath('/sales-orders');
+  return { ok: true, data: { orderId: order.id } };
 }
 
 // Bed/station capacity for a branch + time window, per resource type. Demand is
@@ -253,24 +200,24 @@ export async function getReservationAvailability(input: {
     if (r.resource_type) capacity[r.resource_type] = (capacity[r.resource_type] ?? 0) + 1;
   }
 
-  // Overlapping reservations (still live) → demand per resource type.
+  // Overlapping order-item bookings (scheduled or live) → demand per resource
+  // type. One line = one guest-service = one unit of demand for its category type.
+  const startMs = Date.parse(input.start);
+  const endMs = Date.parse(input.end);
   const { data: overlapping } = await supabase
-    .from('reservations')
-    .select('id, pax, reservation_service_categories ( service_categories ( required_resource_type ) )')
-    .eq('branch_id', input.branch_id)
-    .in('status', ['reserved', 'confirmed'])
-    .is('deleted_at', null)
-    .lt('desired_service_start', input.end)
-    .gt('desired_service_end', input.start);
+    .from('order_items')
+    .select('scheduled_start, actual_start, actual_end, duration_minutes, category:service_categories ( required_resource_type ), order:orders!order_items_order_id_fkey ( branch_id )')
+    .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted']);
   const used: Record<string, number> = {};
-  for (const r of overlapping ?? []) {
-    if (input.exclude_id && r.id === input.exclude_id) continue;
-    const types = new Set<string>();
-    for (const link of r.reservation_service_categories ?? []) {
-      const cat = one(link.service_categories);
-      if (cat?.required_resource_type) types.add(cat.required_resource_type);
-    }
-    for (const t of types) used[t] = (used[t] ?? 0) + (r.pax ?? 1);
+  for (const it of overlapping ?? []) {
+    if (one(it.order)?.branch_id !== input.branch_id) continue;
+    const startIso = it.actual_start ?? it.scheduled_start;
+    if (!startIso) continue;
+    const s = Date.parse(startIso);
+    const e = it.actual_end ? Date.parse(it.actual_end) : s + (it.duration_minutes ?? 60) * 60000;
+    if (!(s < endMs && startMs < e)) continue;
+    const t = one(it.category)?.required_resource_type;
+    if (t) used[t] = (used[t] ?? 0) + 1;
   }
 
   const byType: Record<string, { capacity: number; used: number }> = {};
@@ -280,16 +227,6 @@ export async function getReservationAvailability(input: {
   return { ok: true, data: { byType } };
 }
 
-// Replace a reservation's pinned beds (hybrid optional binding).
-async function syncReservationResources(reservationId: string, resourceIds: string[]) {
-  const supabase = await createAuditedClient();
-  await supabase.from('reservation_resources').delete().eq('reservation_id', reservationId);
-  if (resourceIds.length === 0) return null;
-  const { error } = await supabase.from('reservation_resources').insert(
-    resourceIds.map((resource_id) => ({ reservation_id: reservationId, resource_id })),
-  );
-  return error;
-}
 
 // Resource IDs unavailable in [start,end): occupied by a live order or pinned by
 // another confirmed reservation. A bed's occupancy is the service window widened
@@ -303,54 +240,30 @@ async function computeBusyResourceIds(
   end: string,
   excludeReservationId?: string | null,
 ): Promise<Set<string>> {
+  void excludeReservationId; // legacy param (reservations retired); create has no self line to exclude
   const supabase = await createAuditedClient();
   const startMs = Date.parse(start);
   const endMs = Date.parse(end);
   const busy = new Set<string>();
-  const widenLo = new Date(startMs - OCCUPANCY_BUF_MS).toISOString();
-  const widenHi = new Date(endMs + OCCUPANCY_BUF_MS).toISOString();
 
-  // Live orders sitting on a bed — actual times, expanded by prep + cleanup.
-  const lookback = new Date(startMs - 12 * 3600 * 1000).toISOString();
+  // A booked OR live order item on a bed holds it: a `scheduled` line uses its
+  // planned time, a started line uses actual. Window widened by prep + cleanup.
+  // (Bookings are order_items now — this is the whole occupancy picture.)
   const { data: items } = await supabase
     .from('order_items')
-    .select('resource_id, actual_start, actual_end, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id )')
+    .select('resource_id, scheduled_start, actual_start, actual_end, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id )')
     .not('resource_id', 'is', null)
-    .not('actual_start', 'is', null)
-    .gte('actual_start', lookback)
-    .lt('actual_start', widenHi);
+    .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted']);
   for (const it of items ?? []) {
     if (one(it.order)?.branch_id !== branchId || !it.resource_id) continue;
+    const startIso = it.actual_start ?? it.scheduled_start;
+    if (!startIso) continue;
     const svc = one(it.service);
-    const s0 = Date.parse(it.actual_start as string);
+    const s0 = Date.parse(startIso);
     const e0 = it.actual_end ? Date.parse(it.actual_end) : s0 + (it.duration_minutes ?? 60) * 60000;
     const s = s0 - (svc?.prep_before_minutes ?? 0) * 60000;
     const e = e0 + (svc?.cleanup_after_minutes ?? 0) * 60000;
     if (s < endMs && startMs < e) busy.add(it.resource_id);
-  }
-
-  // Beds pinned by other overlapping reservations. Only a *confirmed* reservation
-  // actually holds its bed (pending ones are tentative); an Overdue one
-  // auto-releases its bed, so its pin no longer blocks others. Window expanded by
-  // the booked service's prep + cleanup (0 when no specific service was chosen).
-  const graceMin = await getReservationGraceMinutes();
-  const { data: pins } = await supabase
-    .from('reservation_resources')
-    .select('resource_id, reservations!inner ( id, branch_id, status, deleted_at, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ) )')
-    .eq('reservations.branch_id', branchId)
-    .eq('reservations.status', 'confirmed')
-    .is('reservations.deleted_at', null)
-    .lt('reservations.desired_service_start', widenHi)
-    .gt('reservations.desired_service_end', widenLo);
-  for (const p of pins ?? []) {
-    const resv = one(p.reservations);
-    if (!resv || !p.resource_id) continue;
-    if (excludeReservationId && resv.id === excludeReservationId) continue;
-    if (isReservationOverdue({ status: resv.status, desiredStartIso: resv.desired_service_start, graceMin })) continue;
-    const svc = one(resv.service);
-    const rs = Date.parse(resv.desired_service_start) - (svc?.prep_before_minutes ?? 0) * 60000;
-    const re = Date.parse(resv.desired_service_end) + (svc?.cleanup_after_minutes ?? 0) * 60000;
-    if (rs < endMs && startMs < re) busy.add(p.resource_id);
   }
   return busy;
 }
@@ -462,15 +375,6 @@ export async function nextAvailableSlot(input: {
     const s = Date.parse(it.actual_start as string);
     const e0 = it.actual_end ? Date.parse(it.actual_end) : s + (it.duration_minutes ?? 60) * 60_000;
     ends.push(e0 + (one(it.service)?.cleanup_after_minutes ?? 0) * 60_000);
-  }
-  const { data: pins } = await supabase
-    .from('reservation_resources')
-    .select('reservations!inner ( branch_id, status, deleted_at, desired_service_end, service:service_items ( cleanup_after_minutes ) )')
-    .in('resource_id', typeIds)
-    .eq('reservations.status', 'confirmed').is('reservations.deleted_at', null);
-  for (const p of pins ?? []) {
-    const r = one(p.reservations);
-    if (r?.branch_id === input.branch_id) ends.push(Date.parse(r.desired_service_end) + (one(r.service)?.cleanup_after_minutes ?? 0) * 60_000);
   }
   for (const b of thBusy) ends.push(b.e);
   for (const p of pool) {
@@ -679,149 +583,4 @@ async function resolveEffectiveBeds(args: {
     return { ok: true, ids };
   }
   return { ok: true, ids: [] };
-}
-
-export async function setReservationStatus(
-  id: string,
-  status: 'reserved' | 'confirmed' | 'cancelled' | 'no_show',
-): Promise<ActionResult> {
-  if (!(await currentSession())) return { ok: false, error: 'Sign in required' };
-  const supabase = await createAuditedClient();
-  const { data: r } = await supabase.from('reservations').select('branch_id').eq('id', id).maybeSingle();
-  if (!r?.branch_id) return { ok: false, error: 'Reservation not found' };
-  if (!(await canAccessBranch(r.branch_id))) return { ok: false, error: 'No access to this branch' };
-  const { error } = await supabase.from('reservations').update({ status }).eq('id', id);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath('/reservations');
-  revalidatePath('/shift-schedule');
-  return { ok: true };
-}
-
-// Confirm a pending reservation — this is the point it becomes "established" and
-// actually holds its bed(s). Beds are re-resolved against current (confirmed-only)
-// occupancy: explicit pins must still be free (else error → adjust & retry); a
-// seat-together group is auto-assigned fresh adjacent beds now.
-export async function confirmReservation(id: string): Promise<ActionResult> {
-  if (!(await currentSession())) return { ok: false, error: 'Sign in required' };
-  const supabase = await createAuditedClient();
-  const { data: r } = await supabase
-    .from('reservations')
-    .select('id, branch_id, status, pax, seat_together, service_location_type, desired_service_start, desired_service_end, reservation_service_categories ( service_category_id ), reservation_resources ( resource_id )')
-    .eq('id', id)
-    .maybeSingle();
-  if (!r) return { ok: false, error: 'Reservation not found' };
-  if (!(await canAccessBranch(r.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (r.status !== 'reserved') return { ok: false, error: 'Only a pending reservation can be confirmed' };
-
-  const categoryIds = (r.reservation_service_categories ?? []).map((x) => x.service_category_id);
-  const intendedPins = (r.reservation_resources ?? []).map((x) => x.resource_id);
-  const resolved = await resolveEffectiveBeds({
-    branchId: r.branch_id, resourceIds: intendedPins, seatTogether: r.seat_together,
-    categoryIds, pax: r.pax, start: r.desired_service_start, end: r.desired_service_end,
-    locationType: r.service_location_type ?? 'on_site', excludeReservationId: id,
-  });
-  if (!resolved.ok) return { ok: false, error: resolved.error };
-
-  const { error } = await supabase.from('reservations').update({ status: 'confirmed' }).eq('id', id);
-  if (error) return { ok: false, error: error.message };
-  const pinErr = await syncReservationResources(id, resolved.ids);
-  if (pinErr) return { ok: false, error: pinErr.message };
-  revalidatePath('/reservations');
-  revalidatePath('/shift-schedule');
-  return { ok: true };
-}
-
-// Create a draft Sales Order from a reservation and mark it converted.
-export async function convertReservationToOrder(id: string): Promise<ActionResult<{ orderId: string }>> {
-  if (!(await currentSession())) return { ok: false, error: 'Sign in required' };
-  const supabase = await createAuditedClient();
-  const { data: r, error: re } = await supabase
-    .from('reservations')
-    .select('id, branch_id, source_id, billing_to_id, desired_service_start, status, guest_name, guest_phone, pax, note, service_item_id, seat_together')
-    .eq('id', id)
-    .single();
-  if (re || !r) return { ok: false, error: 'Reservation not found' };
-  if (!(await canAccessBranch(r.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (r.status === 'converted') return { ok: false, error: 'Already converted' };
-  if (['cancelled', 'no_show'].includes(r.status)) return { ok: false, error: `Cannot convert a ${r.status} reservation` };
-
-  const serviceDate = r.desired_service_start.slice(0, 10);
-  const order_no = await nextOrderNo(supabase, serviceDate);
-
-  const { data: order, error: oe } = await supabase
-    .from('orders')
-    .insert({
-      order_no,
-      branch_id: r.branch_id,
-      source_id: r.source_id,
-      billing_to_id: r.billing_to_id,
-      reservation_id: r.id,
-      order_type: 'reservation',
-      service_date: serviceDate,
-      note: r.note ?? null,
-      status: 'draft',
-    })
-    .select('id')
-    .single();
-  if (oe || !order) return { ok: false, error: oe?.message ?? 'Could not create order' };
-
-  // Carry the booking's guests: one order_customer per pax (first keeps the
-  // name + phone; the rest are placeholders the desk can rename). Editable.
-  const pax = Math.max(1, r.pax ?? 1);
-  const { data: createdCustomers } = await supabase.from('order_customers').insert(
-    Array.from({ length: pax }, (_, i) => ({
-      order_id: order.id,
-      customer_name: i === 0 ? r.guest_name : `Guest ${i + 1}`,
-      customer_phone: i === 0 ? r.guest_phone : null,
-      seq_no: i + 1,
-    })),
-  ).select('id, seq_no');
-  const firstCustomer = (createdCustomers ?? []).find((c) => c.seq_no === 1) ?? createdCustomers?.[0];
-
-  // If the booking named a specific service, pre-create a line for EVERY guest
-  // (price/duration + a reserved bed each), so a multi-pax booking lands on one
-  // bed per guest. The reserved beds are handed out in bed-number order (Guest 1
-  // → lowest, Guest 2 → next); a guest beyond the reserved beds gets no bed yet.
-  // Therapist is left for the desk to confirm; a guest wanting a different service
-  // switches it at check-in. Reuses addOrderItem.
-  if (r.service_item_id && firstCustomer) {
-    const { data: src } = await supabase.from('customer_sources').select('default_discount_class_id').eq('id', r.source_id ?? '').maybeSingle();
-    let discountClassId = src?.default_discount_class_id ?? null;
-    if (!discountClassId) {
-      const { data: dis0 } = await supabase.from('discount_classes').select('id').eq('code', 'DIS-00').maybeSingle();
-      discountClassId = dis0?.id ?? null;
-    }
-    if (discountClassId) {
-      const { data: pinRows } = await supabase
-        .from('reservation_resources')
-        .select('resource_id, resources ( resource_name )')
-        .eq('reservation_id', id);
-      const beds = (pinRows ?? [])
-        .map((p) => ({ id: p.resource_id, name: one(p.resources)?.resource_name ?? '' }))
-        .sort((a, b) => bedNum(a.name) - bedNum(b.name));
-
-      const sortedCustomers = [...(createdCustomers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
-      const targets = sortedCustomers.length > 0 ? sortedCustomers : [firstCustomer];
-      for (let i = 0; i < targets.length; i++) {
-        await addOrderItem({
-          order_id: order.id,
-          order_customer_id: targets[i].id,
-          service_item_id: r.service_item_id,
-          resource_id: beds[i]?.id ?? null,
-          discount_class_id: discountClassId,
-        });
-      }
-    }
-  }
-
-  // Keep the booked time on the new lines so they stay on the schedule board
-  // (positioned + movable) until the service actually starts. No-op if no lines.
-  await supabase.from('order_items').update({ scheduled_start: r.desired_service_start }).eq('order_id', order.id);
-
-  await supabase.from('reservations').update({ status: 'converted' }).eq('id', id);
-
-  revalidatePath('/reservations');
-  revalidatePath('/sales-orders');
-  revalidatePath('/shift-schedule');
-  return { ok: true, data: { orderId: order.id } };
 }

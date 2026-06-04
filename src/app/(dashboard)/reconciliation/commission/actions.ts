@@ -38,9 +38,9 @@ export interface CommGroup {
 }
 
 // Eligible order_items at a branch: parent order paid/closed, within range, the
-// service was actually completed (service_completed / feedback_done — so
-// switched / interrupted / cancelled lines earn nothing, matching tip rules),
-// has a therapist, the service is commission-applicable, and not yet settled.
+// service was actually completed (service_completed — so switched / interrupted /
+// cancelled / no_show lines earn nothing, matching tip rules), has a therapist,
+// the service is commission-applicable, and not yet settled.
 async function loadEligible(from: string, to: string, branchId: string) {
   const supabase = await createAuditedClient();
   const { data, error } = await supabase
@@ -59,7 +59,7 @@ async function loadEligible(from: string, to: string, branchId: string) {
     .map((it) => ({ it, ord: one(it.order), svc: one(it.service), th: one(it.therapist) }))
     .filter((r) =>
       r.ord && r.ord.branch_id === branchId && ['paid', 'closed'].includes(r.ord.status) &&
-      ['service_completed', 'feedback_done'].includes(r.it.status) &&
+      r.it.status === 'service_completed' &&
       r.ord.service_date >= from && r.ord.service_date <= to &&
       r.svc?.commission_applicable && r.it.therapist_id,
     );
@@ -135,11 +135,11 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
       const classRate = resolveRate(r.it.therapist_id as string);
       const warm = warmupEnabled && occurrence === warmupOccurrence ? warmupRate(r.it.duration_minutes ?? 0) : null;
       const effRate = warm != null ? warm : classRate;
-      const commission = Math.round(r.it.list_price_cents * effRate);
+      const commission = Math.round((r.it.list_price_cents ?? 0) * effRate);
       const tid = r.it.therapist_id as string;
       const g = groups.get(tid) ?? { therapist_id: tid, therapist_name: r.th?.name ?? '—', sessions: 0, gross_cents: 0, commission_cents: 0, borrowed_from: null, items: [] };
       g.sessions += 1;
-      g.gross_cents += r.it.list_price_cents;
+      g.gross_cents += (r.it.list_price_cents ?? 0);
       g.commission_cents += commission;
       // Borrowed-from: snapshot on the item; once set on the group, leave it
       // (a therapist has one home at a time, all line snapshots agree).
@@ -154,7 +154,7 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
         duration_minutes: r.it.duration_minutes ?? null,
         occurrence,
         warmup: warm != null,
-        gross_cents: r.it.list_price_cents,
+        gross_cents: (r.it.list_price_cents ?? 0),
         rate: effRate,
         commission_cents: commission,
       });

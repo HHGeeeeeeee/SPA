@@ -557,10 +557,14 @@ const updateCustomerSchema = z.object({
   order_id: z.string().uuid(),
   customer_name: z.string().min(1).max(120),
   customer_phone: z.string().max(40).optional().nullable(),
+  // Preferred therapist gender lives on the guest (not the service line). Only
+  // patched when the key is present — omitting it leaves the preference intact
+  // (so the rename flow doesn't wipe a gender set elsewhere).
+  gender: z.string().max(10).optional().nullable(),
 });
 
-// Rename / re-phone an existing guest (e.g. fill in a converted booking's
-// "Guest 2" placeholder once they're at the desk).
+// Rename / re-phone / set the gender preference of an existing guest (e.g. fill
+// in a converted booking's "Guest 2" placeholder once they're at the desk).
 export async function updateOrderCustomer(input: unknown): Promise<ActionResult> {
   if (!(await currentSession())) return { ok: false, error: 'Sign in required' };
   const parsed = updateCustomerSchema.safeParse(input);
@@ -571,10 +575,12 @@ export async function updateOrderCustomer(input: unknown): Promise<ActionResult>
   // doesn't carry branch_id.
   const { data: ord } = await supabase.from('orders').select('branch_id').eq('id', d.order_id).maybeSingle();
   if (!ord?.branch_id || !(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
-  const { error } = await supabase
-    .from('order_customers')
-    .update({ customer_name: d.customer_name, customer_phone: d.customer_phone || null })
-    .eq('id', d.id);
+  const patch: { customer_name: string; customer_phone: string | null; gender?: string | null } = {
+    customer_name: d.customer_name,
+    customer_phone: d.customer_phone || null,
+  };
+  if (d.gender !== undefined) patch.gender = d.gender || null;
+  const { error } = await supabase.from('order_customers').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/sales-orders/${d.order_id}`);
   return { ok: true };

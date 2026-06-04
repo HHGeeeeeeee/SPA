@@ -19,24 +19,24 @@ const env = Object.fromEntries(
 const s = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SECRET_KEY);
 
 // Floor plan:
-//   HSPA1  1F: 4 hairwash beds
+//   HSPA1  1F: 4 nail/massage chairs
+//          2F: 9 beds
+//   HSPA2  1F: 4 hairwash beds
 //          2F: 6 beds + couple room (2 beds)
 //          3F: 6 beds + 2 facial beds + couple room (2 beds)
-//   HSPA2  1F: 4 nail/massage chairs
-//          2F: 9 beds
 // Couple-room beds are modelled as 2 independent massage_beds (zone tagged).
 const range = (n) => Array.from({ length: n }, (_, i) => i + 1);
 const PLAN = [
   // HSPA1
-  ...range(4).map((i) => ({ branch: 'HSPA1', type: 'hairwash_bed', name: `1F Hairwash ${i}`, zone: '1F' })),
-  ...range(6).map((i) => ({ branch: 'HSPA1', type: 'massage_bed', name: `2F Bed ${i}`, zone: '2F' })),
-  ...range(2).map((i) => ({ branch: 'HSPA1', type: 'massage_bed', name: `2F Couple Bed ${i}`, zone: '2F Couple Room' })),
-  ...range(6).map((i) => ({ branch: 'HSPA1', type: 'massage_bed', name: `3F Bed ${i}`, zone: '3F' })),
-  ...range(2).map((i) => ({ branch: 'HSPA1', type: 'facial_bed', name: `3F Facial Bed ${i}`, zone: '3F' })),
-  ...range(2).map((i) => ({ branch: 'HSPA1', type: 'massage_bed', name: `3F Couple Bed ${i}`, zone: '3F Couple Room' })),
+  ...range(4).map((i) => ({ branch: 'HSPA1', type: 'chair', name: `1F Chair ${i}`, zone: '1F' })),
+  ...range(9).map((i) => ({ branch: 'HSPA1', type: 'massage_bed', name: `2F Bed ${i}`, zone: '2F' })),
   // HSPA2
-  ...range(4).map((i) => ({ branch: 'HSPA2', type: 'chair', name: `1F Chair ${i}`, zone: '1F' })),
-  ...range(9).map((i) => ({ branch: 'HSPA2', type: 'massage_bed', name: `2F Bed ${i}`, zone: '2F' })),
+  ...range(4).map((i) => ({ branch: 'HSPA2', type: 'hairwash_bed', name: `1F Hairwash ${i}`, zone: '1F' })),
+  ...range(6).map((i) => ({ branch: 'HSPA2', type: 'massage_bed', name: `2F Bed ${i}`, zone: '2F' })),
+  ...range(2).map((i) => ({ branch: 'HSPA2', type: 'massage_bed', name: `2F Couple Bed ${i}`, zone: '2F Couple Room' })),
+  ...range(6).map((i) => ({ branch: 'HSPA2', type: 'massage_bed', name: `3F Bed ${i}`, zone: '3F' })),
+  ...range(2).map((i) => ({ branch: 'HSPA2', type: 'facial_bed', name: `3F Facial Bed ${i}`, zone: '3F' })),
+  ...range(2).map((i) => ({ branch: 'HSPA2', type: 'massage_bed', name: `3F Couple Bed ${i}`, zone: '3F Couple Room' })),
 ];
 
 async function main() {

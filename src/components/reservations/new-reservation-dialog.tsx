@@ -56,6 +56,10 @@ export interface ReservationItem {
   resource_ids?: string[];
   seat_together?: boolean;
   service_item_id?: string | null;
+  /** Pre-assigned therapist (set by the People board's click-to-add / drag).
+   *  therapist_name is display-only, for the dialog hint. */
+  therapist_id?: string | null;
+  therapist_name?: string | null;
 }
 
 interface Props {
@@ -404,6 +408,7 @@ export function NewReservationDialog({
       seat_together: locationType === 'external_hotel' ? false : seatTogether && paxNum > 1,
       confirmed: walkIn || prefillConfirmed, // walk-in / desk-placed → confirmed, holds the bed
       service_item_id: specificItemId || null, // optional specific service
+      therapist_id: reservation?.therapist_id ?? null, // People-board pre-assignment
       // Reschedule origin (when opened from /sales-orders/reschedules) — the
       // server uses this to back-link the reservation AND mark the original
       // interrupted line fulfilled. Always undefined in edit mode (you can't
@@ -433,6 +438,12 @@ export function NewReservationDialog({
               {walkIn ? 'Guest is here — seat now or wait for the soonest available time.' : 'Book a slot. Convert to an order at check-in.'}
             </DialogDescription>
           </DialogHeader>
+
+          {reservation?.therapist_name && !isEdit && (
+            <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-semibold text-primary">
+              Pre-assigning therapist: <span className="font-bold">{reservation.therapist_name}</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4 py-4">
             {rescheduleFrom && !isEdit && (

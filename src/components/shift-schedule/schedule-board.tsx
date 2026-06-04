@@ -563,10 +563,9 @@ export function ScheduleBoard({
   }
 
   function onEmptyClick(bedId: string, min: number) {
-    // Click-to-add on a person row (pre-assigning the therapist) needs dialog
-    // support and lands in a follow-up; for now People rows are drag-to-assign
-    // + display only.
-    if (axis === 'person') return;
+    // bedId is the row id: a bed (axis='bed') or a therapist (axis='person').
+    // The New Reservation dialog prefills the bed or pre-assigns the therapist
+    // accordingly via `synthetic` below.
     if (Date.now() - suppressClick.current < 250) return; // a drag just ended
     setAdd({ bedId, min });
     setAddKey((k) => k + 1);
@@ -604,6 +603,7 @@ export function ScheduleBoard({
   }
 
   const addStartIso = add ? makeIso(day, add.min) : '';
+  const addRow = add ? beds.find((b) => b.id === add.bedId) : undefined;
   const synthetic: ReservationItem | undefined = add
     ? {
         id: 'prefill', branch_id: branchId, source_id: null, service_category_ids: [],
@@ -611,7 +611,12 @@ export function ScheduleBoard({
         service_location_type: 'on_site', note: null,
         desired_service_start: addStartIso,
         desired_service_end: new Date(Date.parse(addStartIso) + 60 * 60000).toISOString(),
-        resource_ids: [add.bedId], seat_together: false, service_item_id: null,
+        // Bed axis pins the clicked bed; person axis pre-assigns the clicked
+        // therapist and leaves the bed to be picked later.
+        resource_ids: axis === 'person' ? [] : [add.bedId],
+        seat_together: false, service_item_id: null,
+        therapist_id: axis === 'person' ? add.bedId : null,
+        therapist_name: axis === 'person' ? (addRow?.name ?? null) : null,
       }
     : undefined;
 
@@ -812,7 +817,7 @@ export function ScheduleBoard({
           prefillConfirmed
           // Pass the bed's resource_type so the dialog auto-checks the
           // matching Service Type (Bed #1 → Massage, Hair Chair A → Hair, etc.).
-          lockedBed={(() => { const b = beds.find((x) => x.id === add.bedId); return { name: b?.name ?? 'Bed', type: b?.type }; })()}
+          lockedBed={axis === 'person' ? undefined : (() => { const b = beds.find((x) => x.id === add.bedId); return { name: b?.name ?? 'Bed', type: b?.type }; })()}
           open
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
         />

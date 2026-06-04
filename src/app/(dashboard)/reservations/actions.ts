@@ -36,6 +36,8 @@ const schema = z.object({
   confirmed: z.boolean().optional().default(false),
   // Optional specific service (within a chosen category). Null = decide later.
   service_item_id: z.string().uuid().optional().nullable(),
+  // Pre-assigned therapist (People board click-to-add / drag). Null = decide later.
+  therapist_id: z.string().uuid().optional().nullable(),
   // Back-link to the interrupted order_item being made up. Set by the
   // Pending Reschedules flow; null on every other path. When set we ALSO
   // mark the source line `reschedule_fulfilled_at` so it drops off the
@@ -148,6 +150,7 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
       scheduled_start: d.desired_service_start,
       duration_minutes: durationMin,
       resource_id: bedId,
+      therapist_id: d.therapist_id ?? null,
       external_room_no: null,
       discount_class_id: discountClassId,
       discount_amount_cents: 0,

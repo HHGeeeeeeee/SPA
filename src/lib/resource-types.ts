@@ -12,7 +12,7 @@ export type ResourceType =
   | 'steam_room'
   | 'hairwash_bed'
   | 'facial_bed'
-  | 'nail_massage_chair';
+  | 'chair';
 
 export const RESOURCE_TYPES: { value: ResourceType; label: string }[] = [
   { value: 'massage_bed', label: 'Massage Bed' },
@@ -22,7 +22,7 @@ export const RESOURCE_TYPES: { value: ResourceType; label: string }[] = [
   { value: 'steam_room', label: 'Steam Room' },
   { value: 'hairwash_bed', label: 'Hairwash Bed' },
   { value: 'facial_bed', label: 'Facial Bed' },
-  { value: 'nail_massage_chair', label: 'Nail/Massage Chair' },
+  { value: 'chair', label: 'Chair' },
 ];
 
 export const RESOURCE_TYPE_LABEL: Record<string, string> = Object.fromEntries(

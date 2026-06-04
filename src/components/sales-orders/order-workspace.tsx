@@ -656,17 +656,16 @@ export function OrderWorkspace({
 
   const itemsByCustomer = (cid: string) => items.filter((i) => i.order_customer_id === cid);
 
-  // Auto-open the Add Service picker for the first guest who has no services yet,
-  // so "pick a service" is visible the moment the order opens — no extra click.
-  // Fires once per mount (a manual Cancel won't make it pop back open).
+  // Auto-open the Add Service picker only for the first guest who has no services
+  // yet, so "pick a service" is visible the moment a fresh order opens — no extra
+  // click. A guest who already has a service stays collapsed (their "Add service"
+  // button is one click away). Fires once per mount (a manual Cancel won't make
+  // it pop back open).
   const autoOpenedPicker = useRef(false);
   useEffect(() => {
     if (autoOpenedPicker.current || !order.editable || customers.length === 0) return;
-    // Service-first: open the Add Service picker on load so a service dropdown is
-    // always visible. Prefer a guest with no services yet; otherwise the latest
-    // guest (so you can keep adding). Fires once per mount; Cancel keeps it shut.
     const sorted = [...customers].sort((a, b) => a.seq_no - b.seq_no);
-    const target = sorted.find((c) => itemsByCustomer(c.id).length === 0) ?? sorted[sorted.length - 1];
+    const target = sorted.find((c) => itemsByCustomer(c.id).length === 0);
     if (target) { autoOpenedPicker.current = true; setActiveCustomer(target.id); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, items, order.editable]);

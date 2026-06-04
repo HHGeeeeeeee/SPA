@@ -4,10 +4,12 @@ import { ChevronLeft, TriangleAlert } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { getAllowedBranchIds } from '@/lib/branch-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
 import { OrderNoteEditor } from '@/components/sales-orders/order-note-editor';
 import { OrderSourceBillingEditor } from '@/components/sales-orders/order-source-billing-editor';
+import { OrderBranchUnitEditor } from '@/components/sales-orders/order-branch-unit-editor';
 import { PaymentAdjust } from '@/components/sales-orders/payment-adjust';
 import { OrderStatusActions } from '@/components/sales-orders/order-status-actions';
 import { ServiceBadge, PaymentBadge } from '@/components/sales-orders/order-badges';
@@ -31,7 +33,7 @@ async function fetchData(id: string) {
   const { data: order, error } = await supabase
     .from('orders')
     .select(`
-      id, order_no, status, order_type, service_date, note, branch_id, source_id, billing_to_id,
+      id, order_no, status, order_type, service_date, note, branch_id, business_unit_id, source_id, billing_to_id,
       subtotal_cents, discount_cents, total_cents, paid_cents,
       reservation:reservations ( gender_preference ),
       branch:branches!orders_branch_id_fkey ( code, name ),
@@ -59,7 +61,7 @@ async function fetchData(id: string) {
   if (error) throw new Error(error.message);
   if (!order) return null;
 
-  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll] = await Promise.all([
+  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
     supabase
       .from('service_items')
       .select('id, code, name, service_group, duration_minutes, required_resource_type, service_item_prices ( price_cents, price_class, branch_id )')
@@ -83,6 +85,9 @@ async function fetchData(id: string) {
     // Billing editor on the order detail panel.
     supabase.from('customer_sources').select('id, code, name, default_billing_to_id').order('code'),
     supabase.from('billing_destinations').select('id, code, name').eq('active', true).order('code'),
+    // All active branches + their business units — for the inline Branch /
+    // Business Unit editor on the order detail panel.
+    supabase.from('branches').select('id, code, name, branch_business_units ( business_units ( id, name ) )').eq('active', true).order('code'),
   ]);
 
   const svcCardsRes = await supabase
@@ -158,6 +163,8 @@ async function fetchData(id: string) {
     .filter((e) => !rosteredHere(e) && e.homeBranchId !== order.branch_id && e.homeBranchId !== null && shareBranchIds.has(e.homeBranchId))
     .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, homeBranchCode: e.homeBranchCode }));
 
+  const allowedBranchIds = await getAllowedBranchIds();
+
   return {
     order,
     serviceItems: (svc.data ?? []).map((s) => {
@@ -187,6 +194,17 @@ async function fetchData(id: string) {
     capabilityByEmployee,
     allSources: (srcAll.data ?? []) as { id: string; code: string; name: string; default_billing_to_id: string | null }[],
     allBilling: (billAll.data ?? []) as { id: string; code: string; name: string }[],
+    allBranches: (() => {
+      return (brAll.data ?? [])
+        .filter((b) => allowedBranchIds.has(b.id))
+        .map((b) => ({
+          id: b.id,
+          name: b.name,
+          businessUnits: (b.branch_business_units ?? [])
+            .map((row) => (Array.isArray(row.business_units) ? row.business_units[0] : row.business_units))
+            .filter(Boolean) as { id: string; name: string }[],
+        }));
+    })(),
     // Default the line's therapist-gender filter from the source reservation.
     defaultGenderPref: one(order.reservation)?.gender_preference ?? null,
   };
@@ -197,9 +215,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, defaultGenderPref } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, defaultGenderPref } = result;
 
-  const branch = one(order.branch);
   const source = one(order.source);
   const billing = one(order.billing);
 
@@ -397,8 +414,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           <CardHeader className="pb-3"><CardTitle className="text-base font-bold">Order Details</CardTitle></CardHeader>
           <CardContent>
             <dl className="flex flex-wrap gap-x-10 gap-y-3 text-sm">
-              <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Branch</dt>
-                <dd className="font-semibold mt-0.5">{branch ? branch.name : '—'}</dd></div>
+              <OrderBranchUnitEditor
+                orderId={order.id}
+                branches={allBranches}
+                currentBranchId={order.branch_id}
+                currentBusinessUnitId={order.business_unit_id}
+                hasItems={(order.order_items ?? []).length > 0}
+                editable={editable}
+              />
               {/* Type = how the order originated. Hidden for plain walk-ins (the
                   default for manually-created orders — no signal there); shown
                   only when it's a reservation / stored-value / external order. */}

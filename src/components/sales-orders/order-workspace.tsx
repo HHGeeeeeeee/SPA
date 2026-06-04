@@ -631,8 +631,12 @@ export function OrderWorkspace({
   const autoOpenedPicker = useRef(false);
   useEffect(() => {
     if (autoOpenedPicker.current || !order.editable || customers.length === 0) return;
-    const firstEmpty = [...customers].sort((a, b) => a.seq_no - b.seq_no).find((c) => itemsByCustomer(c.id).length === 0);
-    if (firstEmpty) { autoOpenedPicker.current = true; setActiveCustomer(firstEmpty.id); }
+    // Service-first: open the Add Service picker on load so a service dropdown is
+    // always visible. Prefer a guest with no services yet; otherwise the latest
+    // guest (so you can keep adding). Fires once per mount; Cancel keeps it shut.
+    const sorted = [...customers].sort((a, b) => a.seq_no - b.seq_no);
+    const target = sorted.find((c) => itemsByCustomer(c.id).length === 0) ?? sorted[sorted.length - 1];
+    if (target) { autoOpenedPicker.current = true; setActiveCustomer(target.id); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, items, order.editable]);
 

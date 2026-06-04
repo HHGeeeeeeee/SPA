@@ -7,7 +7,7 @@ import { createServiceClient, createAuditedClient } from '@/lib/supabase/server'
 import { nextOrderNo } from '@/lib/order-no';
 import { currentSession, isManager } from '@/lib/auth';
 import { isBusinessDayClosed } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
-import { canAccessBranch } from '@/lib/branch-access';
+import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
 import { canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 import { assertBedMatchesServiceItem } from '@/lib/resource-compatibility';
 import {
@@ -144,6 +144,47 @@ export async function createDraftOrder(input: unknown): Promise<ActionResult<{ i
 
   revalidatePath('/sales-orders');
   return { ok: true, data: { id: data.id } };
+}
+
+/**
+ * One-click draft: skip the New Order dialog and open a draft straight away with
+ * sensible defaults — the user's home branch (or the first one they can access),
+ * its first business unit, the WALK-IN source (billing follows it, else SELF),
+ * walk-in type, today's date. Branch / source / billing stay editable on the
+ * order screen. Service-first entry: the desk just picks services next.
+ */
+export async function createQuickDraft(): Promise<ActionResult<{ id: string }>> {
+  const session = await currentSession();
+  const supabase = createServiceClient();
+  const allowed = await getAllowedBranchIds();
+  const { data: branches } = await supabase
+    .from('branches')
+    .select('id, branch_business_units ( business_unit_id )')
+    .eq('active', true)
+    .order('code');
+  const usable = (branches ?? []).filter((b) => allowed.has(b.id));
+  const branch = usable.find((b) => b.id === session?.homeBranchId) ?? usable[0];
+  if (!branch) return { ok: false, error: 'No branch available' };
+  const business_unit_id = (branch.branch_business_units ?? [])[0]?.business_unit_id ?? null;
+
+  const { data: walkIn } = await supabase
+    .from('customer_sources').select('id, default_billing_to_id').eq('code', 'WALK-IN').maybeSingle();
+  let billing_to_id = walkIn?.default_billing_to_id ?? null;
+  if (!billing_to_id) {
+    const { data: self } = await supabase.from('billing_destinations').select('id').eq('code', 'SELF').maybeSingle();
+    billing_to_id = self?.id ?? null;
+  }
+  const service_date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
+  return createDraftOrder({
+    branch_id: branch.id,
+    business_unit_id,
+    source_id: walkIn?.id ?? null,
+    billing_to_id,
+    order_type: 'walk_in',
+    service_date,
+    note: null,
+  });
 }
 
 // Normalize a possibly-array Supabase to-one join down to the method code.
@@ -337,6 +378,63 @@ export async function updateOrderSourceBilling(input: unknown): Promise<ActionRe
     before_snapshot: { source_id: order.source_id ?? null, billing_to_id: order.billing_to_id ?? null },
     after_snapshot: { source_id: d.source_id, billing_to_id: d.billing_to_id },
     edit_reason: 'Customer source / billing updated',
+    edited_by_staff_id: session?.staffUserId ?? null,
+  });
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
+const branchUnitSchema = z.object({
+  order_id: z.string().uuid(),
+  branch_id: z.string().uuid().optional(),
+  business_unit_id: z.string().uuid().nullable().optional(),
+});
+
+// Edit an order's Branch / Business Unit after creation (the New Order dialog is
+// gone — these now live on the order screen). Branch can only change while the
+// order has NO services yet (changing it would orphan branch-scoped therapist /
+// station / pricing); business unit can change any time the order is editable.
+export async function updateOrderBranchUnit(input: unknown): Promise<ActionResult> {
+  const parsed = branchUnitSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const session = await currentSession();
+  const supabase = await createAuditedClient();
+  const { data: order } = await supabase
+    .from('orders').select('status, branch_id, business_unit_id').eq('id', d.order_id).single();
+  if (!order) return { ok: false, error: 'Order not found' };
+  if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (!['draft', 'open', 'in_service'].includes(order.status)) {
+    return { ok: false, error: 'This order can no longer be edited' };
+  }
+
+  const patch: { branch_id?: string; business_unit_id?: string | null } = {};
+
+  if (d.branch_id && d.branch_id !== order.branch_id) {
+    const { count } = await supabase.from('order_items').select('id', { count: 'exact', head: true }).eq('order_id', d.order_id);
+    if ((count ?? 0) > 0) return { ok: false, error: 'Remove the services first before changing branch' };
+    if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to that branch' };
+    patch.branch_id = d.branch_id;
+    // Re-attribute to the new branch's business unit (caller-picked, else its first).
+    const { data: bu } = await supabase.from('branch_business_units').select('business_unit_id').eq('branch_id', d.branch_id);
+    const ids = (bu ?? []).map((x) => x.business_unit_id);
+    patch.business_unit_id = (d.business_unit_id && ids.includes(d.business_unit_id)) ? d.business_unit_id : (ids[0] ?? null);
+  } else if (d.business_unit_id !== undefined) {
+    if (d.business_unit_id) {
+      const { data: link } = await supabase.from('branch_business_units').select('business_unit_id').eq('branch_id', order.branch_id).eq('business_unit_id', d.business_unit_id).maybeSingle();
+      if (!link) return { ok: false, error: 'That business unit is not assigned to this branch' };
+    }
+    patch.business_unit_id = d.business_unit_id;
+  }
+
+  if (Object.keys(patch).length === 0) return { ok: true };
+  const { error } = await supabase.from('orders').update(patch).eq('id', d.order_id);
+  if (error) return { ok: false, error: error.message };
+  await supabase.from('order_edit_log').insert({
+    order_id: d.order_id,
+    before_snapshot: { branch_id: order.branch_id, business_unit_id: order.business_unit_id ?? null },
+    after_snapshot: { branch_id: patch.branch_id ?? order.branch_id, business_unit_id: patch.business_unit_id ?? order.business_unit_id ?? null },
+    edit_reason: 'Branch / business unit updated',
     edited_by_staff_id: session?.staffUserId ?? null,
   });
   revalidatePath(`/sales-orders/${d.order_id}`);

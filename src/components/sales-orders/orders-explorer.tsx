@@ -68,11 +68,12 @@ function todayPHT(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billingCodes: string[] }) {
+export function OrdersExplorer({ rows, branchCodes, billingCodes }: { rows: OrderRow[]; branchCodes: string[]; billingCodes: string[] }) {
   const router = useRouter();
   const today = todayPHT();
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
+  const [branch, setBranch] = useState(ALL);
   const [billing, setBilling] = useState(ALL);
   const [service, setService] = useState(ALL);
   const [payment, setPayment] = useState(ALL);
@@ -80,6 +81,7 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
   const filtered = useMemo(
     () =>
       rows.filter((o) => {
+        if (branch !== ALL && o.branch_code !== branch) return false;
         if (from && o.service_date < from) return false;
         if (to && o.service_date > to) return false;
         if (billing !== ALL && o.billing_code !== billing) return false;
@@ -95,7 +97,7 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
         }
         return true;
       }),
-    [rows, from, to, billing, service, payment],
+    [rows, branch, from, to, billing, service, payment],
   );
 
   // Column sums for the footer — only over what's currently filtered/visible.
@@ -103,8 +105,8 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
     () =>
       filtered.reduce(
         (a, o) => {
-          // Mirror outstandingCell: drafts aren't real liabilities, don't add to total.
-          a.outstanding += o.is_ar || o.status === 'draft' ? 0 : Math.max(0, o.total_cents - o.paid_cents);
+          // Mirror outstandingCell: AR is billed monthly (not owed at the counter).
+          a.outstanding += o.is_ar ? 0 : Math.max(0, o.total_cents - o.paid_cents);
           a.total += o.total_cents;
           a.tip += o.tip_cents;
           return a;
@@ -116,28 +118,35 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
 
   // Base UI's <SelectValue /> needs an items map to show labels in the trigger
   // (otherwise it prints the raw value, e.g. "__all__").
+  const branchItems = [{ value: ALL, label: 'All' }, ...branchCodes.map((c) => ({ value: c, label: c }))];
   const billingItems = [{ value: ALL, label: 'All' }, ...billingCodes.map((c) => ({ value: c, label: c }))];
   const serviceItems = [{ value: ALL, label: 'All' }, ...SERVICE_OPTIONS.map((s) => ({ value: s.value, label: s.label }))];
   const paymentItems = [{ value: ALL, label: 'All' }, ...PAYMENT_OPTIONS.map((s) => ({ value: s.value, label: s.label }))];
 
   const moneyCell = (cents: number, cls = '') =>
     cents > 0 ? <span className={cls}>{peso(cents)}</span> : <span className="text-muted-foreground">—</span>;
-  // Uncollected at the counter. Red when service is done but money's still out
-  // (the concern); calmer grey while the order is still in progress; — for AR
-  // (billed monthly), fully-paid orders, and DRAFTS (the line items aren't
-  // committed yet — a draft is the cashier still editing the order, not money
-  // the customer owes us). Drafts are caught by EoD's runOrderReview, not by
-  // the outstanding total here.
+  // Uncollected at the counter — any non-zero balance is shown in red (matches
+  // the detail page's Due). — only for AR (billed monthly) and fully-paid orders.
   const outstandingCell = (o: OrderRow) => {
-    const due = o.is_ar || o.status === 'draft' ? 0 : Math.max(0, o.total_cents - o.paid_cents);
+    const due = o.is_ar ? 0 : Math.max(0, o.total_cents - o.paid_cents);
     if (due === 0) return <span className="text-muted-foreground">—</span>;
-    return <span className={o.status === 'completed' ? 'font-bold text-destructive' : 'font-medium text-muted-foreground'}>{peso(due)}</span>;
+    return <span className="font-bold text-destructive">{peso(due)}</span>;
   };
 
   return (
     <div className="flex flex-col gap-4">
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs font-semibold">Branch</Label>
+            <Select items={branchItems} value={branch} onValueChange={(v) => v && setBranch(v)}>
+              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All</SelectItem>
+                {branchCodes.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs font-semibold">Date From</Label>
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
@@ -157,7 +166,7 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
             </Select>
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs font-semibold">Stage</Label>
+            <Label className="text-xs font-semibold">Status</Label>
             <Select items={serviceItems} value={service} onValueChange={(v) => v && setService(v)}>
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -189,8 +198,8 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
               <TableHead className="font-bold">Guest</TableHead>
               <TableHead className="font-bold">Source</TableHead>
               <TableHead className="w-16 font-bold">PAX</TableHead>
-              <TableHead className="w-32 font-bold text-center">Outstanding</TableHead>
               <TableHead className="w-32 font-bold text-center">Total</TableHead>
+              <TableHead className="w-32 font-bold text-center">Outstanding</TableHead>
               <TableHead className="w-24 font-bold text-center">Tips</TableHead>
               <TableHead className="w-36 font-bold text-center">Status</TableHead>
             </TableRow>
@@ -198,7 +207,7 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-16">
+                <TableCell colSpan={10} className="text-center py-16">
                   <Receipt className="size-8 mx-auto text-muted-foreground/50" />
                   <p className="text-sm font-semibold text-muted-foreground mt-3">No orders match these filters.</p>
                 </TableCell>
@@ -216,8 +225,8 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
                   <TableCell className="font-semibold">{o.guest_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell className="font-medium text-muted-foreground">{o.source_name ?? '—'}</TableCell>
                   <TableCell className="font-bold tabular">{o.pax}</TableCell>
-                  <TableCell className="tabular text-right">{outstandingCell(o)}</TableCell>
                   <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
+                  <TableCell className="tabular text-right">{outstandingCell(o)}</TableCell>
                   <TableCell className="font-medium tabular text-right">{moneyCell(o.tip_cents, 'text-primary')}</TableCell>
                   <TableCell>
                     {/* Two axes: service/lifecycle badge + derived payment badge,
@@ -238,10 +247,10 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
                 <TableCell colSpan={6} className="text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
                   Totals · {filtered.length} order{filtered.length === 1 ? '' : 's'}
                 </TableCell>
+                <TableCell className="tabular text-right">{peso(totals.total)}</TableCell>
                 <TableCell className="tabular text-right">
                   {totals.outstanding > 0 ? <span className="text-destructive">{peso(totals.outstanding)}</span> : <span className="text-muted-foreground">—</span>}
                 </TableCell>
-                <TableCell className="tabular text-right">{peso(totals.total)}</TableCell>
                 <TableCell className="tabular text-right">{moneyCell(totals.tip, 'text-primary')}</TableCell>
                 <TableCell />
               </TableRow>

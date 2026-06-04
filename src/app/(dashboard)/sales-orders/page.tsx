@@ -1,10 +1,6 @@
-import { Plus } from 'lucide-react';
-
 import { createServiceClient } from '@/lib/supabase/server';
 import { getAllowedBranchIds } from '@/lib/branch-access';
-import { currentSession, isAdmin } from '@/lib/auth';
-import { Button } from '@/components/ui/button';
-import { NewOrderDialog } from '@/components/sales-orders/new-order-dialog';
+import { NewOrderButton } from '@/components/sales-orders/new-order-button';
 import { OrdersExplorer, type OrderRow } from '@/components/sales-orders/orders-explorer';
 
 export const dynamic = 'force-dynamic';
@@ -94,12 +90,7 @@ async function fetchData() {
 }
 
 export default async function SalesOrdersPage() {
-  const { rows, branches, sources, billingDestinations } = await fetchData();
-  // Non-admins open orders only for their home branch; admins keep the branch picker.
-  const session = await currentSession();
-  const lockBranchId = !isAdmin(session) && session?.homeBranchId && branches.some((b) => b.id === session.homeBranchId)
-    ? session.homeBranchId
-    : undefined;
+  const { rows, branches, billingDestinations } = await fetchData();
 
   return (
     <div className="flex flex-col gap-6">
@@ -107,24 +98,17 @@ export default async function SalesOrdersPage() {
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Sales Orders</h2>
           <p className="text-sm font-semibold text-muted-foreground mt-1">
-            {rows.length} order{rows.length === 1 ? '' : 's'} · filter by date / billing / stage / payment
+            {rows.length} order{rows.length === 1 ? '' : 's'} · filter by branch / date / billing / status / payment
           </p>
         </div>
-        <NewOrderDialog
-          branches={branches}
-          sources={sources}
-          billingDestinations={billingDestinations}
-          lockBranchId={lockBranchId}
-          trigger={
-            <Button disabled={branches.length === 0}>
-              <Plus className="size-4" />
-              New Order
-            </Button>
-          }
-        />
+        <NewOrderButton disabled={branches.length === 0} />
       </div>
 
-      <OrdersExplorer rows={rows} billingCodes={billingDestinations.map((b) => b.code)} />
+      <OrdersExplorer
+        rows={rows}
+        branchCodes={branches.map((b) => b.code)}
+        billingCodes={billingDestinations.map((b) => b.code)}
+      />
     </div>
   );
 }

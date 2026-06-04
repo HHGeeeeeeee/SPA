@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation';
 
-import { DiagBanner } from '@/components/diag-banner';
 import { Sidebar } from '@/components/layout/sidebar';
 import { SidebarProvider } from '@/components/layout/sidebar-context';
 import { TopBar } from '@/components/layout/topbar';
@@ -18,7 +17,6 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <DiagBanner />
       <div className="flex h-screen overflow-hidden">
         <Sidebar isAdmin={viewerIsAdmin} isManager={viewerIsManager} />
         <div className="flex flex-1 flex-col overflow-hidden">

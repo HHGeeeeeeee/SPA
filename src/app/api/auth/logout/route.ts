@@ -10,10 +10,16 @@ import { acumaticaLogout } from '@/lib/acumatica';
  *   2. Supabase Auth session (writes deletion cookies via the SSR client).
  *   3. The local httpOnly ACU session cookie.
  *
- * Accepts both GET and POST so a plain anchor tag works (existing UI uses
- * GET) and a fetch-based logout button works too.
+ * POST-only ON PURPOSE. Logout mutates state (clears the session cookie), so
+ * it must never be reachable by a GET. A GET handler here was the root cause of
+ * the "log in, then get bounced straight back to /login" bug on Vercel: the
+ * Sign Out link in the sidebar was a Next.js <Link>, and the App Router
+ * auto-prefetches every visible link — including GET /api/auth/logout — which
+ * silently signed the user out milliseconds after they landed on the dashboard.
+ * The Sign Out control is now a button that fetch()es this endpoint with POST,
+ * so it can't be prefetched or triggered by accidental navigation.
  */
-async function handle(req: NextRequest): Promise<NextResponse> {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   await acumaticaLogout(await readAcuSessionCookie());
 
   const ssr = await createServerClient();
@@ -23,6 +29,3 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
   return NextResponse.redirect(new URL('/login', req.url));
 }
-
-export async function GET(req: NextRequest) { return handle(req); }
-export async function POST(req: NextRequest) { return handle(req); }

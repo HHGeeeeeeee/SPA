@@ -260,25 +260,7 @@ export const currentSession = cache(async (): Promise<SessionPayload | null> => 
   if (bypass) return bypass;
 
   const ssr = await createServerClient();
-  const { data: { user }, error: getUserError } = await ssr.auth.getUser();
-
-  // TEMP DIAGNOSTIC (remove once the Vercel session issue is resolved): surface
-  // exactly what the server sees — which sb-* cookies arrived and what getUser
-  // returned — so we can tell "cookie never reached the server" apart from
-  // "cookie arrived but getUser rejected it".
-  try {
-    const { cookies } = await import('next/headers');
-    const jar = await cookies();
-    const sbCookies = jar.getAll().filter((c) => c.name.startsWith('sb-')).map((c) => c.name);
-    console.error('[diag currentSession]', JSON.stringify({
-      sbCookies,
-      hasUser: !!user,
-      userId: user?.id ?? null,
-      getUserError: getUserError?.message ?? null,
-    }));
-  } catch {
-    /* cookies() unavailable in this context — ignore */
-  }
+  const { data: { user } } = await ssr.auth.getUser();
 
   if (!user) return null;
 

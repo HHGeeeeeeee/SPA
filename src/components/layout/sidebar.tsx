@@ -213,6 +213,17 @@ export function Sidebar({
     (item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager),
   );
 
+  // Sign out via POST (never a prefetchable GET <Link> — that silently logged
+  // users out the instant the router prefetched the link). Hit the endpoint,
+  // then hard-navigate to /login so the cleared cookie takes effect.
+  async function signOut() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+      window.location.assign('/login');
+    }
+  }
+
   return (
     // Collapsed = full hide (width 0, border off) — matches the ENGO Back Office
     // pattern: sidebar disappears entirely, TopBar's hamburger restores it.
@@ -267,17 +278,24 @@ export function Sidebar({
         <div className="flex flex-col gap-1">
           {bottomNavItems.map((item) => {
             const Icon = item.icon;
+            const className = cn(
+              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
+              item.destructive
+                ? 'text-destructive hover:bg-destructive/10'
+                : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+            );
+            // Side-effecting endpoints (/api/...) — e.g. Sign Out — must POST,
+            // never render as a prefetchable <Link>. Everything else is a page.
+            if (item.href.startsWith('/api/')) {
+              return (
+                <button key={item.label} type="button" onClick={signOut} className={cn(className, 'w-full text-left')}>
+                  <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            }
             return (
-              <Link
-                key={item.label}
-                href={item.href}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
-                  item.destructive
-                    ? 'text-destructive hover:bg-destructive/10'
-                    : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                )}
-              >
+              <Link key={item.label} href={item.href} className={className}>
                 <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
                 <span className="truncate">{item.label}</span>
               </Link>

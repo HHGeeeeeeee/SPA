@@ -1130,7 +1130,7 @@ export async function releaseBed(itemId: string): Promise<ActionResult> {
     .eq('id', itemId);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/sales-orders/${item.order_id}`);
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true };
 }
 

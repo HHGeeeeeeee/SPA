@@ -128,7 +128,7 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
     .update({ resource_id: bed_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso, status: 'scheduled' })
     .eq('id', item_id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true };
 }
 
@@ -186,7 +186,7 @@ export async function setShift(input: unknown): Promise<ActionResult> {
     note: d.note || null,
   });
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true };
 }
 
@@ -241,7 +241,7 @@ export async function bulkSetShifts(input: unknown): Promise<{ ok: true; count: 
   );
   const ins = await supabase.from('employee_shifts').insert(rows);
   if (ins.error) return { ok: false, error: ins.error.message };
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true, count: rows.length };
 }
 
@@ -260,6 +260,6 @@ export async function clearShift(
     .eq('branch_id', branchId)
     .eq('shift_date', shiftDate);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true };
 }

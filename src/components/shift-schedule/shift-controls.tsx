@@ -55,7 +55,7 @@ export function ShiftControls({ branches, branchId, weekStart, day, view, scale,
     const sc = opts.scale ?? scale;
     const w = opts.week ?? weekStart;
     const dy = opts.day ?? day;
-    router.push(`/shift-schedule?branch=${branch}&view=${v}&scale=${sc}&week=${w}&day=${dy}`);
+    router.push(`/calendar?branch=${branch}&view=${v}&scale=${sc}&week=${w}&day=${dy}`);
   }
 
   const tabBtn = (active: boolean) =>

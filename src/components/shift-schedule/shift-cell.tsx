@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-import { setShift, clearShift } from '@/app/(dashboard)/shift-schedule/actions';
+import { setShift, clearShift } from '@/app/(dashboard)/calendar/actions';
 
 export interface ShiftData {
   shift_type: string;

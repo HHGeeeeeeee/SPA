@@ -82,7 +82,7 @@ export async function createBranch(input: unknown): Promise<ActionResult> {
   if (rateErr) return { ok: false, error: rateErr.message };
 
   revalidatePath('/settings/branches');
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true };
 }
 
@@ -113,7 +113,7 @@ export async function updateBranch(input: unknown): Promise<ActionResult> {
   if (rateErr) return { ok: false, error: rateErr.message };
 
   revalidatePath('/settings/branches');
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   return { ok: true };
 }
 

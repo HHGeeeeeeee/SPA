@@ -200,7 +200,7 @@ export function BranchFormDialog({
                 <Input type="time" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} className="w-32" />
               </div>
               <p className="text-xs font-medium text-muted-foreground">
-                Drives the Shift Schedule board. A close time at or before the open
+                Drives the Calendar board. A close time at or before the open
                 time means the branch trades past midnight (e.g. 10:00 → 02:00).
               </p>
             </div>
@@ -220,7 +220,7 @@ export function BranchFormDialog({
               </datalist>
               <p className="text-xs font-medium text-muted-foreground">
                 Branches with the same label pool their therapists — they show up in
-                each other&apos;s Shift Schedule and can be borrowed on orders. Leave
+                each other&apos;s Calendar and can be borrowed on orders. Leave
                 blank for no sharing.
               </p>
             </div>

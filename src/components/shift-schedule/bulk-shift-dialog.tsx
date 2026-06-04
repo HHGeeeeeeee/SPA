@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { bulkSetShifts } from '@/app/(dashboard)/shift-schedule/actions';
+import { bulkSetShifts } from '@/app/(dashboard)/calendar/actions';
 
 interface Emp { id: string; name: string; code: string; visiting?: boolean }
 interface Day { date: string; label: string; dow: string }

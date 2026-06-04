@@ -17,7 +17,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { moveScheduledOrderItem } from '@/app/(dashboard)/shift-schedule/actions';
+import { moveScheduledOrderItem } from '@/app/(dashboard)/calendar/actions';
 
 export interface BoardBed {
   id: string;
@@ -132,8 +132,7 @@ interface HoverStaff {
 // Floating "who's free at this minute" popover. Anchored to the scrub line via
 // `x`, flipped left when close to the right edge so it doesn't clip. Two
 // stacked sections — Stations (rooms / chairs / nail) and Staff (per position
-// with up to 3 free names) — match the structure of the StationsNowCard +
-// StaffNowCard at the top of the page so the desk sees the same shape on hover.
+// with up to 3 free names) — so the desk sees live "who's free" at a glance.
 function HoverPopover({ x, time, stations, staff }: { x: number; time: string; stations: HoverStations; staff: HoverStaff }) {
   // Heuristic flip: if cursor is in the right third of a typical board (~800pt),
   // anchor the popover to the cursor's RIGHT side so it grows leftward.
@@ -425,8 +424,7 @@ export function ScheduleBoard({
   const [hoverMin, setHoverMin] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
 
-  // Same ordering / labelling as the StationsNowCard + StaffNowCard so the
-  // hover popup reads consistently with the top-of-page summary cards.
+  // Stable station ordering / labelling for the hover popup's Stations section.
   const STATION_ORDER = ['massage_bed', 'hair_chair', 'nail_station'] as const;
   const STATION_LABEL: Record<string, string> = { massage_bed: 'bed', hair_chair: 'hair', nail_station: 'nail' };
   // Plural labels + icons for the in-grid type-group headers. Anything outside

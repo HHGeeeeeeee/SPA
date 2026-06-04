@@ -45,7 +45,7 @@ export function TopBar({ title, userName }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Page-specific header actions portal here (e.g. the Shift Schedule
+        {/* Page-specific header actions portal here (e.g. the Calendar
             branch switcher). Empty on pages that render nothing into it. */}
         <div id="topbar-slot" className="flex items-center gap-3 empty:hidden" />
         <button

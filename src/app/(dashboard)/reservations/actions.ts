@@ -170,7 +170,7 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
     revalidatePath('/sales-orders/reschedules');
   }
 
-  revalidatePath('/shift-schedule');
+  revalidatePath('/calendar');
   revalidatePath('/sales-orders');
   return { ok: true, data: { orderId: order.id } };
 }

@@ -62,7 +62,7 @@ const ROLES = [
       'Add Customers / Reservations / Waitlist',
       'Take Payments (Cash / PAYMAYA / SVC)',
       'Open / Top-up Stored Value Cards',
-      'View Service Stations & Shift Schedule',
+      'View Service Stations & Calendar',
       'Mark resources cleaning / maintenance (short-term)',
       'Submit feedback on customer behalf',
     ],

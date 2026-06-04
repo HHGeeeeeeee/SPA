@@ -132,6 +132,84 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
   return { ok: true };
 }
 
+// Is `therapistId` already on another booking on `day` during [startMin, endMin)?
+// Mirrors bedHasConflict but keyed on the therapist. A therapist-assigned-but-
+// bedless booking keeps status 'unassigned', so that's included alongside
+// scheduled / in-service lines.
+async function therapistHasConflict(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  therapistId: string,
+  day: string,
+  startMin: number,
+  endMin: number,
+  excludeItemId: string,
+): Promise<boolean> {
+  const { data: oi } = await supabase
+    .from('order_items')
+    .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
+    .eq('therapist_id', therapistId)
+    .in('status', ['unassigned', 'scheduled', 'in_service']);
+  for (const it of oi ?? []) {
+    if (one(it.order)?.service_date !== day) continue;
+    if (it.id === excludeItemId) continue;
+    const startIso = it.actual_start ?? it.scheduled_start ?? it.service_start ?? it.slot_start;
+    if (!startIso) continue;
+    const s = isoMinPHT(startIso) + (datePHT(startIso) !== day ? 1440 : 0);
+    const e = it.actual_end
+      ? isoMinPHT(it.actual_end) + (datePHT(it.actual_end) !== day ? 1440 : 0)
+      : s + (it.duration_minutes ?? 60);
+    if (overlaps(startMin, endMin, s, e)) return true;
+  }
+  return false;
+}
+
+const assignSchema = z.object({
+  item_id: z.string().uuid(),
+  therapist_id: z.string().uuid(),
+  start_min: z.number().int().min(0).max(2879),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+/**
+ * Pre-assign a therapist to a not-yet-started booking by dragging it onto that
+ * person's row on the People board (or re-timing a line already on their row).
+ * Sets therapist_id + the booked time; the bed (resource_id) is independent and
+ * untouched — a therapist-assigned line with no bed stays `unassigned` and rides
+ * the Station board's "needs a bed" rail. Rejects on a therapist time clash.
+ */
+export async function assignTherapistToOrderItem(input: unknown): Promise<ActionResult> {
+  const parsed = assignSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { item_id, therapist_id, start_min, day } = parsed.data;
+  const supabase = await createAuditedClient();
+
+  const { data: it } = await supabase
+    .from('order_items')
+    .select('status, duration_minutes, order:orders!order_items_order_id_fkey ( branch_id )')
+    .eq('id', item_id)
+    .single();
+  if (!it) return { ok: false, error: 'Order item not found' };
+  if (!['unassigned', 'scheduled'].includes(it.status)) return { ok: false, error: 'Service already started — assignment is locked' };
+  const branchId = one(it.order)?.branch_id;
+  if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
+
+  const durationMin = it.duration_minutes ?? 60;
+  const endMin = start_min + durationMin;
+  if (await therapistHasConflict(supabase, therapist_id, day, start_min, endMin, item_id)) {
+    return { ok: false, error: 'That therapist is already booked for this time' };
+  }
+
+  const startIso = makeIso(day, start_min);
+  const endIso = new Date(Date.parse(startIso) + durationMin * 60000).toISOString();
+  const { error } = await supabase
+    .from('order_items')
+    .update({ therapist_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso })
+    .eq('id', item_id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/calendar');
+  return { ok: true };
+}
+
 const schema = z.object({
   employee_id: z.string().uuid(),
   branch_id: z.string().uuid(),

@@ -17,14 +17,18 @@ import {
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { moveScheduledOrderItem } from '@/app/(dashboard)/calendar/actions';
+import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
 
 export interface BoardBed {
   id: string;
   name: string;
-  /** Station resource_type. Drives per-type counts in the hover popup so
-   *  "8 free" splits into "bed 6 · hair 1 · nail 1". */
+  /** Station resource_type (axis='bed') or position code (axis='person').
+   *  Drives the per-group headers + per-type counts in the hover popup. */
   type: string;
+  /** Person rows (axis='person') carry their shift window so the row paints a
+   *  faint "on shift" band; bed rows leave these undefined. */
+  shiftStartMin?: number | null;
+  shiftEndMin?: number | null;
 }
 export type BlockVariant = 'pending' | 'confirmed' | 'scheduled' | 'in_service' | 'completed';
 export interface BoardBlock {
@@ -290,6 +294,15 @@ function BedRow({
           onEmptyClick(bed.id, min);
         }}
       >
+        {/* On-shift band (person rows only) — a faint tint over the hours this
+            therapist is rostered; bookings render on top. */}
+        {bed.shiftStartMin != null && bed.shiftEndMin != null && bed.shiftEndMin > bed.shiftStartMin && (
+          <div
+            className="absolute top-1 bottom-1 rounded bg-primary/10"
+            style={{ left: (bed.shiftStartMin - windowStartMin) * PX_PER_MIN, width: (bed.shiftEndMin - bed.shiftStartMin) * PX_PER_MIN }}
+            title="On shift"
+          />
+        )}
         {hours.map((h) => (
           <div key={h} className="absolute top-0 bottom-0 border-l border-border" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN }} />
         ))}
@@ -371,6 +384,7 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
 
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
+  axis = 'bed', subjectLabel = 'Station',
 }: {
   branchId: string;
   day: string;
@@ -382,6 +396,11 @@ export function ScheduleBoard({
   staffShifts: BoardStaffShift[];
   nowMin: number | null;
   dialog: BoardDialogData;
+  /** 'bed' (default) = rows are stations, drop assigns a bed. 'person' = rows
+   *  are therapists, drop pre-assigns the therapist. The page keys each block's
+   *  bedId to the row id (resource_id for bed, therapist_id for person). */
+  axis?: 'bed' | 'person';
+  subjectLabel?: string;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -459,7 +478,17 @@ export function ScheduleBoard({
   const toggleType = (t: string) =>
     setCollapsedTypes((p) => { const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n; });
 
-  // Beds grouped by type in display order. Unknown types append at the end.
+  const POSITION_ORDER = ['MASSAGE_THERAPIST', 'MASSAGE_NEWBI', 'HAIR_STYLIST', 'NAIL_TECHNICIAN'];
+  const POSITION_LABEL: Record<string, string> = {
+    MASSAGE_THERAPIST: 'Massage', MASSAGE_NEWBI: 'Newbi', HAIR_STYLIST: 'Hair', NAIL_TECHNICIAN: 'Nail',
+  };
+  // Group headers: stations by resource_type (bed axis) or therapists by
+  // position (person axis), in a stable display order; unknown groups append.
+  const groupOrder = axis === 'person' ? POSITION_ORDER : [...STATION_ORDER];
+  const groupLabel = (t: string) =>
+    axis === 'person' ? (POSITION_LABEL[t] ?? t.replace(/_/g, ' ')) : (STATION_GROUP_LABEL[t] ?? t.replace(/_/g, ' '));
+  const groupIcon = (t: string): React.ComponentType<{ className?: string }> =>
+    axis === 'person' ? Users : (STATION_GROUP_ICON[t] ?? BedDouble);
   const bedsByType = (() => {
     const groups = new Map<string, BoardBed[]>();
     for (const b of beds) {
@@ -468,23 +497,15 @@ export function ScheduleBoard({
       groups.set(b.type, arr);
     }
     const ordered: { type: string; label: string; Icon: React.ComponentType<{ className?: string }>; rows: BoardBed[] }[] = [];
-    const defaultIcon = BedDouble;
-    for (const t of STATION_ORDER) {
+    for (const t of groupOrder) {
       const rows = groups.get(t);
-      if (rows && rows.length) {
-        ordered.push({ type: t, label: STATION_GROUP_LABEL[t] ?? t, Icon: STATION_GROUP_ICON[t] ?? defaultIcon, rows });
-        groups.delete(t);
-      }
+      if (rows && rows.length) { ordered.push({ type: t, label: groupLabel(t), Icon: groupIcon(t), rows }); groups.delete(t); }
     }
     for (const [type, rows] of groups) {
-      ordered.push({ type, label: STATION_GROUP_LABEL[type] ?? type.replace(/_/g, ' '), Icon: STATION_GROUP_ICON[type] ?? defaultIcon, rows });
+      ordered.push({ type, label: groupLabel(type), Icon: groupIcon(type), rows });
     }
     return ordered;
   })();
-  const POSITION_ORDER = ['MASSAGE_THERAPIST', 'MASSAGE_NEWBI', 'HAIR_STYLIST', 'NAIL_TECHNICIAN'];
-  const POSITION_LABEL: Record<string, string> = {
-    MASSAGE_THERAPIST: 'Massage', MASSAGE_NEWBI: 'Newbi', HAIR_STYLIST: 'Hair', NAIL_TECHNICIAN: 'Nail',
-  };
 
   // Per-type station free-now @ hoverMin. A station is "busy" if any block on
   // it overlaps [start − prep, end + cleanup]; everything else is free.
@@ -542,6 +563,10 @@ export function ScheduleBoard({
   }
 
   function onEmptyClick(bedId: string, min: number) {
+    // Click-to-add on a person row (pre-assigning the therapist) needs dialog
+    // support and lands in a follow-up; for now People rows are drag-to-assign
+    // + display only.
+    if (axis === 'person') return;
     if (Date.now() - suppressClick.current < 250) return; // a drag just ended
     setAdd({ bedId, min });
     setAddKey((k) => k + 1);
@@ -570,8 +595,10 @@ export function ScheduleBoard({
     newStart = Math.min(windowEndMin - 15, Math.max(windowStartMin, newStart));
     if (bedId === block.bedId && newStart === block.startMin) return; // no-op
     startTransition(async () => {
-      const r = await moveScheduledOrderItem({ item_id: block.refId, bed_id: bedId, start_min: newStart, day });
-      if (r.ok) { toast.success('Schedule updated'); router.refresh(); }
+      const r = axis === 'person'
+        ? await assignTherapistToOrderItem({ item_id: block.refId, therapist_id: bedId, start_min: newStart, day })
+        : await moveScheduledOrderItem({ item_id: block.refId, bed_id: bedId, start_min: newStart, day });
+      if (r.ok) { toast.success(axis === 'person' ? 'Therapist assigned' : 'Schedule updated'); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -595,7 +622,7 @@ export function ScheduleBoard({
       <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
         <div className="sticky top-0 z-10 border-b border-border bg-muted px-3 py-2">
           <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Unallocated</div>
-          <div className="text-[11px] font-semibold text-muted-foreground">{floating.length} to assign · drag onto a bed</div>
+          <div className="text-[11px] font-semibold text-muted-foreground">{floating.length} to assign · drag onto a {axis === 'person' ? 'person' : 'bed'}</div>
         </div>
         <div className="flex flex-col gap-3 p-2">
           {floating.length === 0 ? (
@@ -610,7 +637,7 @@ export function ScheduleBoard({
               )}
               {timedFloating.length > 0 && (
                 <div className="flex flex-col gap-1.5">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Needs a bed · {timedFloating.length}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Needs a {axis === 'person' ? 'therapist' : 'bed'} · {timedFloating.length}</div>
                   {timedFloating.map((b) => <RailCard key={b.key} block={b} onOpen={openBlock} />)}
                 </div>
               )}
@@ -634,7 +661,7 @@ export function ScheduleBoard({
         >
           {/* hour + 15-min ruler */}
           <div className="flex border-b border-border sticky top-0 z-30 bg-muted">
-            <div className="w-40 shrink-0 p-2 flex items-center justify-center text-center text-xs font-bold text-muted-foreground sticky left-0 z-40 bg-muted">Station</div>
+            <div className="w-40 shrink-0 p-2 flex items-center justify-center text-center text-xs font-bold text-muted-foreground sticky left-0 z-40 bg-muted">{subjectLabel}</div>
             <div className="relative h-12" style={{ minWidth: trackWidth }}>
               {/* top tier: the hour, centered over its band */}
               {hours.slice(0, -1).map((h) => (
@@ -704,7 +731,7 @@ export function ScheduleBoard({
           </div>
 
           {beds.length === 0 ? (
-            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No active stations for this branch.</div>
+            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">{axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}</div>
           ) : (
             bedsByType.map((group) => {
               const isCollapsed = collapsedTypes.has(group.type);
@@ -759,7 +786,7 @@ export function ScheduleBoard({
               but flipped to the left when there isn't enough room on the right
               (would otherwise clip on narrow boards). Pointer-events:none so it
               never steals a click meant for an empty bed slot. */}
-          {hoverMin != null && hoverX != null && hoverStaff && hoverStations && (
+          {axis === 'bed' && hoverMin != null && hoverX != null && hoverStaff && hoverStations && (
             <HoverPopover x={hoverX} time={hhmm(hoverMin)} stations={hoverStations} staff={hoverStaff} />
           )}
         </div>

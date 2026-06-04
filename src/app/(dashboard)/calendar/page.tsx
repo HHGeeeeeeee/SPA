@@ -1,13 +1,10 @@
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
-import { DayTimeline, type DayRow } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift } from '@/components/shift-schedule/schedule-board';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
-
-const TIMED = ['regular', 'cross_branch', 'on_call'];
 
 type CalendarView = 'station' | 'people';
 
@@ -32,134 +29,6 @@ function tsToMin(iso: string): number {
   const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
   const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
   return h * 60 + m;
-}
-
-// Day (hourly) view for either subject. Therapist rows show each rostered
-// therapist's working window + their actual service blocks; Station rows show
-// each bed's occupancy from actual service times.
-async function fetchDayData(subject: 'employee' | 'station', branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number }> {
-  const supabase = createServiceClient();
-  // Board window = this branch's business hours (see fetchStationBoard). Past
-  // midnight (close <= open) extends the window beyond 1440 and shifts the
-  // after-midnight slots by +1440 via place().
-  const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
-  const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
-  const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
-  const crossesMidnight = closeMin <= openMin;
-  const windowStartMin = openMin;
-  const windowEndMin = crossesMidnight ? closeMin + 1440 : closeMin;
-  const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
-  const openHH = (brHours?.open_time ?? '10:00').slice(0, 5);
-  const closeHH = (brHours?.close_time ?? '02:00').slice(0, 5);
-  const rangeStart = `${day}T${openHH}:00+08:00`;
-  const rangeEnd = `${crossesMidnight ? dayPlusOne(day) : day}T${closeHH}:00+08:00`;
-  const { data: itemData } = await supabase
-    .from('order_items')
-    .select('id, therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name, employee_code ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
-    .not('actual_start', 'is', null);
-  const dayItems = (itemData ?? []).filter((it) => {
-    const ord = one(it.order);
-    return ord && ord.branch_id === branchId && ord.service_date === day && ord.status !== 'void' && it.actual_start;
-  });
-
-
-  let rows: DayRow[];
-  if (subject === 'station') {
-    const { data: stations } = await supabase
-      .from('resources').select('id, resource_name').eq('branch_id', branchId).eq('status', 'active').order('resource_name');
-    const byStation = new Map<string, { line1: string; line2?: string; startMin: number; endMin: number; ongoing: boolean; cleanupEndMin?: number; itemId?: string; orderId?: string; reservation?: boolean; reservationId?: string }[]>();
-    const nowMs = Date.now();
-    for (const it of dayItems) {
-      if (!it.resource_id) continue;
-      // Occupancy = prep (before the service start) + service + cleanup (after).
-      const prepMin = one(it.service)?.prep_before_minutes ?? 0;
-      const s0 = place(tsToMin(it.actual_start!));
-      const startMin = Math.max(0, s0 - prepMin);
-      const endMin = it.actual_end ? place(tsToMin(it.actual_end)) : Math.min(windowEndMin, s0 + (it.duration_minutes ?? 60));
-      // A finished line still holds the bed for cleanup_after_minutes (unless
-      // released early). Only show it while the buffer hasn't elapsed.
-      const cleanupMin = one(it.service)?.cleanup_after_minutes ?? 0;
-      let cleanupEndMin: number | undefined;
-      let itemId: string | undefined;
-      if (it.actual_end && cleanupMin > 0 && !it.bed_released_at
-          && Date.parse(it.actual_end) + cleanupMin * 60000 > nowMs) {
-        cleanupEndMin = Math.min(windowEndMin, endMin + cleanupMin);
-        itemId = it.id;
-      }
-      // Station rows: who is on the bed (line 1) + which service (line 2).
-      const svcName = one(it.service)?.name ?? 'Service';
-      const thName = one(it.therapist)?.name ?? null;
-      const arr = byStation.get(it.resource_id) ?? [];
-      arr.push({ line1: thName ?? svcName, line2: thName ? svcName : undefined, startMin, endMin, ongoing: !it.actual_end, cleanupEndMin, itemId, orderId: one(it.order)?.id });
-      byStation.set(it.resource_id, arr);
-    }
-    rows = (stations ?? []).map((s) => ({
-      id: s.id, name: s.resource_name, code: '', shiftType: 'regular',
-      shiftStartMin: null, shiftEndMin: null, services: byStation.get(s.id) ?? [],
-    }));
-  } else {
-    const [shiftsRes, resRes] = await Promise.all([
-      supabase
-        .from('employee_shifts')
-        .select('employee_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code )')
-        .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', TIMED),
-      supabase.from('resources').select('id, resource_name').eq('branch_id', branchId),
-    ]);
-    const shifts = shiftsRes.data;
-    const resName = new Map((resRes.data ?? []).map((r) => [r.id, r.resource_name]));
-    const byTherapist = new Map<string, { line1: string; line2?: string; startMin: number; endMin: number; ongoing: boolean; orderId?: string }[]>();
-    const empMeta = new Map<string, { name: string; code: string }>();
-    for (const it of dayItems) {
-      if (!it.therapist_id) continue;
-      const th = one(it.therapist);
-      empMeta.set(it.therapist_id, { name: th?.name ?? '—', code: th?.employee_code ?? '' });
-      const startMin = place(tsToMin(it.actual_start!));
-      // Therapists carry no prep/cleanup buffer (that's the bed's turnover, not
-      // the person's) — their block is the pure service window.
-      const endMin = it.actual_end ? place(tsToMin(it.actual_end)) : Math.min(windowEndMin, startMin + (it.duration_minutes ?? 60));
-      // Therapist rows already name the therapist, so the block leads with the
-      // service (line 1) and the bed it is on (line 2).
-      const svc = one(it.service)?.name ?? 'Service';
-      const bed = it.resource_id ? resName.get(it.resource_id) : null;
-      const arr = byTherapist.get(it.therapist_id) ?? [];
-      arr.push({ line1: svc, line2: bed ?? undefined, startMin, endMin, ongoing: !it.actual_end, orderId: one(it.order)?.id });
-      byTherapist.set(it.therapist_id, arr);
-    }
-    const shiftEmpIds = new Set((shifts ?? []).map((s) => s.employee_id));
-    rows = (shifts ?? []).map((s) => {
-      const emp = one(s.employees);
-      return {
-        id: s.employee_id, name: emp?.name ?? '—', code: emp?.employee_code ?? '', shiftType: s.shift_type,
-        shiftStartMin: (() => { const m = timeToMin(s.shift_start); return m == null ? null : place(m); })(),
-        shiftEndMin: (() => { const m = timeToMin(s.shift_end); return m == null ? null : place(m); })(),
-        services: byTherapist.get(s.employee_id) ?? [],
-      };
-    });
-    // Therapists serving today without a rostered shift (e.g. borrowed, or shift
-    // never set) still appear, with no shift bar but their service blocks.
-    for (const [tid, blocks] of byTherapist) {
-      if (shiftEmpIds.has(tid)) continue;
-      const meta = empMeta.get(tid);
-      rows.push({
-        id: tid, name: meta?.name ?? '—', code: meta?.code ?? '', shiftType: 'regular',
-        shiftStartMin: null, shiftEndMin: null, services: blocks,
-      });
-    }
-    rows.sort((a, b) => a.code.localeCompare(b.code));
-  }
-
-  const allMins: number[] = [];
-  for (const r of rows) {
-    if (r.shiftStartMin != null) allMins.push(r.shiftStartMin);
-    if (r.shiftEndMin != null) allMins.push(r.shiftEndMin);
-    for (const s of r.services) {
-      allMins.push(s.startMin, s.endMin);
-      if (s.cleanupEndMin != null) allMins.push(s.cleanupEndMin);
-    }
-  }
-  // Reservations retired — the booking lane is now order_items (the Station
-  // board's left rail); the Therapist timeline shows no separate reservation lane.
-  return { rows, windowStartMin, windowEndMin };
 }
 
 // Interactive Station board (15-min): beds as rows, with every scheduled /
@@ -288,6 +157,89 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
   return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts };
 }
 
+// Per-person board (15-min): therapist rows, each painted with its on-shift
+// band; a booking assigned to a therapist (therapist_id) lands on their row,
+// while bookings with no therapist yet ride the left "Unallocated" rail. Drag a
+// rail card onto a person to pre-assign them. Mirrors fetchStationBoard but keyed
+// on therapist_id instead of resource_id.
+async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
+  const supabase = createServiceClient();
+  const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
+  const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
+  const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
+  const crossesMidnight = closeMin <= openMin;
+  const windowStartMin = openMin;
+  const windowEndMin = crossesMidnight ? closeMin + 1440 : closeMin;
+  const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
+  const isServicePosition = (code: string | null): boolean =>
+    !!code && (code.startsWith('MASSAGE_') || code.startsWith('HAIR_') || code.startsWith('NAIL_'));
+
+  const [shiftRes, itemsRes] = await Promise.all([
+    supabase
+      .from('employee_shifts')
+      .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
+      .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
+    supabase
+      .from('order_items')
+      .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
+      .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted', 'unassigned']),
+  ]);
+
+  // Rows = on-shift service therapists today, carrying their shift window so the
+  // row paints a faint "on shift" band.
+  const rowsById = new Map<string, BoardBed>();
+  const staffShifts: BoardStaffShift[] = [];
+  for (const s of shiftRes.data ?? []) {
+    const e = one(s.employees);
+    const positionCode = e ? one(e.position)?.code ?? null : null;
+    if (!isServicePosition(positionCode)) continue;
+    const ss = timeToMin(s.shift_start); const se = timeToMin(s.shift_end);
+    const startMin = ss == null ? null : place(ss);
+    const endMin = se == null ? null : place(se);
+    rowsById.set(s.employee_id, { id: s.employee_id, name: e?.name ?? '—', type: positionCode ?? '_other', shiftStartMin: startMin, shiftEndMin: endMin });
+    if (startMin != null && endMin != null) {
+      staffShifts.push({ id: s.employee_id, name: e?.name ?? '—', code: e?.employee_code ?? '', positionCode, startMin, endMin });
+    }
+  }
+
+  const blocks: BoardBlock[] = [];
+  for (const it of itemsRes.data ?? []) {
+    const ord = one(it.order);
+    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || ord.status === 'void') continue;
+    const dur = it.duration_minutes ?? 60;
+    let startMin: number;
+    let endMin: number;
+    let variant: BlockVariant;
+    let untimed = false;
+    if (it.status === 'in_service' || it.status === 'service_completed' || it.status === 'interrupted') {
+      if (!it.actual_start) continue;
+      startMin = place(tsToMin(it.actual_start));
+      endMin = it.actual_end ? place(tsToMin(it.actual_end)) : startMin + dur;
+      variant = it.status === 'in_service' ? 'in_service' : 'completed';
+    } else {
+      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      if (sIso) { startMin = place(tsToMin(sIso)); } else { startMin = windowStartMin; untimed = true; }
+      endMin = startMin + dur;
+      variant = 'scheduled';
+    }
+    const therapistId = it.therapist_id ?? null;
+    // A booking whose therapist isn't on shift today still needs a row to show on.
+    if (therapistId && !rowsById.has(therapistId)) {
+      rowsById.set(therapistId, { id: therapistId, name: one(it.therapist)?.name ?? 'Therapist', type: '_other' });
+    }
+    blocks.push({
+      key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: therapistId,
+      guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
+      line1: one(it.service)?.name ?? one(it.category)?.name ?? 'Service',
+      startMin, endMin, durationMin: dur, prepMin: 0, cleanupMin: 0,
+      variant, draggable: it.status === 'unassigned' || it.status === 'scheduled',
+      orderId: ord.id, therapistId, untimed,
+    });
+  }
+
+  const beds = [...rowsById.values()];
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts };
+}
 // Option lists for the board's click-to-add (reuses NewReservationDialog).
 async function fetchBoardDialogData(): Promise<BoardDialogData> {
   const supabase = createServiceClient();
@@ -339,10 +291,10 @@ export default async function CalendarPage({
   const { branches, branchId } = await fetchBranches(sp.branch);
 
   const stationBoard = view === 'station' && branchId ? await fetchStationBoard(branchId, day) : null;
-  // People (interim) -> the read-only therapist day timeline. Phase 2 replaces
-  // this with the per-person 15-min board (unassigned bookings in a left rail).
-  const dayData = view === 'people' && branchId ? await fetchDayData('employee', branchId, day) : null;
-  const boardDialog = stationBoard ? await fetchBoardDialogData() : null;
+  const peopleBoard = view === 'people' && branchId ? await fetchPeopleBoard(branchId, day) : null;
+  // The click-to-add dialog data is shared by both boards (People's click-to-add
+  // is gated off for now, but the prop is required).
+  const boardDialog = (stationBoard || peopleBoard) ? await fetchBoardDialogData() : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -352,7 +304,7 @@ export default async function CalendarPage({
           <p className="text-sm font-semibold text-muted-foreground mt-1">
             {day} · {view === 'station'
               ? '15-min board · click a slot to add · drag a booking onto a bed'
-              : 'by therapist · hours & services'}
+              : 'by therapist · drag a booking onto a person to assign'}
           </p>
         </div>
         {branchId && <ShiftControls branches={branches} branchId={branchId} day={day} view={view} />}
@@ -375,17 +327,25 @@ export default async function CalendarPage({
           nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null}
           dialog={boardDialog!}
         />
+      ) : peopleBoard ? (
+        <ScheduleBoard
+          branchId={branchId}
+          day={day}
+          beds={peopleBoard.beds}
+          blocks={peopleBoard.blocks}
+          windowStartMin={peopleBoard.windowStartMin}
+          windowEndMin={peopleBoard.windowEndMin}
+          bedCount={peopleBoard.bedCount}
+          staffShifts={peopleBoard.staffShifts}
+          nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null}
+          dialog={boardDialog!}
+          axis="person"
+          subjectLabel="Therapist"
+        />
       ) : (
-        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel="Therapist" nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} />
-      )}
-
-      {/* The Station board carries its own legend; this one is for the People timeline. */}
-      {!stationBoard && branchId && (
-        <div className="flex flex-wrap gap-3 text-xs font-semibold text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-primary/15" /> Regular</span>
-          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-amber-500/15" /> Cross-branch</span>
-          <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/15" /> On-call</span>
-        </div>
+        <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
+          Pick Station or People to view the board.
+        </Card>
       )}
     </div>
   );

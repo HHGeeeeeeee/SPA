@@ -194,12 +194,14 @@ export type Database = {
       branches: {
         Row: {
           active: boolean
+          close_time: string
           code: string
           commission_policy_id: string | null
           created_at: string
           created_by: string | null
           id: string
           name: string
+          open_time: string
           reservation_enabled: boolean
           therapist_share_group: string | null
           updated_at: string
@@ -207,12 +209,14 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          close_time?: string
           code: string
           commission_policy_id?: string | null
           created_at?: string
           created_by?: string | null
           id?: string
           name: string
+          open_time?: string
           reservation_enabled?: boolean
           therapist_share_group?: string | null
           updated_at?: string
@@ -220,12 +224,14 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          close_time?: string
           code?: string
           commission_policy_id?: string | null
           created_at?: string
           created_by?: string | null
           id?: string
           name?: string
+          open_time?: string
           reservation_enabled?: boolean
           therapist_share_group?: string | null
           updated_at?: string

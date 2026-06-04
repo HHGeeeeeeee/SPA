@@ -86,8 +86,20 @@ const LABEL_W = 160;
 // can place finer; the dialog's Start/End then take any exact minute.
 const SNAP_MIN = 5;
 const snapMin = (min: number) => Math.round(min / SNAP_MIN) * SNAP_MIN;
-const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
-const makeIso = (day: string, min: number) => `${day}T${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}:00+08:00`;
+// Board minutes can exceed 1440 on a past-midnight board (e.g. 1500 = 01:00 the
+// next clock day); display wraps to a 24h clock and ISO rolls to the next date.
+const hhmm = (min: number) => `${String(Math.floor((min % 1440) / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const makeIso = (day: string, min: number) => {
+  const dayMin = ((min % 1440) + 1440) % 1440;
+  let d = day;
+  if (min >= 1440) {
+    const [y, m, dd] = day.split('-').map(Number);
+    const x = new Date(Date.UTC(y, m - 1, dd + 1));
+    const p = (n: number) => String(n).padStart(2, '0');
+    d = `${x.getUTCFullYear()}-${p(x.getUTCMonth() + 1)}-${p(x.getUTCDate())}`;
+  }
+  return `${d}T${String(Math.floor(dayMin / 60)).padStart(2, '0')}:${String(dayMin % 60).padStart(2, '0')}:00+08:00`;
+};
 
 // Greedy lane packing so overlapping blocks stack instead of covering each other.
 function assignLanes(blocks: { startMin: number; endMin: number }[]): { lanes: number[]; count: number } {
@@ -536,7 +548,7 @@ export function ScheduleBoard({
               {/* top tier: the hour, centered over its band */}
               {hours.slice(0, -1).map((h) => (
                 <div key={h} className="absolute top-0 bottom-0 border-l border-border" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN, width: PX_PER_HOUR }}>
-                  <span className="absolute top-1 inset-x-0 text-center text-sm font-bold tabular-nums">{String(h).padStart(2, '0')}:00</span>
+                  <span className="absolute top-1 inset-x-0 text-center text-sm font-bold tabular-nums">{String(h % 24).padStart(2, '0')}:00</span>
                 </div>
               ))}
               {/* dashed divider between the hour tier and the minute tier */}
@@ -586,7 +598,7 @@ export function ScheduleBoard({
             return (
               <div className="flex border-b-2 border-violet-500/30 bg-violet-500/5">
                 <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center sticky left-0 z-20 bg-card">
-                  <div className="font-semibold text-sm text-violet-700 dark:text-violet-300">To place</div>
+                  <div className="font-semibold text-sm text-violet-700 dark:text-violet-300">Unallocated</div>
                   <div className="font-bold text-xs text-muted-foreground">drag onto a bed</div>
                 </div>
                 <div className="relative my-1" style={{ height: count * LANE_H, minWidth: trackWidth }}>

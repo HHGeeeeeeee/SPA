@@ -11,6 +11,9 @@ const branchSchema = z.object({
   name: z.string().min(1).max(120),
   business_unit_ids: z.array(z.string().uuid()).min(1, 'Pick at least one business unit'),
   reservation_enabled: z.boolean().optional(),
+  // Daily business hours (HH:mm). close_time <= open_time => trades past midnight.
+  open_time: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:mm').optional(),
+  close_time: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:mm').optional(),
   // Branches sharing the same non-empty label pool their therapists (borrowing).
   therapist_share_group: z.string().max(60).optional().nullable(),
   commission_policy_id: z.string().uuid().optional().nullable(),
@@ -64,7 +67,7 @@ export async function createBranch(input: unknown): Promise<ActionResult> {
   const supabase = await createAuditedClient();
   const { data, error } = await supabase
     .from('branches')
-    .insert({ code: parsed.data.code, name: parsed.data.name, active: true, reservation_enabled: parsed.data.reservation_enabled ?? true, therapist_share_group: parsed.data.therapist_share_group?.trim() || null, commission_policy_id: parsed.data.commission_policy_id ?? null })
+    .insert({ code: parsed.data.code, name: parsed.data.name, active: true, reservation_enabled: parsed.data.reservation_enabled ?? true, open_time: parsed.data.open_time ?? '10:00', close_time: parsed.data.close_time ?? '02:00', therapist_share_group: parsed.data.therapist_share_group?.trim() || null, commission_policy_id: parsed.data.commission_policy_id ?? null })
     .select('id')
     .single();
   if (error || !data) {
@@ -92,7 +95,9 @@ export async function updateBranch(input: unknown): Promise<ActionResult> {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   }
   const supabase = await createAuditedClient();
-  const patch: { name?: string; reservation_enabled?: boolean; commission_policy_id?: string | null; therapist_share_group?: string | null } = {};
+  const patch: { name?: string; reservation_enabled?: boolean; open_time?: string; close_time?: string; commission_policy_id?: string | null; therapist_share_group?: string | null } = {};
+  if (parsed.data.open_time !== undefined) patch.open_time = parsed.data.open_time;
+  if (parsed.data.close_time !== undefined) patch.close_time = parsed.data.close_time;
   if (parsed.data.name) patch.name = parsed.data.name;
   if (parsed.data.reservation_enabled !== undefined) patch.reservation_enabled = parsed.data.reservation_enabled;
   if (parsed.data.therapist_share_group !== undefined) patch.therapist_share_group = parsed.data.therapist_share_group?.trim() || null;

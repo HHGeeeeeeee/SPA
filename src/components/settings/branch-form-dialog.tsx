@@ -31,7 +31,7 @@ const NONE = '__none__';
 interface CommissionClass { id: string; class_code: string; name: string; commission_rate: number }
 interface BranchFormDialogProps {
   mode?: 'create' | 'edit';
-  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled?: boolean; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[] };
+  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled?: boolean; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[] };
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: CommissionClass[];
@@ -61,6 +61,8 @@ export function BranchFormDialog({
   const [name, setName] = useState(branch?.name ?? '');
   const [unitIds, setUnitIds] = useState<string[]>(branch?.business_unit_ids ?? []);
   const [reservationEnabled, setReservationEnabled] = useState(branch?.reservation_enabled ?? true);
+  const [openTime, setOpenTime] = useState(branch?.open_time?.slice(0, 5) ?? '10:00');
+  const [closeTime, setCloseTime] = useState(branch?.close_time?.slice(0, 5) ?? '02:00');
   const [shareGroup, setShareGroup] = useState(branch?.therapist_share_group ?? '');
   const [policyId, setPolicyId] = useState(branch?.commission_policy_id ?? NONE);
   // Per-class rate overrides for this branch: classId → percent string ('' = use global).
@@ -92,8 +94,8 @@ export function BranchFormDialog({
         .map((c) => ({ commission_class_id: c.id, rate: Math.max(0, Math.min(1, (Number(rates[c.id]) || 0) / 100)) }));
       const therapist_share_group = shareGroup.trim() || null;
       const result = isEdit
-        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, therapist_share_group, commission_policy_id, commission_rate_overrides })
-        : await createBranch({ code, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, therapist_share_group, commission_policy_id, commission_rate_overrides });
+        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides })
+        : await createBranch({ code, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides });
       if (result.ok) {
         toast.success(isEdit ? 'Branch updated' : 'Branch created');
         setOpen(false);
@@ -200,6 +202,19 @@ export function BranchFormDialog({
                 </p>
               </div>
               <Switch checked={reservationEnabled} onCheckedChange={setReservationEnabled} />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label className="font-semibold">Business hours</Label>
+              <div className="flex items-center gap-2">
+                <Input type="time" value={openTime} onChange={(e) => setOpenTime(e.target.value)} className="w-32" />
+                <span className="text-sm font-semibold text-muted-foreground">to</span>
+                <Input type="time" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} className="w-32" />
+              </div>
+              <p className="text-xs font-medium text-muted-foreground">
+                Drives the Shift Schedule board. A close time at or before the open
+                time means the branch trades past midnight (e.g. 10:00 → 02:00).
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">

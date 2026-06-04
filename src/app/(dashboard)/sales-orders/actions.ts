@@ -383,7 +383,8 @@ async function maybeAutoComplete(orderId: string) {
 
 const addCustomerSchema = z.object({
   order_id: z.string().uuid(),
-  customer_name: z.string().min(1).max(120),
+  // Name is optional — an unnamed guest is auto-labelled "Guest N" on insert.
+  customer_name: z.string().max(120).optional().nullable(),
   customer_phone: z.string().max(40).optional().nullable(),
   gender: z.string().max(10).optional().nullable(),
 });
@@ -406,7 +407,7 @@ export async function addOrderCustomer(input: unknown): Promise<ActionResult> {
   const nextSeq = (existing?.[0]?.seq_no ?? 0) + 1;
   const { error } = await supabase.from('order_customers').insert({
     order_id: d.order_id,
-    customer_name: d.customer_name,
+    customer_name: d.customer_name?.trim() || `Guest ${nextSeq}`,
     customer_phone: d.customer_phone || null,
     gender: d.gender || null,
     seq_no: nextSeq,

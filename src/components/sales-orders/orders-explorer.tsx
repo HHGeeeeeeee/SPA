@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Receipt } from 'lucide-react';
 
 import { ServiceBadge, PaymentBadge, orderPaymentState } from '@/components/sales-orders/order-badges';
@@ -36,10 +37,9 @@ export interface OrderRow {
   is_ar: boolean;
   branch_code: string;
   billing_code: string | null;
+  source_name: string | null;
+  guest_name: string | null;
   pax: number;
-  cash_cents: number;
-  paymaya_cents: number;
-  ar_cents: number;
   tip_cents: number;
 }
 
@@ -69,6 +69,7 @@ function todayPHT(): string {
 }
 
 export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billingCodes: string[] }) {
+  const router = useRouter();
   const today = todayPHT();
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -102,16 +103,13 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
     () =>
       filtered.reduce(
         (a, o) => {
-          a.cash += o.cash_cents;
-          a.paymaya += o.paymaya_cents;
-          a.ar += o.ar_cents;
           // Mirror outstandingCell: drafts aren't real liabilities, don't add to total.
           a.outstanding += o.is_ar || o.status === 'draft' ? 0 : Math.max(0, o.total_cents - o.paid_cents);
           a.total += o.total_cents;
           a.tip += o.tip_cents;
           return a;
         },
-        { cash: 0, paymaya: 0, ar: 0, outstanding: 0, total: 0, tip: 0 },
+        { outstanding: 0, total: 0, tip: 0 },
       ),
     [filtered],
   );
@@ -184,30 +182,13 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
       <Card className="p-0 overflow-hidden">
         <Table>
           <TableHeader>
-            {/* Group header brackets the three payment-method columns as one set. */}
-            <TableRow>
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-              <TableHead colSpan={3} className="text-center text-[11px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/50 border-x border-border">
-                Payments
-              </TableHead>
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-              <TableHead className="bg-transparent" />
-            </TableRow>
             <TableRow>
               <TableHead className="w-20 font-bold">Branch</TableHead>
               <TableHead className="w-32 font-bold">Service Date</TableHead>
               <TableHead className="w-20 font-bold">Order No</TableHead>
-              <TableHead className="w-24 font-bold">Billing To</TableHead>
+              <TableHead className="font-bold">Guest</TableHead>
+              <TableHead className="font-bold">Source</TableHead>
               <TableHead className="w-16 font-bold">PAX</TableHead>
-              <TableHead className="w-28 font-bold text-center bg-muted/30 border-l border-border">Cash</TableHead>
-              <TableHead className="w-28 font-bold text-center bg-muted/30">Paymaya</TableHead>
-              <TableHead className="w-28 font-bold text-center bg-muted/30 border-r border-border">AR</TableHead>
               <TableHead className="w-32 font-bold text-center">Outstanding</TableHead>
               <TableHead className="w-32 font-bold text-center">Total</TableHead>
               <TableHead className="w-24 font-bold text-center">Tips</TableHead>
@@ -217,14 +198,14 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="text-center py-16">
+                <TableCell colSpan={8} className="text-center py-16">
                   <Receipt className="size-8 mx-auto text-muted-foreground/50" />
                   <p className="text-sm font-semibold text-muted-foreground mt-3">No orders match these filters.</p>
                 </TableCell>
               </TableRow>
             ) : (
               filtered.map((o) => (
-                <TableRow key={o.id} className="cursor-pointer">
+                <TableRow key={o.id} className="cursor-pointer" onClick={() => router.push(`/sales-orders/${o.id}`)}>
                   <TableCell className="font-mono font-bold">{o.branch_code}</TableCell>
                   <TableCell className="font-medium tabular">{o.service_date}</TableCell>
                   <TableCell className="font-mono font-bold">
@@ -232,11 +213,9 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
                         Full SO-YYMMDD-NNNN stays as the hover tooltip. */}
                     <Link href={`/sales-orders/${o.id}`} className="hover:text-primary" title={o.order_no}>{o.order_no.split('-').pop()}</Link>
                   </TableCell>
-                  <TableCell className="font-mono font-bold text-xs">{o.billing_code ?? '—'}</TableCell>
+                  <TableCell className="font-semibold">{o.guest_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className="font-medium text-muted-foreground">{o.source_name ?? '—'}</TableCell>
                   <TableCell className="font-bold tabular">{o.pax}</TableCell>
-                  <TableCell className="font-medium tabular text-right bg-muted/20 border-l border-border">{moneyCell(o.cash_cents)}</TableCell>
-                  <TableCell className="font-medium tabular text-right bg-muted/20">{moneyCell(o.paymaya_cents)}</TableCell>
-                  <TableCell className="font-medium tabular text-right bg-muted/20 border-r border-border">{moneyCell(o.ar_cents)}</TableCell>
                   <TableCell className="tabular text-right">{outstandingCell(o)}</TableCell>
                   <TableCell className="font-bold tabular text-right">{peso(o.total_cents)}</TableCell>
                   <TableCell className="font-medium tabular text-right">{moneyCell(o.tip_cents, 'text-primary')}</TableCell>
@@ -256,12 +235,9 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
             <TableFooter>
               {/* Column sums, aligned under the money columns above. */}
               <TableRow className="border-t-2 border-border bg-muted/40 font-bold">
-                <TableCell colSpan={5} className="text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                <TableCell colSpan={6} className="text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
                   Totals · {filtered.length} order{filtered.length === 1 ? '' : 's'}
                 </TableCell>
-                <TableCell className="tabular text-right bg-muted/30 border-l border-border">{moneyCell(totals.cash)}</TableCell>
-                <TableCell className="tabular text-right bg-muted/30">{moneyCell(totals.paymaya)}</TableCell>
-                <TableCell className="tabular text-right bg-muted/30 border-r border-border">{moneyCell(totals.ar)}</TableCell>
                 <TableCell className="tabular text-right">
                   {totals.outstanding > 0 ? <span className="text-destructive">{peso(totals.outstanding)}</span> : <span className="text-muted-foreground">—</span>}
                 </TableCell>

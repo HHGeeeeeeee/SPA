@@ -416,6 +416,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 currentBillingId={order.billing_to_id}
                 editable={editable}
               />
+              <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Guests</dt>
+                <dd className="font-semibold mt-0.5 tabular">{order.order_customers.length} pax</dd></div>
             </dl>
             <OrderNoteEditor orderId={order.id} initialNote={order.note} />
           </CardContent>

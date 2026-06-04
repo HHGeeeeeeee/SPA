@@ -29,6 +29,14 @@ function timeToMin(t: string | null): number | null {
   const [h, m] = t.split(':');
   return Number(h) * 60 + Number(m);
 }
+// 'YYYY-MM-DD' + 1 calendar day (UTC math, tz-agnostic for the date string).
+function dayPlusOne(day: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + 1));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+}
+
 function tsToMin(iso: string): number {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
   const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
@@ -44,6 +52,20 @@ function hm(min: number): string {
 // each bed's occupancy from actual service times.
 async function fetchDayData(subject: ShiftView, branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number; reservations: ReservationBlock[] }> {
   const supabase = createServiceClient();
+  // Board window = this branch's business hours (see fetchStationBoard). Past
+  // midnight (close <= open) extends the window beyond 1440 and shifts the
+  // after-midnight slots by +1440 via place().
+  const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
+  const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
+  const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
+  const crossesMidnight = closeMin <= openMin;
+  const windowStartMin = openMin;
+  const windowEndMin = crossesMidnight ? closeMin + 1440 : closeMin;
+  const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
+  const openHH = (brHours?.open_time ?? '10:00').slice(0, 5);
+  const closeHH = (brHours?.close_time ?? '02:00').slice(0, 5);
+  const rangeStart = `${day}T${openHH}:00+08:00`;
+  const rangeEnd = `${crossesMidnight ? dayPlusOne(day) : day}T${closeHH}:00+08:00`;
   const { data: itemData } = await supabase
     .from('order_items')
     .select('id, therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name, employee_code ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
@@ -62,8 +84,8 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
     .eq('branch_id', branchId)
     .in('status', ['reserved', 'confirmed'])
     .is('deleted_at', null)
-    .gte('desired_service_start', `${day}T00:00:00+08:00`)
-    .lte('desired_service_start', `${day}T23:59:59+08:00`)
+    .gte('desired_service_start', rangeStart)
+    .lte('desired_service_start', rangeEnd)
     .order('desired_service_start');
   const graceMin = await getReservationGraceMinutes();
   const resvRows = (resvData ?? []).map((r) => {
@@ -73,14 +95,14 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
     // cleanup (after). 0 when no specific service was chosen on the booking.
     const prepMin = one(r.service)?.prep_before_minutes ?? 0;
     const cleanupMin = one(r.service)?.cleanup_after_minutes ?? 0;
-    const endMin = tsToMin(r.desired_service_end);
+    const endMin = place(tsToMin(r.desired_service_end));
     return {
       id: r.id,
       guest: r.guest_name ?? 'Guest',
       line2: [cats || 'Service', src, r.pax > 1 ? `${r.pax}p` : null].filter(Boolean).join(' · '),
-      startMin: Math.max(0, tsToMin(r.desired_service_start) - prepMin),
+      startMin: Math.max(0, place(tsToMin(r.desired_service_start)) - prepMin),
       endMin,
-      cleanupEndMin: cleanupMin > 0 ? Math.min(1439, endMin + cleanupMin) : undefined,
+      cleanupEndMin: cleanupMin > 0 ? Math.min(windowEndMin, endMin + cleanupMin) : undefined,
       external: r.service_location_type === 'external_hotel',
       pinnedIds: (r.reservation_resources ?? []).map((x) => x.resource_id),
       // Pending (reserved) is tentative — it doesn't hold a bed yet, so it never
@@ -101,9 +123,9 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       if (!it.resource_id) continue;
       // Occupancy = prep (before the service start) + service + cleanup (after).
       const prepMin = one(it.service)?.prep_before_minutes ?? 0;
-      const s0 = tsToMin(it.actual_start!);
+      const s0 = place(tsToMin(it.actual_start!));
       const startMin = Math.max(0, s0 - prepMin);
-      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, s0 + (it.duration_minutes ?? 60));
+      const endMin = it.actual_end ? place(tsToMin(it.actual_end)) : Math.min(windowEndMin, s0 + (it.duration_minutes ?? 60));
       // A finished line still holds the bed for cleanup_after_minutes (unless
       // released early). Only show it while the buffer hasn't elapsed.
       const cleanupMin = one(it.service)?.cleanup_after_minutes ?? 0;
@@ -111,7 +133,7 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       let itemId: string | undefined;
       if (it.actual_end && cleanupMin > 0 && !it.bed_released_at
           && Date.parse(it.actual_end) + cleanupMin * 60000 > nowMs) {
-        cleanupEndMin = Math.min(1439, endMin + cleanupMin);
+        cleanupEndMin = Math.min(windowEndMin, endMin + cleanupMin);
         itemId = it.id;
       }
       // Station rows: who is on the bed (line 1) + which service (line 2).
@@ -151,10 +173,10 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       if (!it.therapist_id) continue;
       const th = one(it.therapist);
       empMeta.set(it.therapist_id, { name: th?.name ?? '—', code: th?.employee_code ?? '' });
-      const startMin = tsToMin(it.actual_start!);
+      const startMin = place(tsToMin(it.actual_start!));
       // Therapists carry no prep/cleanup buffer (that's the bed's turnover, not
       // the person's) — their block is the pure service window.
-      const endMin = it.actual_end ? tsToMin(it.actual_end) : Math.min(1439, startMin + (it.duration_minutes ?? 60));
+      const endMin = it.actual_end ? place(tsToMin(it.actual_end)) : Math.min(windowEndMin, startMin + (it.duration_minutes ?? 60));
       // Therapist rows already name the therapist, so the block leads with the
       // service (line 1) and the bed it is on (line 2).
       const svc = one(it.service)?.name ?? 'Service';
@@ -168,7 +190,8 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
       const emp = one(s.employees);
       return {
         id: s.employee_id, name: emp?.name ?? '—', code: emp?.employee_code ?? '', shiftType: s.shift_type,
-        shiftStartMin: timeToMin(s.shift_start), shiftEndMin: timeToMin(s.shift_end),
+        shiftStartMin: (() => { const m = timeToMin(s.shift_start); return m == null ? null : place(m); })(),
+        shiftEndMin: (() => { const m = timeToMin(s.shift_end); return m == null ? null : place(m); })(),
         services: byTherapist.get(s.employee_id) ?? [],
       };
     });
@@ -202,9 +225,6 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   const reservations: ReservationBlock[] = (subject === 'station' ? inStoreRows.filter((r) => r.pending || r.pinnedIds.length === 0 || r.overdue) : inStoreRows)
     .map((r) => ({ id: r.id, guest: r.guest, line2: r.line2, startMin: r.startMin, endMin: r.endMin, external: r.external, overdue: r.overdue, pending: r.pending }));
   for (const r of reservations) allMins.push(r.startMin, r.endMin);
-  // 24-hour operation: the board always spans the full day (00:00–24:00).
-  const windowStartMin = 0;
-  const windowEndMin = 1440;
   return { rows, windowStartMin, windowEndMin, reservations };
 }
 
@@ -213,6 +233,20 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
 // and unplaced reservations in the "To place" lane (drag onto a bed).
 async function fetchStationBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
   const supabase = createServiceClient();
+  // Board window = this branch's business hours. A close at/before open means it
+  // trades past midnight, so the window extends past 1440 and the bookings in
+  // 00:00..close (next clock day, same business day) are shifted by +1440.
+  const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
+  const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
+  const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
+  const crossesMidnight = closeMin <= openMin;
+  const windowStartMin = openMin;
+  const windowEndMin = crossesMidnight ? closeMin + 1440 : closeMin;
+  const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
+  const openHH = (brHours?.open_time ?? '10:00').slice(0, 5);
+  const closeHH = (brHours?.close_time ?? '02:00').slice(0, 5);
+  const rangeStart = `${day}T${openHH}:00+08:00`;
+  const rangeEnd = `${crossesMidnight ? dayPlusOne(day) : day}T${closeHH}:00+08:00`;
   const [bedsRes, itemsRes, resvRes, shiftRes, graceMin] = await Promise.all([
     supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
     supabase
@@ -224,7 +258,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
       .from('reservations')
       .select('id, status, branch_id, source_id, guest_name, guest_phone, pax, gender_preference, service_location_type, note, seat_together, service_item_id, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ), customer_sources ( code ), reservation_service_categories ( service_category_id, service_categories ( name ) ), reservation_resources ( resource_id )')
       .eq('branch_id', branchId).in('status', ['reserved', 'confirmed']).is('deleted_at', null)
-      .gte('desired_service_start', `${day}T00:00:00+08:00`).lte('desired_service_start', `${day}T23:59:59+08:00`).order('desired_service_start'),
+      .gte('desired_service_start', rangeStart).lte('desired_service_start', rangeEnd).order('desired_service_start'),
     // Pull the full roster (with employee identity + position) instead of bare
     // time windows; the schedule board now uses this to power the per-position
     // hover popup ("who's free at 14:30?") on top of the original on-shift count.
@@ -250,11 +284,11 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     if (it.status === 'scheduled') {
       const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
       if (!sIso) continue; // no planned time → can't place it on the axis
-      startMin = tsToMin(sIso); endMin = startMin + dur; variant = 'scheduled'; draggable = true;
+      startMin = place(tsToMin(sIso)); endMin = startMin + dur; variant = 'scheduled'; draggable = true;
     } else {
       if (!it.actual_start) continue;
-      startMin = tsToMin(it.actual_start);
-      endMin = it.actual_end ? tsToMin(it.actual_end) : startMin + dur;
+      startMin = place(tsToMin(it.actual_start));
+      endMin = it.actual_end ? place(tsToMin(it.actual_end)) : startMin + dur;
       // Finished / interrupted lines render as the greyed "completed" block (they
       // still hold the bed through the cleanup buffer); only a live one is in_service.
       variant = it.status === 'in_service' ? 'in_service' : 'completed';
@@ -279,8 +313,8 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     if (r.service_location_type === 'external_hotel') continue;
     const cats = (r.reservation_service_categories ?? []).map((l) => one(l.service_categories)?.name).filter(Boolean).join(' + ');
     const src = one(r.customer_sources)?.code;
-    const startMin = tsToMin(r.desired_service_start);
-    const endMin = Math.max(startMin + 15, tsToMin(r.desired_service_end));
+    const startMin = place(tsToMin(r.desired_service_start));
+    const endMin = Math.max(startMin + 15, place(tsToMin(r.desired_service_end)));
     const dur = Math.max(15, endMin - startMin);
     const pinnedIds = (r.reservation_resources ?? []).map((x) => x.resource_id);
     const pending = r.status === 'reserved';
@@ -321,9 +355,6 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     mins.push(startMin, endMin);
   }
 
-  // 24-hour operation: the board always spans the full day (00:00–24:00).
-  const windowStartMin = 0;
-  const windowEndMin = 1440;
   // Service-providing positions only — receptionists / managers are on shift
   // but never relevant for "who's free to take a booking". Same prefix rule as
   // computeNowAvailability so the two views agree on who counts.
@@ -338,8 +369,8 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
         name: e?.name ?? '—',
         code: e?.employee_code ?? '',
         positionCode,
-        startMin: timeToMin(s.shift_start),
-        endMin: timeToMin(s.shift_end),
+        startMin: (() => { const m = timeToMin(s.shift_start); return m == null ? null : place(m); })(),
+        endMin: (() => { const m = timeToMin(s.shift_end); return m == null ? null : place(m); })(),
       };
     })
     .filter((w): w is BoardStaffShift => w.startMin != null && w.endMin != null && isServicePosition(w.positionCode));

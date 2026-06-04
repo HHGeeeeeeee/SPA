@@ -18,8 +18,9 @@ async function fetchData() {
         id, order_no, status, order_type, service_date, total_cents, paid_cents,
         branch:branches!orders_branch_id_fkey ( code ),
         billing:billing_destinations!orders_billing_to_id_fkey ( code, default_payment_method_id ),
-        order_customers ( id ),
-        payments ( amount_cents, method:payment_methods ( code ), tips ( amount_cents ) )
+        source:customer_sources ( name ),
+        order_customers ( customer_name, seq_no ),
+        payments ( tips ( amount_cents ) )
       `)
       .is('deleted_at', null)
       .order('service_date', { ascending: false })
@@ -58,12 +59,14 @@ async function fetchData() {
   const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
   const arMethodId = arRes.data?.id ?? null;
   const rows: OrderRow[] = (ordRes.data ?? []).map((o) => {
-    const pays = o.payments ?? [];
-    const sumByCode = (code: string) =>
-      pays.filter((p) => one(p.method)?.code === code).reduce((s, p) => s + p.amount_cents, 0);
     const billing = one(o.billing);
     // AR-billed orders carry no counter payment — the whole total is on AR terms.
     const isAR = !!arMethodId && billing?.default_payment_method_id === arMethodId;
+    const custs = o.order_customers ?? [];
+    // Main guest = lowest seq_no (the primary booker, #1).
+    const mainGuest = custs
+      .slice()
+      .sort((a, b) => (a.seq_no ?? 0) - (b.seq_no ?? 0))[0]?.customer_name ?? null;
     return {
       id: o.id,
       order_no: o.order_no,
@@ -75,11 +78,10 @@ async function fetchData() {
       is_ar: isAR,
       branch_code: one(o.branch)?.code ?? '—',
       billing_code: billing?.code ?? null,
-      pax: o.order_customers?.length ?? 0,
-      cash_cents: sumByCode('cash'),
-      paymaya_cents: sumByCode('paymaya'),
-      ar_cents: isAR ? o.total_cents : 0,
-      tip_cents: pays.reduce((s, p) => s + (p.tips ?? []).reduce((a, t) => a + t.amount_cents, 0), 0),
+      source_name: one(o.source)?.name ?? null,
+      guest_name: mainGuest,
+      pax: custs.length,
+      tip_cents: (o.payments ?? []).reduce((s, p) => s + (p.tips ?? []).reduce((a, t) => a + t.amount_cents, 0), 0),
     };
   });
 

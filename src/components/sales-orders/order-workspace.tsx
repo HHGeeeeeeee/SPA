@@ -223,7 +223,6 @@ export function OrderWorkspace({
 
   // add customer
   const [custName, setCustName] = useState('');
-  const [custPhone, setCustPhone] = useState('');
   // inline rename of an existing guest (fill in a converted "Guest 2" placeholder)
   const [editCust, setEditCust] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -271,17 +270,29 @@ export function OrderWorkspace({
   const canRunService = ['open', 'in_service'].includes(order.status);
 
   function doAddCustomer() {
-    if (!custName.trim()) return toast.error('Customer name required');
     startTransition(async () => {
       const r = await addOrderCustomer({
         order_id: order.id,
-        customer_name: custName,
-        customer_phone: custPhone || null,
+        customer_name: custName.trim() || null,
+        customer_phone: null,
       });
-      if (r.ok) { setCustName(''); setCustPhone(''); toast.success('Customer added'); router.refresh(); }
+      if (r.ok) { setCustName(''); toast.success('Guest added'); router.refresh(); }
       else toast.error(r.error);
     });
   }
+
+  // Streamlined walk-in entry: an editable order with no guests gets a "Guest 1"
+  // created automatically on open, so the Add Service picker is reachable
+  // immediately without first naming a customer. Fires once per mount.
+  const autoGuestTried = useRef(false);
+  useEffect(() => {
+    if (!order.editable || customers.length > 0 || autoGuestTried.current) return;
+    autoGuestTried.current = true;
+    (async () => {
+      const r = await addOrderCustomer({ order_id: order.id, customer_name: null, customer_phone: null });
+      if (r.ok) router.refresh();
+    })();
+  }, [order.editable, customers.length, order.id, router]);
 
   function closeItemForm() {
     setActiveCustomer(null);
@@ -613,6 +624,18 @@ export function OrderWorkspace({
   });
 
   const itemsByCustomer = (cid: string) => items.filter((i) => i.order_customer_id === cid);
+
+  // Auto-open the Add Service picker for the first guest who has no services yet,
+  // so "pick a service" is visible the moment the order opens — no extra click.
+  // Fires once per mount (a manual Cancel won't make it pop back open).
+  const autoOpenedPicker = useRef(false);
+  useEffect(() => {
+    if (autoOpenedPicker.current || !order.editable || customers.length === 0) return;
+    const firstEmpty = [...customers].sort((a, b) => a.seq_no - b.seq_no).find((c) => itemsByCustomer(c.id).length === 0);
+    if (firstEmpty) { autoOpenedPicker.current = true; setActiveCustomer(firstEmpty.id); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customers, items, order.editable]);
+
   // A guest can be removed only while none of their services have started and no
   // payment is attributed to them — mirrors the server guard.
   const customerRemovable = (c: OrderCustomer) =>
@@ -658,17 +681,12 @@ export function OrderWorkspace({
         <div className="col-span-4 flex flex-wrap items-end gap-3">
           <div className="flex items-center gap-2">
             <h3 className="text-xl font-bold">Guests</h3>
-            <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{customers.length} pax</span>
           </div>
           {order.editable && (
             <div className="flex flex-wrap items-end gap-2">
               <div className="flex flex-col gap-1">
-                <Label className="text-xs font-semibold">Customer name <span className="text-destructive">*</span></Label>
-                <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Name" className="w-44" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <Label className="text-xs font-semibold">Phone</Label>
-                <Input value={custPhone} onChange={(e) => setCustPhone(e.target.value)} placeholder="optional" className="w-36" />
+                <Label className="text-xs font-semibold">Customer name</Label>
+                <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Optional" className="w-44" onKeyDown={(e) => { if (e.key === 'Enter') doAddCustomer(); }} />
               </div>
               <Button size="sm" onClick={doAddCustomer} disabled={pending}>
                 <UserPlus className="size-4" /> Add Customer

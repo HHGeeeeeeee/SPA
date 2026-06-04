@@ -174,7 +174,9 @@ export function NewReservationDialog({
   const [guestPhone, setGuestPhone] = useState(reservation?.guest_phone ?? initial?.guestPhone ?? '');
   const [pax, setPax] = useState(String(reservation?.pax ?? 1));
   const [genderPref, setGenderPref] = useState(reservation?.gender_preference ?? '__none__');
-  const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : '');
+  // New reservations default Start to today + the current time; the date / time
+  // are edited as two separate fields below. Walk-in mode recomputes this.
+  const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : toLocalInput(new Date().toISOString()));
   const [end, setEnd] = useState(reservation ? toLocalInput(reservation.desired_service_end) : '');
   const [locationType, setLocationType] = useState(reservation?.service_location_type ?? 'on_site');
   const [note, setNote] = useState(reservation?.note ?? '');
@@ -370,15 +372,16 @@ export function NewReservationDialog({
   // Clear a stale specific-service when the category set changes.
   useEffect(() => { setSpecificItemId(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [catKey]);
 
-  // Picking a specific service sets the booked window to its duration (a 90-min
-  // service → a 90-min window), so the schedule block matches the service.
+  // End is derived, not entered: the booked window = start + the picked service's
+  // duration (a 90-min service → 90-min window), or 60 min when no specific
+  // service is chosen. Keeps the schedule block matching the service and removes
+  // the manual End field. Walk-in mode computes its own window.
   useEffect(() => {
-    if (walkIn || !specificItemId || !start) return;
-    const dur = serviceItems.find((s) => s.id === specificItemId)?.durationMinutes;
-    if (!dur) return;
+    if (walkIn || !start) return;
+    const dur = (specificItemId && serviceItems.find((s) => s.id === specificItemId)?.durationMinutes) || 60;
     setEnd(toLocalInput(new Date(Date.parse(start) + dur * 60000).toISOString()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [specificItemId, start]);
+  }, [specificItemId, start, walkIn]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -416,7 +419,7 @@ export function NewReservationDialog({
         toast.success(isEdit ? 'Reservation updated' : walkIn ? 'Walk-in booked (confirmed)' : 'Reservation created');
         setOpen(false);
         if (!isEdit) {
-          setGuestName(''); setGuestPhone(''); setStart(''); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]); setSeatTogether(false); setShowBedPicker(false); setWalkInMsg(null);
+          setGuestName(''); setGuestPhone(''); setStart(toLocalInput(new Date().toISOString())); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]); setSeatTogether(false); setShowBedPicker(false); setWalkInMsg(null);
         }
       } else toast.error(r.error);
     });
@@ -725,13 +728,15 @@ export function NewReservationDialog({
               </div>
             ) : (
               <>
+                {/* Start date + time as separate fields; end is derived (start +
+                    service duration / 60 min), so there's no manual End input. */}
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="r-start" className="font-semibold">Start *</Label>
-                  <Input id="r-start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} required />
+                  <Label htmlFor="r-start-date" className="font-semibold">Date *</Label>
+                  <Input id="r-start-date" type="date" value={start.slice(0, 10)} onChange={(e) => setStart(`${e.target.value}T${start.slice(11, 16) || '00:00'}`)} required />
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="r-end" className="font-semibold">End *</Label>
-                  <Input id="r-end" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} required />
+                  <Label htmlFor="r-start-time" className="font-semibold">Time *</Label>
+                  <Input id="r-start-time" type="time" value={start.slice(11, 16)} onChange={(e) => setStart(`${start.slice(0, 10) || toLocalInput(new Date().toISOString()).slice(0, 10)}T${e.target.value}`)} required />
                 </div>
               </>
             )}

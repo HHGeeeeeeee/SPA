@@ -52,7 +52,8 @@ export interface ReservationBlock {
 }
 
 function hhmm(min: number): string {
-  const h = Math.floor(min / 60);
+  // Wrap to a 24h clock so a past-midnight board minute (e.g. 1500) reads 01:00.
+  const h = Math.floor((min % 1440) / 60);
   const m = min % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
@@ -140,7 +141,7 @@ export function DayTimeline({
                 className="absolute top-0 bottom-0 flex items-center justify-center text-xs font-bold text-foreground tabular-nums"
                 style={{ left: `${pct(h * 60)}%`, width: `${pct((h + 1) * 60) - pct(h * 60)}%` }}
               >
-                {String(h).padStart(2, '0')}:00
+                {String(h % 24).padStart(2, '0')}:00
               </div>
             ))}
             {/* now marker */}

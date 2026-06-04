@@ -35,11 +35,10 @@ async function fetchData(id: string) {
     .select(`
       id, order_no, status, order_type, service_date, note, branch_id, business_unit_id, source_id, billing_to_id,
       subtotal_cents, discount_cents, total_cents, paid_cents,
-      reservation:reservations ( gender_preference ),
       branch:branches!orders_branch_id_fkey ( code, name ),
       source:customer_sources ( code, name, default_discount_class_id, discount_locked ),
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
-      order_customers ( id, customer_name, customer_phone, seq_no ),
+      order_customers ( id, customer_name, customer_phone, seq_no, gender ),
       payments (
         id, order_customer_id, amount_cents, payment_ref, paid_at,
         method:payment_methods ( display_name ),
@@ -206,7 +205,7 @@ async function fetchData(id: string) {
         }));
     })(),
     // Default the line's therapist-gender filter from the source reservation.
-    defaultGenderPref: one(order.reservation)?.gender_preference ?? null,
+    defaultGenderPref: (order.order_customers ?? []).map((c) => c.gender).find(Boolean) ?? null,
   };
 }
 

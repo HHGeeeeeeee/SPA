@@ -971,16 +971,16 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // already filters these, but a stale/bypassed assignment can't be started.
   if (item?.therapist_id) {
     const group = svc?.service_group ?? null;
-    const [{ data: emp }, { data: caps }, { data: ord0 }] = await Promise.all([
+    const [{ data: emp }, { data: caps }, { data: cust }] = await Promise.all([
       supabase.from('employees').select('gender').eq('id', item.therapist_id).single(),
       supabase.from('employee_service_groups').select('service_group').eq('employee_id', item.therapist_id),
-      supabase.from('orders').select('reservation:reservations ( gender_preference )').eq('id', orderId).single(),
+      supabase.from('order_customers').select('gender').eq('id', item.order_customer_id ?? '').maybeSingle(),
     ]);
     if (!canPerformGroup((caps ?? []).map((c) => c.service_group), group)) {
       return { ok: false, error: 'This therapist is not trained for this service' };
     }
-    const resv = Array.isArray(ord0?.reservation) ? ord0?.reservation[0] : ord0?.reservation;
-    if (!matchesGender(emp?.gender, resv?.gender_preference ?? null)) {
+    // Guest gender preference now lives on the order_customer (createBooking sets it).
+    if (!matchesGender(emp?.gender, cust?.gender ?? null)) {
       return { ok: false, error: 'This therapist does not match the guest’s gender preference' };
     }
   }

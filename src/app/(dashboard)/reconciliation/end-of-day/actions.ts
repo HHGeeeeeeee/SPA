@@ -63,10 +63,9 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
 
   const cashClosed = await isDayCashClosed(branchId, date);
 
-  const { count: noShowCount } = await supabase
-    .from('reservations').select('id', { count: 'exact', head: true })
-    .eq('branch_id', branchId).is('deleted_at', null).in('status', ['reserved', 'confirmed'])
-    .gte('desired_service_start', `${date}T00:00:00+08:00`).lt('desired_service_start', `${nextDay(date)}T00:00:00+08:00`);
+  // Reservations retired — bookings are order_items; the unserved-orders check
+  // (in the close path) covers "work still owed before close".
+  const noShowCount = 0;
 
   const { data: orders } = await supabase
     .from('orders')
@@ -151,12 +150,6 @@ export async function runOrderReview(branchId: string, date: string): Promise<Ac
   const supabase = await createAuditedClient();
   const rec = await ensureRecord(supabase, branchId, date, session?.staffUserId ?? null);
   if (rec?.status === 'closed') return { ok: false, error: 'Business day is already closed' };
-
-  // No-show sweep.
-  await supabase
-    .from('reservations').update({ status: 'no_show' })
-    .eq('branch_id', branchId).is('deleted_at', null).in('status', ['reserved', 'confirmed'])
-    .gte('desired_service_start', `${date}T00:00:00+08:00`).lt('desired_service_start', `${nextDay(date)}T00:00:00+08:00`);
 
   // Every order must be served (none left draft/open/in_service).
   const { data: unserved } = await supabase

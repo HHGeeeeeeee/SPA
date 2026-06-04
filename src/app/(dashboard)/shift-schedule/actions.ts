@@ -51,17 +51,8 @@ async function bedHasConflict(
   endMin: number,
   exclude: { reservationId?: string; itemId?: string },
 ): Promise<boolean> {
-  const { data: rr } = await supabase
-    .from('reservation_resources')
-    .select('reservation:reservations ( id, status, desired_service_start, desired_service_end, deleted_at )')
-    .eq('resource_id', bedId);
-  for (const row of rr ?? []) {
-    const r = one(row.reservation) as { id: string; status: string; desired_service_start: string; desired_service_end: string; deleted_at: string | null } | null;
-    if (!r || r.deleted_at || r.status !== 'confirmed') continue;
-    if (exclude.reservationId && r.id === exclude.reservationId) continue;
-    if (datePHT(r.desired_service_start) !== day) continue;
-    if (overlaps(startMin, endMin, isoMinPHT(r.desired_service_start), isoMinPHT(r.desired_service_end))) return true;
-  }
+  // Bookings are order_items now (the reservations table is retired), so a bed's
+  // occupancy comes entirely from scheduled/in-service order items on that bed.
   const { data: oi } = await supabase
     .from('order_items')
     .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')

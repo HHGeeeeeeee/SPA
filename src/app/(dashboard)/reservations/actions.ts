@@ -382,24 +382,24 @@ export async function getReservationAvailability(input: {
     if (r.resource_type) capacity[r.resource_type] = (capacity[r.resource_type] ?? 0) + 1;
   }
 
-  // Overlapping reservations (still live) → demand per resource type.
+  // Overlapping order-item bookings (scheduled or live) → demand per resource
+  // type. One line = one guest-service = one unit of demand for its category type.
+  const startMs = Date.parse(input.start);
+  const endMs = Date.parse(input.end);
   const { data: overlapping } = await supabase
-    .from('reservations')
-    .select('id, pax, reservation_service_categories ( service_categories ( required_resource_type ) )')
-    .eq('branch_id', input.branch_id)
-    .in('status', ['reserved', 'confirmed'])
-    .is('deleted_at', null)
-    .lt('desired_service_start', input.end)
-    .gt('desired_service_end', input.start);
+    .from('order_items')
+    .select('scheduled_start, actual_start, actual_end, duration_minutes, category:service_categories ( required_resource_type ), order:orders!order_items_order_id_fkey ( branch_id )')
+    .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted']);
   const used: Record<string, number> = {};
-  for (const r of overlapping ?? []) {
-    if (input.exclude_id && r.id === input.exclude_id) continue;
-    const types = new Set<string>();
-    for (const link of r.reservation_service_categories ?? []) {
-      const cat = one(link.service_categories);
-      if (cat?.required_resource_type) types.add(cat.required_resource_type);
-    }
-    for (const t of types) used[t] = (used[t] ?? 0) + (r.pax ?? 1);
+  for (const it of overlapping ?? []) {
+    if (one(it.order)?.branch_id !== input.branch_id) continue;
+    const startIso = it.actual_start ?? it.scheduled_start;
+    if (!startIso) continue;
+    const s = Date.parse(startIso);
+    const e = it.actual_end ? Date.parse(it.actual_end) : s + (it.duration_minutes ?? 60) * 60000;
+    if (!(s < endMs && startMs < e)) continue;
+    const t = one(it.category)?.required_resource_type;
+    if (t) used[t] = (used[t] ?? 0) + 1;
   }
 
   const byType: Record<string, { capacity: number; used: number }> = {};
@@ -432,54 +432,30 @@ async function computeBusyResourceIds(
   end: string,
   excludeReservationId?: string | null,
 ): Promise<Set<string>> {
+  void excludeReservationId; // legacy param (reservations retired); create has no self line to exclude
   const supabase = await createAuditedClient();
   const startMs = Date.parse(start);
   const endMs = Date.parse(end);
   const busy = new Set<string>();
-  const widenLo = new Date(startMs - OCCUPANCY_BUF_MS).toISOString();
-  const widenHi = new Date(endMs + OCCUPANCY_BUF_MS).toISOString();
 
-  // Live orders sitting on a bed — actual times, expanded by prep + cleanup.
-  const lookback = new Date(startMs - 12 * 3600 * 1000).toISOString();
+  // A booked OR live order item on a bed holds it: a `scheduled` line uses its
+  // planned time, a started line uses actual. Window widened by prep + cleanup.
+  // (Bookings are order_items now — this is the whole occupancy picture.)
   const { data: items } = await supabase
     .from('order_items')
-    .select('resource_id, actual_start, actual_end, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id )')
+    .select('resource_id, scheduled_start, actual_start, actual_end, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id )')
     .not('resource_id', 'is', null)
-    .not('actual_start', 'is', null)
-    .gte('actual_start', lookback)
-    .lt('actual_start', widenHi);
+    .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted']);
   for (const it of items ?? []) {
     if (one(it.order)?.branch_id !== branchId || !it.resource_id) continue;
+    const startIso = it.actual_start ?? it.scheduled_start;
+    if (!startIso) continue;
     const svc = one(it.service);
-    const s0 = Date.parse(it.actual_start as string);
+    const s0 = Date.parse(startIso);
     const e0 = it.actual_end ? Date.parse(it.actual_end) : s0 + (it.duration_minutes ?? 60) * 60000;
     const s = s0 - (svc?.prep_before_minutes ?? 0) * 60000;
     const e = e0 + (svc?.cleanup_after_minutes ?? 0) * 60000;
     if (s < endMs && startMs < e) busy.add(it.resource_id);
-  }
-
-  // Beds pinned by other overlapping reservations. Only a *confirmed* reservation
-  // actually holds its bed (pending ones are tentative); an Overdue one
-  // auto-releases its bed, so its pin no longer blocks others. Window expanded by
-  // the booked service's prep + cleanup (0 when no specific service was chosen).
-  const graceMin = await getReservationGraceMinutes();
-  const { data: pins } = await supabase
-    .from('reservation_resources')
-    .select('resource_id, reservations!inner ( id, branch_id, status, deleted_at, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ) )')
-    .eq('reservations.branch_id', branchId)
-    .eq('reservations.status', 'confirmed')
-    .is('reservations.deleted_at', null)
-    .lt('reservations.desired_service_start', widenHi)
-    .gt('reservations.desired_service_end', widenLo);
-  for (const p of pins ?? []) {
-    const resv = one(p.reservations);
-    if (!resv || !p.resource_id) continue;
-    if (excludeReservationId && resv.id === excludeReservationId) continue;
-    if (isReservationOverdue({ status: resv.status, desiredStartIso: resv.desired_service_start, graceMin })) continue;
-    const svc = one(resv.service);
-    const rs = Date.parse(resv.desired_service_start) - (svc?.prep_before_minutes ?? 0) * 60000;
-    const re = Date.parse(resv.desired_service_end) + (svc?.cleanup_after_minutes ?? 0) * 60000;
-    if (rs < endMs && startMs < re) busy.add(p.resource_id);
   }
   return busy;
 }
@@ -591,15 +567,6 @@ export async function nextAvailableSlot(input: {
     const s = Date.parse(it.actual_start as string);
     const e0 = it.actual_end ? Date.parse(it.actual_end) : s + (it.duration_minutes ?? 60) * 60_000;
     ends.push(e0 + (one(it.service)?.cleanup_after_minutes ?? 0) * 60_000);
-  }
-  const { data: pins } = await supabase
-    .from('reservation_resources')
-    .select('reservations!inner ( branch_id, status, deleted_at, desired_service_end, service:service_items ( cleanup_after_minutes ) )')
-    .in('resource_id', typeIds)
-    .eq('reservations.status', 'confirmed').is('reservations.deleted_at', null);
-  for (const p of pins ?? []) {
-    const r = one(p.reservations);
-    if (r?.branch_id === input.branch_id) ends.push(Date.parse(r.desired_service_end) + (one(r.service)?.cleanup_after_minutes ?? 0) * 60_000);
   }
   for (const b of thBusy) ends.push(b.e);
   for (const p of pool) {

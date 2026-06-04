@@ -88,6 +88,9 @@ interface OrderCustomer {
   id: string;
   customer_name: string;
   customer_phone: string | null;
+  // Preferred therapist gender for this guest (applies to all their service
+  // lines). null / ANY_GENDER = no preference. M / F = that gender only.
+  gender: string | null;
   seq_no: number;
   subtotal_cents: number;
   paid_cents: number;
@@ -138,7 +141,6 @@ interface Props {
   paymentMethods: { id: string; code: string; display_name: string }[];
   storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   capabilityByEmployee: Record<string, string[]>;
-  defaultGenderPref?: string | null; // from the source reservation, if any
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
   /** Active managers with a PIN set — drives the inline approval picker
    *  when staff picks No charge on the Interrupt dialog. */
@@ -209,7 +211,6 @@ export function OrderWorkspace({
   pinManagers,
   viewerIsManager,
   capabilityByEmployee,
-  defaultGenderPref = null,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -224,6 +225,7 @@ export function OrderWorkspace({
 
   // add customer
   const [custName, setCustName] = useState('');
+  const [custPhone, setCustPhone] = useState('');
   // inline rename of an existing guest (fill in a converted "Guest 2" placeholder)
   const [editCust, setEditCust] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -237,9 +239,6 @@ export function OrderWorkspace({
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
   const [resourceId, setResourceId] = useState(NONE);
-  // Default the line's gender filter from the reservation (M/F), else Any.
-  const initialGenderPref = defaultGenderPref === 'M' || defaultGenderPref === 'F' ? defaultGenderPref : ANY_GENDER;
-  const [genderPref, setGenderPref] = useState(initialGenderPref);
   const noDiscount = discountClasses.find((d) => d.code === 'DIS-00');
   // New service lines default to the customer source's discount class (if it
   // still exists), else No Discount. Always overridable per line.
@@ -270,14 +269,39 @@ export function OrderWorkspace({
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
   const canRunService = ['open', 'in_service'].includes(order.status);
 
+  // Therapist-gender preference now lives on the guest, not the service line.
+  // The service editor (only ever open for one guest at a time) filters its
+  // therapist picker / auto-assign by the active guest's preference.
+  const activeGuestGender = (() => {
+    const g = customers.find((c) => c.id === activeCustomer)?.gender;
+    return g === 'M' || g === 'F' ? g : ANY_GENDER;
+  })();
+
   function doAddCustomer() {
     startTransition(async () => {
       const r = await addOrderCustomer({
         order_id: order.id,
         customer_name: custName.trim() || null,
-        customer_phone: null,
+        customer_phone: custPhone.trim() || null,
       });
-      if (r.ok) { setCustName(''); toast.success('Guest added'); router.refresh(); }
+      if (r.ok) { setCustName(''); setCustPhone(''); toast.success('Guest added'); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+
+  // Set a guest's preferred therapist gender (persists to order_customers.gender).
+  function doSetGuestGender(c: OrderCustomer, g: string) {
+    startTransition(async () => {
+      const r = await updateOrderCustomer({
+        id: c.id,
+        order_id: order.id,
+        customer_name: c.customer_name,
+        customer_phone: c.customer_phone,
+        gender: g === ANY_GENDER ? null : g,
+      });
+      // The therapist picker re-filters to the new preference and the server
+      // re-validates on assign/start, so a stale pick can't actually be saved.
+      if (r.ok) router.refresh();
       else toast.error(r.error);
     });
   }
@@ -299,7 +323,7 @@ export function OrderWorkspace({
     setActiveCustomer(null);
     setEditingItemId(null);
     setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
-    setTherapistId(NONE); setResourceId(NONE); setGenderPref(initialGenderPref);
+    setTherapistId(NONE); setResourceId(NONE);
   }
 
   function doAddItem(customerId: string) {
@@ -330,7 +354,6 @@ export function OrderWorkspace({
     setResourceId(it.resource_id ?? NONE);
     setDiscountId(it.discount_class_id ?? defaultDiscountId);
     setDiscountOverride(it.discount_amount_cents > 0 ? String(it.discount_amount_cents / 100) : '');
-    setGenderPref(initialGenderPref);
   }
 
   function doSaveItem() {
@@ -381,7 +404,7 @@ export function OrderWorkspace({
     const matchTherapist = (e: { id: string; gender?: string | null }) =>
       !takenTherapists.has(e.id)
       && canPerformGroup(capabilityByEmployee[e.id] ?? [], neededGroup)
-      && matchesGender(e.gender, genderPref);
+      && matchesGender(e.gender, activeGuestGender);
     // Priority: this branch's own (home) therapists → others on a cross-branch
     // shift here → borrow from the sharing group. A home therapist is always
     // preferred over someone just visiting or borrowed.
@@ -563,9 +586,9 @@ export function OrderWorkspace({
   // A therapist is offered only if they can perform the chosen service group.
   // No group picked yet → show everyone (the picker is disabled until a group exists anyway).
   const canDoGroup = (id: string) => canPerformGroup(capabilityByEmployee[id] ?? [], groupSel || null);
-  // Gender preference for this line: only offer therapists of that gender.
+  // Gender preference comes from the active guest: only offer matching therapists.
   const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
-  const matchGender = (id: string) => matchesGender(genderOf.get(id), genderPref);
+  const matchGender = (id: string) => matchesGender(genderOf.get(id), activeGuestGender);
   // A therapist mid-service elsewhere can't take a new one — show them but
   // disable so they can't be picked (auto-assign already skips them too).
   const thisBranchOptions = employees
@@ -700,6 +723,10 @@ export function OrderWorkspace({
                 <Label className="text-xs font-semibold">Customer name</Label>
                 <Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Optional" className="w-44" onKeyDown={(e) => { if (e.key === 'Enter') doAddCustomer(); }} />
               </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold">Phone</Label>
+                <Input value={custPhone} onChange={(e) => setCustPhone(e.target.value)} placeholder="Optional" className="w-36" onKeyDown={(e) => { if (e.key === 'Enter') doAddCustomer(); }} />
+              </div>
               <Button size="sm" onClick={doAddCustomer} disabled={pending}>
                 <UserPlus className="size-4" /> Add Customer
               </Button>
@@ -767,6 +794,25 @@ export function OrderWorkspace({
                 </CardTitle>
               )}
               <div className="flex items-center gap-2 shrink-0">
+                {/* Preferred therapist gender is a guest attribute (applies to
+                    all of this guest's services), not a per-service setting. */}
+                {order.editable ? (
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Therapist gender</Label>
+                    <Select
+                      items={GENDER_OPTS}
+                      value={c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER}
+                      onValueChange={(v) => doSetGuestGender(c, v ?? ANY_GENDER)}
+                    >
+                      <SelectTrigger className="h-8 w-32" aria-label="Preferred therapist gender"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {GENDER_OPTS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (c.gender === 'M' || c.gender === 'F') ? (
+                  <span className="text-xs font-semibold text-muted-foreground">{c.gender === 'F' ? 'Female only' : 'Male only'}</span>
+                ) : null}
                 <span className="text-sm font-bold tabular">{peso(c.subtotal_cents)}</span>
                 {order.editable && customerRemovable(c) && (
                   <Button size="icon-sm" variant="ghost" onClick={() => doRemoveCustomer(c.id)} disabled={pending} title="Remove guest">
@@ -1038,7 +1084,7 @@ export function OrderWorkspace({
                           <Wand2 className="size-3.5" /> Auto-assign
                         </Button>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <div className="max-w-[15rem]">
                           <Label className="text-xs font-semibold">Therapist</Label>
                           <Select items={empOptions} value={therapistId} onValueChange={(v) => setTherapistId(v ?? NONE)}>
@@ -1089,24 +1135,6 @@ export function OrderWorkspace({
                                   </SelectGroup>
                                 ))
                               )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="max-w-[15rem]">
-                          <Label className="text-xs font-semibold">Therapist gender</Label>
-                          <Select
-                            items={GENDER_OPTS}
-                            value={genderPref}
-                            onValueChange={(v) => {
-                              const g = v ?? ANY_GENDER;
-                              setGenderPref(g);
-                              // Drop a now-mismatched selection so you can't keep a wrong-gender therapist.
-                              if (g !== ANY_GENDER && therapistId !== NONE && genderOf.get(therapistId) !== g) setTherapistId(NONE);
-                            }}
-                          >
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {GENDER_OPTS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>

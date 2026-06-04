@@ -204,8 +204,6 @@ async function fetchData(id: string) {
             .filter(Boolean) as { id: string; name: string }[],
         }));
     })(),
-    // Default the line's therapist-gender filter from the source reservation.
-    defaultGenderPref: (order.order_customers ?? []).map((c) => c.gender).find(Boolean) ?? null,
   };
 }
 
@@ -214,7 +212,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, defaultGenderPref } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -244,6 +242,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       id: c.id,
       customer_name: c.customer_name,
       customer_phone: c.customer_phone,
+      gender: c.gender,
       seq_no: c.seq_no,
       subtotal_cents: subtotal,
       paid_cents: paid,
@@ -489,7 +488,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         paymentMethods={paymentMethods}
         storedValueCards={storedValueCards}
         capabilityByEmployee={capabilityByEmployee}
-        defaultGenderPref={defaultGenderPref}
         paymentPolicy={paymentPolicy}
       />
     </div>

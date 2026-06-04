@@ -2164,7 +2164,6 @@ export type Database = {
           payment_method_id: string | null
           posting_error: string | null
           posting_status: string | null
-          reservation_id: string | null
           service_date: string
           service_location_type: string | null
           source_id: string | null
@@ -2193,7 +2192,6 @@ export type Database = {
           payment_method_id?: string | null
           posting_error?: string | null
           posting_status?: string | null
-          reservation_id?: string | null
           service_date: string
           service_location_type?: string | null
           source_id?: string | null
@@ -2222,7 +2220,6 @@ export type Database = {
           payment_method_id?: string | null
           posting_error?: string | null
           posting_status?: string | null
-          reservation_id?: string | null
           service_date?: string
           service_location_type?: string | null
           source_id?: string | null
@@ -2274,13 +2271,6 @@ export type Database = {
             columns: ["payment_method_id"]
             isOneToOne: false
             referencedRelation: "payment_methods"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "orders_reservation_id_fkey"
-            columns: ["reservation_id"]
-            isOneToOne: false
-            referencedRelation: "reservations"
             referencedColumns: ["id"]
           },
           {
@@ -2479,219 +2469,6 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: []
-      }
-      reservation_resources: {
-        Row: {
-          reservation_id: string
-          resource_id: string
-        }
-        Insert: {
-          reservation_id: string
-          resource_id: string
-        }
-        Update: {
-          reservation_id?: string
-          resource_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "reservation_resources_reservation_id_fkey"
-            columns: ["reservation_id"]
-            isOneToOne: false
-            referencedRelation: "reservations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservation_resources_resource_id_fkey"
-            columns: ["resource_id"]
-            isOneToOne: false
-            referencedRelation: "resources"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      reservation_service_categories: {
-        Row: {
-          reservation_id: string
-          service_category_id: string
-        }
-        Insert: {
-          reservation_id: string
-          service_category_id: string
-        }
-        Update: {
-          reservation_id?: string
-          service_category_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "reservation_service_categories_reservation_id_fkey"
-            columns: ["reservation_id"]
-            isOneToOne: false
-            referencedRelation: "reservations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservation_service_categories_service_category_id_fkey"
-            columns: ["service_category_id"]
-            isOneToOne: false
-            referencedRelation: "service_categories"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      reservations: {
-        Row: {
-          billing_to_id: string | null
-          branch_id: string
-          created_at: string
-          created_by: string | null
-          created_by_guest_email: string | null
-          created_by_staff_id: string | null
-          deleted_at: string | null
-          deposit_amount_cents: number
-          deposit_payment_id: string | null
-          desired_service_end: string
-          desired_service_start: string
-          external_room_no: string | null
-          gender_preference: string | null
-          guest_name: string
-          guest_phone: string | null
-          id: string
-          note: string | null
-          pax: number
-          rescheduled_from_order_item_id: string | null
-          reservation_no: string
-          seat_together: boolean
-          service_category_id: string | null
-          service_item_id: string | null
-          service_location_type: string | null
-          source_id: string | null
-          source_type: string
-          status: string
-          updated_at: string
-          updated_by: string | null
-        }
-        Insert: {
-          billing_to_id?: string | null
-          branch_id: string
-          created_at?: string
-          created_by?: string | null
-          created_by_guest_email?: string | null
-          created_by_staff_id?: string | null
-          deleted_at?: string | null
-          deposit_amount_cents?: number
-          deposit_payment_id?: string | null
-          desired_service_end: string
-          desired_service_start: string
-          external_room_no?: string | null
-          gender_preference?: string | null
-          guest_name: string
-          guest_phone?: string | null
-          id?: string
-          note?: string | null
-          pax: number
-          rescheduled_from_order_item_id?: string | null
-          reservation_no: string
-          seat_together?: boolean
-          service_category_id?: string | null
-          service_item_id?: string | null
-          service_location_type?: string | null
-          source_id?: string | null
-          source_type: string
-          status?: string
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Update: {
-          billing_to_id?: string | null
-          branch_id?: string
-          created_at?: string
-          created_by?: string | null
-          created_by_guest_email?: string | null
-          created_by_staff_id?: string | null
-          deleted_at?: string | null
-          deposit_amount_cents?: number
-          deposit_payment_id?: string | null
-          desired_service_end?: string
-          desired_service_start?: string
-          external_room_no?: string | null
-          gender_preference?: string | null
-          guest_name?: string
-          guest_phone?: string | null
-          id?: string
-          note?: string | null
-          pax?: number
-          rescheduled_from_order_item_id?: string | null
-          reservation_no?: string
-          seat_together?: boolean
-          service_category_id?: string | null
-          service_item_id?: string | null
-          service_location_type?: string | null
-          source_id?: string | null
-          source_type?: string
-          status?: string
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "fk_res_deposit_payment"
-            columns: ["deposit_payment_id"]
-            isOneToOne: false
-            referencedRelation: "payments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_billing_to_id_fkey"
-            columns: ["billing_to_id"]
-            isOneToOne: false
-            referencedRelation: "billing_destinations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_branch_id_fkey"
-            columns: ["branch_id"]
-            isOneToOne: false
-            referencedRelation: "branches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_created_by_staff_id_fkey"
-            columns: ["created_by_staff_id"]
-            isOneToOne: false
-            referencedRelation: "staff_users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_rescheduled_from_order_item_id_fkey"
-            columns: ["rescheduled_from_order_item_id"]
-            isOneToOne: false
-            referencedRelation: "order_items"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_service_category_id_fkey"
-            columns: ["service_category_id"]
-            isOneToOne: false
-            referencedRelation: "service_categories"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_service_item_id_fkey"
-            columns: ["service_item_id"]
-            isOneToOne: false
-            referencedRelation: "service_items"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_source_id_fkey"
-            columns: ["source_id"]
-            isOneToOne: false
-            referencedRelation: "customer_sources"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       resource_status_log: {
         Row: {

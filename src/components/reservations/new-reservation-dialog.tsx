@@ -26,7 +26,6 @@ import {
 
 import {
   createBooking,
-  updateReservation,
   getReservationAvailability,
   getFreeBeds,
   nextAvailableSlot,
@@ -412,9 +411,7 @@ export function NewReservationDialog({
       rescheduled_from_order_item_id: !isEdit && rescheduleFrom ? rescheduleFrom.itemId : null,
     };
     startTransition(async () => {
-      const r = isEdit
-        ? await updateReservation({ id: reservation!.id, ...payload })
-        : await createBooking(payload);
+      const r = await createBooking(payload);
       if (r.ok) {
         toast.success(isEdit ? 'Reservation updated' : walkIn ? 'Walk-in booked (confirmed)' : 'Reservation created');
         setOpen(false);

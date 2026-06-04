@@ -2,7 +2,6 @@ import Link from 'next/link';
 
 import { Card } from '@/components/ui/card';
 import { CleanupSegment } from '@/components/shift-schedule/cleanup-segment';
-import { ReservationConvertButton } from '@/components/shift-schedule/reservation-convert-button';
 
 export interface DayServiceBlock {
   // Three stacked lines: primary name, service category, time range.
@@ -153,48 +152,6 @@ export function DayTimeline({
           </div>
         </div>
 
-        {/* Upcoming reservations — unassigned demand, stacked on its own lane.
-            Capped to RES_MAX_LANES tall; overflow scrolls inside the lane. */}
-        {reservations.length > 0 && (() => {
-          const { lanes, count } = assignLanes(reservations);
-          return (
-            <div className="flex border-b-2 border-violet-500/30 bg-violet-500/5">
-              <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center sticky left-0 z-20 bg-card">
-                <div className="font-semibold text-sm text-violet-700 dark:text-violet-300">Reservations</div>
-                <div className="font-bold text-xs text-muted-foreground">{reservations.length} upcoming</div>
-              </div>
-              <div className="relative flex-1 my-1" style={{ height: count * LANE_H }}>
-                {hours.map((h) => (
-                  <div key={h} className="absolute top-0 bottom-0 border-l border-border/60" style={{ left: `${pct(h * 60)}%` }} />
-                ))}
-                {reservations.map((s, i) => (
-                  <ReservationConvertButton
-                    key={s.id}
-                    reservationId={s.id}
-                    guest={s.guest}
-                    pending={s.pending}
-                    className={`absolute rounded border border-dashed px-1.5 flex flex-col items-center justify-center text-center overflow-hidden text-[10px] leading-tight cursor-pointer ${
-                      s.overdue
-                        ? 'border-red-500/70 bg-red-500/20 text-red-900 dark:text-red-100 hover:bg-red-500/30'
-                        : s.pending
-                          ? 'border-amber-500/70 bg-amber-500/15 text-amber-900 dark:text-amber-100 hover:bg-amber-500/25'
-                          : 'border-violet-500/70 bg-violet-500/20 text-violet-950 dark:text-violet-100 hover:bg-violet-500/30'
-                    }`}
-                    style={{ left: `${pct(s.startMin)}%`, width: `${Math.max(2, pct(s.endMin) - pct(s.startMin))}%`, top: lanes[i] * LANE_H + 3, height: LANE_H - 6 }}
-                    title={`${s.overdue ? 'Overdue · ' : s.pending ? 'Pending · ' : 'Confirmed · '}click to convert · ${s.guest}${s.line2 ? ` · ${s.line2}` : ''}${s.external ? ' · in-room' : ''} · ${hhmm(s.startMin)}–${hhmm(s.endMin)}`}
-                  >
-                    <span className="truncate font-bold">{s.guest}{s.external && ' 🏨'}{s.overdue && ' ⚠'}</span>
-                    {s.line2 && <span className="truncate font-semibold opacity-90">{s.line2}</span>}
-                    <span className="truncate font-semibold tabular-nums opacity-80">{hhmm(s.startMin)}–{hhmm(s.endMin)}</span>
-                  </ReservationConvertButton>
-                ))}
-                {showNow && (
-                  <div className="absolute top-0 bottom-0 z-10 w-px bg-red-500" style={{ left: `${pct(nowMin!)}%` }} />
-                )}
-              </div>
-            </div>
-          );
-        })()}
 
         {rows.length === 0 ? (
           <div className="p-8 text-center text-sm font-semibold text-muted-foreground">No therapists scheduled this day.</div>
@@ -243,9 +200,7 @@ export function DayTimeline({
                   );
                   return (
                     <div key={i} className="contents">
-                      {s.reservation && s.reservationId ? (
-                        <ReservationConvertButton reservationId={s.reservationId} guest={s.line1} className={blockClass} style={blockStyle} title={blockTitle}>{inner}</ReservationConvertButton>
-                      ) : s.orderId ? (
+                      {s.orderId ? (
                         <Link href={`/sales-orders/${s.orderId}`} className={blockClass} style={blockStyle} title={blockTitle}>{inner}</Link>
                       ) : (
                         <div className={blockClass} style={blockStyle} title={blockTitle}>{inner}</div>

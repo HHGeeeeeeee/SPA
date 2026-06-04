@@ -63,7 +63,7 @@ export const mainNavItems: NavItem[] = [
   // Pending Reschedules child temporarily disabled (2026-05-31) — re-enable
   // when the reschedule handling option is re-added to interrupt-taxonomy.
   { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },
-  { label: 'Reservations', href: '/reservations', icon: CalendarDays },
+
   { label: 'Customers', href: '/customers', icon: Users, managerOnly: true },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the
   // page/route stays but is off the nav.

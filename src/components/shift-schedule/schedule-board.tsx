@@ -17,8 +17,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { ReservationConvertButton } from '@/components/shift-schedule/reservation-convert-button';
-import { placeReservationOnBed, moveScheduledOrderItem } from '@/app/(dashboard)/shift-schedule/actions';
+import { moveScheduledOrderItem } from '@/app/(dashboard)/shift-schedule/actions';
 
 export interface BoardBed {
   id: string;
@@ -398,9 +397,6 @@ export function ScheduleBoard({
   // (confirmed, so it holds the clicked bed/time). Walk-ins use the same flow.
   const [addKey, setAddKey] = useState(0);
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
-  // Tap a reservation block → confirm / convert it (seat the guest), or Edit it.
-  const [convert, setConvert] = useState<{ reservationId: string; guest: string; pending: boolean; editData?: ReservationItem } | null>(null);
-  const [editRes, setEditRes] = useState<ReservationItem | null>(null);
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -544,8 +540,7 @@ export function ScheduleBoard({
   void bedCount;
 
   function openBlock(b: BoardBlock) {
-    if (b.kind === 'order' && b.orderId) router.push(`/sales-orders/${b.orderId}`);
-    else if (b.kind === 'reservation') setConvert({ reservationId: b.refId, guest: b.guest ?? b.line1, pending: b.variant === 'pending', editData: b.editData });
+    if (b.orderId) router.push(`/sales-orders/${b.orderId}`);
   }
 
   function onEmptyClick(bedId: string, min: number) {
@@ -577,9 +572,7 @@ export function ScheduleBoard({
     newStart = Math.min(windowEndMin - 15, Math.max(windowStartMin, newStart));
     if (bedId === block.bedId && newStart === block.startMin) return; // no-op
     startTransition(async () => {
-      const r = block.kind === 'reservation'
-        ? await placeReservationOnBed({ reservation_id: block.refId, bed_id: bedId, start_min: newStart, day, from_bed: block.bedId })
-        : await moveScheduledOrderItem({ item_id: block.refId, bed_id: bedId, start_min: newStart, day });
+      const r = await moveScheduledOrderItem({ item_id: block.refId, bed_id: bedId, start_min: newStart, day });
       if (r.ok) { toast.success('Schedule updated'); router.refresh(); }
       else toast.error(r.error);
     });
@@ -777,8 +770,6 @@ export function ScheduleBoard({
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-muted-foreground">
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-violet-500/70 bg-violet-500/25" /> Reservation — confirmed</span>
-        <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-amber-500 bg-amber-400/45" /> Reservation — pending</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-primary/50 bg-primary/30" /> Order — scheduled</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-blue-500/80" /> In service</span>
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded bg-zinc-400/70 dark:bg-zinc-500/70" /> Completed</span>
@@ -802,31 +793,6 @@ export function ScheduleBoard({
         />
       )}
 
-      {convert && (
-        <ReservationConvertButton
-          triggerless
-          reservationId={convert.reservationId}
-          guest={convert.guest}
-          pending={convert.pending}
-          open
-          onOpenChange={(o) => { if (!o) setConvert(null); }}
-          onEdit={convert.editData ? () => { const ed = convert.editData!; setConvert(null); setEditRes(ed); } : undefined}
-        />
-      )}
-
-      {editRes && (
-        <NewReservationDialog
-          key={editRes.id}
-          mode="edit"
-          branches={dialog.branches}
-          sources={dialog.sources}
-          serviceCategories={dialog.serviceCategories}
-          serviceItems={dialog.serviceItems}
-          reservation={editRes}
-          open
-          onOpenChange={(o) => { if (!o) { setEditRes(null); router.refresh(); } }}
-        />
-      )}
     </DndContext>
   );
 }

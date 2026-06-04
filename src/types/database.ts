@@ -1914,6 +1914,7 @@ export type Database = {
           external_room_no: string | null
           final_amount_cents: number
           id: string
+          interruption_approved_by_user_id: string | null
           interruption_at: string | null
           interruption_handling: string | null
           interruption_notes: string | null
@@ -1953,6 +1954,7 @@ export type Database = {
           external_room_no?: string | null
           final_amount_cents: number
           id?: string
+          interruption_approved_by_user_id?: string | null
           interruption_at?: string | null
           interruption_handling?: string | null
           interruption_notes?: string | null
@@ -1992,6 +1994,7 @@ export type Database = {
           external_room_no?: string | null
           final_amount_cents?: number
           id?: string
+          interruption_approved_by_user_id?: string | null
           interruption_at?: string | null
           interruption_handling?: string | null
           interruption_notes?: string | null
@@ -2035,6 +2038,13 @@ export type Database = {
             columns: ["discount_class_id"]
             isOneToOne: false
             referencedRelation: "discount_classes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_interruption_approved_by_user_id_fkey"
+            columns: ["interruption_approved_by_user_id"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
             referencedColumns: ["id"]
           },
           {

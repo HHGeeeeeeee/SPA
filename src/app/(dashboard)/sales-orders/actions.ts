@@ -13,6 +13,14 @@ import {
   INTERRUPT_REASON_CODES_BY_HANDLING,
   interruptReasonLabel,
 } from '@/lib/interrupt-taxonomy';
+import { verifyManagerPin, listPinCapableManagers } from '@/lib/manager-pin';
+
+/** Surface the manager list to client components that need to render a PIN
+ *  approval picker (e.g. Interrupt with No charge). Re-exported here so the
+ *  dialog imports stay inside sales-orders without a cross-feature dep. */
+export async function getPinCapableManagers() {
+  return listPinCapableManagers();
+}
 
 // Shared guard for operational order actions: enforce a logged-in session AND
 // branch scoping by looking up the order's branch_id. Used by the service-flow
@@ -914,6 +922,13 @@ const interruptSchema = z.object({
   // we keep the input shape backwards compatible. New UI submits via
   // reason_code + notes and leaves this empty.
   reason: z.string().min(3).max(300).optional(),
+  // Manager-PIN approval pair. Required only when a non-manager caller
+  // submits handling='no_charge' (real waive-charge action — not the
+  // switchService internal path). When omitted the server returns the
+  // sentinel error 'NEED_MANAGER_PIN' so the client can open the PIN
+  // entry UI without losing the rest of the form state.
+  manager_user_id: z.string().uuid().optional().nullable(),
+  manager_pin: z.string().regex(/^\d{4,6}$/).optional().nullable(),
 });
 
 // Interrupt an in-service line. Handling decides the charge: full keeps it,
@@ -935,6 +950,30 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
     const allowed = INTERRUPT_REASON_CODES_BY_HANDLING[d.handling as 'no_charge' | 'full_charge' | 'reschedule'] ?? [];
     if (!allowed.includes(d.reason_code)) {
       return { ok: false, error: 'Reason does not match the handling mode' };
+    }
+  }
+
+  // Manager-PIN gate for No charge — staff can't waive a charge unilaterally.
+  // Manager (or admin) callers go through directly; staff must enclose a
+  // manager_user_id + manager_pin in the payload. The internal switchService
+  // path is operational (not a manager decision) so it's exempt.
+  let approverUserId: string | null = null;
+  if (d.handling === 'no_charge' && d.reason_code !== '__switch_service__') {
+    const session = await currentSession();
+    if (!isManager(session)) {
+      if (!d.manager_user_id || !d.manager_pin) {
+        // Sentinel error — client opens the PIN entry sheet without losing
+        // the rest of the form data, then re-submits with both fields set.
+        return { ok: false, error: 'NEED_MANAGER_PIN' };
+      }
+      const pinRes = await verifyManagerPin(d.manager_user_id, d.manager_pin);
+      if (!pinRes.ok) return { ok: false, error: pinRes.error };
+      approverUserId = pinRes.approverUserId;
+    } else {
+      // Caller is themselves a manager — record their own id as the approver
+      // for a clean audit trail (vs. leaving it null and inferring from
+      // changed_by, which is harder to query).
+      approverUserId = session?.staffUserId ?? null;
     }
   }
 
@@ -987,6 +1026,9 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
       // from the Pending Reschedules list once the make-up service has been
       // rendered (or the customer abandoned the request).
       reschedule_fulfilled_at: null,
+      // Who approved the waive (no_charge). null for full_charge or for the
+      // switchService internal path (not a manager decision).
+      interruption_approved_by_user_id: approverUserId,
     })
     .eq('id', d.item_id);
   if (error) return { ok: false, error: error.message };

@@ -57,9 +57,11 @@ export interface NavItem {
 
 export const mainNavItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  // Calendar first — the desk's daily-start workflow (set up the
-  // therapist/room board) precedes taking individual orders against it.
+  // Calendar (the live per-day board) + Shift Schedule (the weekly roster that
+  // feeds it) lead the list — the desk's daily-start workflow precedes taking
+  // individual orders against it.
   { label: 'Calendar', href: '/calendar', icon: CalendarClock },
+  { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarDays },
   // Pending Reschedules child temporarily disabled (2026-05-31) — re-enable
   // when the reschedule handling option is re-added to interrupt-taxonomy.
   { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },

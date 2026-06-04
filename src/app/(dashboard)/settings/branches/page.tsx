@@ -24,7 +24,7 @@ async function fetchData() {
     supabase
       .from('branches')
       .select(`
-        id, code, name, active, reservation_enabled, open_time, close_time, therapist_share_group, commission_policy_id, created_at, updated_at,
+        id, code, name, active, open_time, close_time, therapist_share_group, commission_policy_id, created_at, updated_at,
         branch_business_units ( business_unit_id, business_units ( id, code, name ) )
       `)
       .order('code'),
@@ -92,7 +92,6 @@ export default async function BranchesPage() {
               <TableHead className="w-72 font-bold">Name</TableHead>
               <TableHead className="font-bold whitespace-nowrap">Business Unit</TableHead>
               <TableHead className="font-bold whitespace-nowrap">Sharing Group</TableHead>
-              <TableHead className="w-28 font-bold">Reservations</TableHead>
               <TableHead className="w-32 font-bold">Status</TableHead>
               <TableHead className="w-48 font-bold">Updated</TableHead>
               <TableHead className="w-12" />
@@ -101,7 +100,7 @@ export default async function BranchesPage() {
           <TableBody>
             {branches.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={7} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
                     No branches yet. Click &ldquo;Add Branch&rdquo; above to create the
                     first one.
@@ -118,7 +117,6 @@ export default async function BranchesPage() {
                   code: b.code,
                   name: b.name,
                   business_unit_ids: units.map((u) => u.id),
-                  reservation_enabled: b.reservation_enabled,
                   open_time: b.open_time,
                   close_time: b.close_time,
                   therapist_share_group: b.therapist_share_group,
@@ -150,13 +148,6 @@ export default async function BranchesPage() {
                         </Badge>
                       ) : (
                         <span className="text-muted-foreground text-sm">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {b.reservation_enabled ? (
-                        <Badge variant="default" className="font-bold">On</Badge>
-                      ) : (
-                        <span className="text-xs font-semibold text-muted-foreground">Off</span>
                       )}
                     </TableCell>
                     <TableCell>

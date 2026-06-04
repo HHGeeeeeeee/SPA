@@ -67,7 +67,6 @@ async function fetchData() {
       .from('branches')
       .select('id, code, name, branch_business_units ( business_unit_id )')
       .eq('active', true)
-      .eq('reservation_enabled', true)
       .order('code'),
     supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
     supabase

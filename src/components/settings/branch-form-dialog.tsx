@@ -15,7 +15,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -31,7 +30,7 @@ const NONE = '__none__';
 interface CommissionClass { id: string; class_code: string; name: string; commission_rate: number }
 interface BranchFormDialogProps {
   mode?: 'create' | 'edit';
-  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled?: boolean; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[] };
+  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[] };
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: CommissionClass[];
@@ -60,7 +59,6 @@ export function BranchFormDialog({
   const [code, setCode] = useState(branch?.code ?? '');
   const [name, setName] = useState(branch?.name ?? '');
   const [unitIds, setUnitIds] = useState<string[]>(branch?.business_unit_ids ?? []);
-  const [reservationEnabled, setReservationEnabled] = useState(branch?.reservation_enabled ?? true);
   const [openTime, setOpenTime] = useState(branch?.open_time?.slice(0, 5) ?? '10:00');
   const [closeTime, setCloseTime] = useState(branch?.close_time?.slice(0, 5) ?? '02:00');
   const [shareGroup, setShareGroup] = useState(branch?.therapist_share_group ?? '');
@@ -94,8 +92,8 @@ export function BranchFormDialog({
         .map((c) => ({ commission_class_id: c.id, rate: Math.max(0, Math.min(1, (Number(rates[c.id]) || 0) / 100)) }));
       const therapist_share_group = shareGroup.trim() || null;
       const result = isEdit
-        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides })
-        : await createBranch({ code, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides });
+        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides })
+        : await createBranch({ code, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides });
       if (result.ok) {
         toast.success(isEdit ? 'Branch updated' : 'Branch created');
         setOpen(false);
@@ -192,16 +190,6 @@ export function BranchFormDialog({
                 Which business lines operate at this branch. A single location can host
                 more than one (e.g. SPA + Gym).
               </p>
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-              <div>
-                <Label className="font-semibold cursor-pointer">Accepts reservations</Label>
-                <p className="text-xs font-medium text-muted-foreground">
-                  When off, this branch is hidden from the New Reservation picker.
-                </p>
-              </div>
-              <Switch checked={reservationEnabled} onCheckedChange={setReservationEnabled} />
             </div>
 
             <div className="flex flex-col gap-2">

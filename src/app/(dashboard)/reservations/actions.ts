@@ -7,7 +7,6 @@ import { createAuditedClient } from '@/lib/supabase/server';
 import { nextOrderNo } from '@/lib/order-no';
 import { canAccessBranch } from '@/lib/branch-access';
 import { currentSession } from '@/lib/auth';
-import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { canPerformAny, matchesGender } from '@/lib/therapist-availability';
 import { addOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 import { assertBedsMatchCategories } from '@/lib/resource-compatibility';

@@ -32,24 +32,6 @@ export interface DayRow {
   services: DayServiceBlock[];
 }
 
-// A reservation is upcoming, unassigned demand — no bed and no therapist yet —
-// so it never lives in a bed/therapist row. It rides its own lane at the top of
-// the timeline, on the same time axis, so staff can eyeball it against free beds.
-export interface ReservationBlock {
-  id: string;
-  guest: string;
-  // Second line: service category + party size (e.g. "Massage · 2p").
-  line2?: string;
-  startMin: number;
-  endMin: number;
-  // External (in-room at a hotel) reservations don't consume a bed here.
-  external?: boolean;
-  // Past its grace window — guest hasn't shown; pinned bed auto-released.
-  overdue?: boolean;
-  // Pending (not yet confirmed) — tentative, doesn't hold a bed.
-  pending?: boolean;
-}
-
 function hhmm(min: number): string {
   // Wrap to a 24h clock so a past-midnight board minute (e.g. 1500) reads 01:00.
   const h = Math.floor((min % 1440) / 60);
@@ -90,14 +72,12 @@ export function DayTimeline({
   windowEndMin,
   subjectLabel,
   nowMin = null,
-  reservations = [],
 }: {
   rows: DayRow[];
   windowStartMin: number;
   windowEndMin: number;
   subjectLabel: string;
   nowMin?: number | null;
-  reservations?: ReservationBlock[];
 }) {
   const total = Math.max(60, windowEndMin - windowStartMin);
   const pct = (min: number) => ((min - windowStartMin) / total) * 100;

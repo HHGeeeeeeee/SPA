@@ -2,7 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { type ShiftData } from '@/components/shift-schedule/shift-cell';
-import { DayTimeline, type DayRow, type ReservationBlock } from '@/components/shift-schedule/day-timeline';
+import { DayTimeline, type DayRow } from '@/components/shift-schedule/day-timeline';
 import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift } from '@/components/shift-schedule/schedule-board';
 import { DispatchBoard } from '@/components/shift-schedule/dispatch-board';
 import { StaffNowCard } from '@/components/shift-schedule/staff-now-card';
@@ -10,7 +10,6 @@ import { StationsNowCard } from '@/components/shift-schedule/stations-now-card';
 import { StaffWeekGrid } from '@/components/shift-schedule/staff-week-grid';
 import { BulkShiftDialog } from '@/components/shift-schedule/bulk-shift-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 import { currentSession, isManager } from '@/lib/auth';
 
@@ -50,7 +49,7 @@ function hm(min: number): string {
 // Day (hourly) view for either subject. Therapist rows show each rostered
 // therapist's working window + their actual service blocks; Station rows show
 // each bed's occupancy from actual service times.
-async function fetchDayData(subject: ShiftView, branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number; reservations: ReservationBlock[] }> {
+async function fetchDayData(subject: ShiftView, branchId: string, day: string): Promise<{ rows: DayRow[]; windowStartMin: number; windowEndMin: number }> {
   const supabase = createServiceClient();
   // Board window = this branch's business hours (see fetchStationBoard). Past
   // midnight (close <= open) extends the window beyond 1440 and shifts the
@@ -172,8 +171,7 @@ async function fetchDayData(subject: ShiftView, branchId: string, day: string): 
   }
   // Reservations retired — the booking lane is now order_items (the Station
   // board's left rail); the Therapist timeline shows no separate reservation lane.
-  const reservations: ReservationBlock[] = [];
-  return { rows, windowStartMin, windowEndMin, reservations };
+  return { rows, windowStartMin, windowEndMin };
 }
 
 // Interactive Station board (15-min): beds as rows, with every scheduled /
@@ -738,7 +736,7 @@ export default async function ShiftSchedulePage({
           dialog={boardDialog!}
         />
       ) : scale === 'day' ? (
-        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel="Therapist" nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} reservations={dayData!.reservations} />
+        <DayTimeline rows={dayData!.rows} windowStartMin={dayData!.windowStartMin} windowEndMin={dayData!.windowEndMin} subjectLabel="Therapist" nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null} />
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
           No active staff for this branch (or its sharing group).

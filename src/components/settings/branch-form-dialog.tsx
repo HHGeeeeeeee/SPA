@@ -35,6 +35,9 @@ interface BranchFormDialogProps {
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: CommissionClass[];
+  /** Existing therapist-sharing group labels across branches — offered as
+   *  autocomplete so two branches can be put in the same pool by name. */
+  shareGroupSuggestions?: string[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -46,6 +49,7 @@ export function BranchFormDialog({
   businessUnits,
   commissionPolicies = [],
   commissionClasses = [],
+  shareGroupSuggestions = [],
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -57,6 +61,7 @@ export function BranchFormDialog({
   const [name, setName] = useState(branch?.name ?? '');
   const [unitIds, setUnitIds] = useState<string[]>(branch?.business_unit_ids ?? []);
   const [reservationEnabled, setReservationEnabled] = useState(branch?.reservation_enabled ?? true);
+  const [shareGroup, setShareGroup] = useState(branch?.therapist_share_group ?? '');
   const [policyId, setPolicyId] = useState(branch?.commission_policy_id ?? NONE);
   // Per-class rate overrides for this branch: classId → percent string ('' = use global).
   const [rates, setRates] = useState<Record<string, string>>(
@@ -85,9 +90,10 @@ export function BranchFormDialog({
       const commission_rate_overrides = commissionClasses
         .filter((c) => (rates[c.id] ?? '').trim() !== '')
         .map((c) => ({ commission_class_id: c.id, rate: Math.max(0, Math.min(1, (Number(rates[c.id]) || 0) / 100)) }));
+      const therapist_share_group = shareGroup.trim() || null;
       const result = isEdit
-        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, commission_policy_id, commission_rate_overrides })
-        : await createBranch({ code, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, commission_policy_id, commission_rate_overrides });
+        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, therapist_share_group, commission_policy_id, commission_rate_overrides })
+        : await createBranch({ code, name, business_unit_ids: unitIds, reservation_enabled: reservationEnabled, therapist_share_group, commission_policy_id, commission_rate_overrides });
       if (result.ok) {
         toast.success(isEdit ? 'Branch updated' : 'Branch created');
         setOpen(false);
@@ -95,6 +101,7 @@ export function BranchFormDialog({
           setCode('');
           setName('');
           setUnitIds([]);
+          setShareGroup('');
         }
       } else {
         toast.error(result.error);
@@ -193,6 +200,26 @@ export function BranchFormDialog({
                 </p>
               </div>
               <Switch checked={reservationEnabled} onCheckedChange={setReservationEnabled} />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="branch-share-group" className="font-semibold">Therapist sharing group</Label>
+              <Input
+                id="branch-share-group"
+                list="branch-share-groups"
+                value={shareGroup}
+                onChange={(e) => setShareGroup(e.target.value)}
+                placeholder="(none)"
+                maxLength={60}
+              />
+              <datalist id="branch-share-groups">
+                {shareGroupSuggestions.map((g) => <option key={g} value={g} />)}
+              </datalist>
+              <p className="text-xs font-medium text-muted-foreground">
+                Branches with the same label pool their therapists — they show up in
+                each other&apos;s Shift Schedule and can be borrowed on orders. Leave
+                blank for no sharing.
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">

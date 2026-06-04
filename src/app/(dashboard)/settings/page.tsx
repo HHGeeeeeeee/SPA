@@ -37,8 +37,7 @@ const sections: { group: string; items: SectionItem[] }[] = [
     group: 'Core Business',
     items: [
       { icon: Layers, label: 'Business Units', href: '/settings/business-units', desc: 'Business lines (SPA, Gym, …)', adminOnly: true },
-      { icon: Building2, label: 'Branches', href: '/settings/branches', desc: 'Manage shop locations' },
-      { icon: Users, label: 'Therapist Sharing', href: '/settings/therapist-groups', desc: 'Branches that share a therapist pool' },
+      { icon: Building2, label: 'Branches', href: '/settings/branches', desc: 'Locations & therapist-sharing groups' },
       { icon: BadgeCheck, label: 'Positions', href: '/settings/positions', desc: 'Job titles (Massage Therapist, Hair Stylist…)' },
       { icon: Briefcase, label: 'Commission Classes', href: '/settings/commission-classes', desc: 'M / S / J levels and rates' },
       { icon: Percent, label: 'Commission Policies', href: '/settings/commission-policies', desc: 'Per-branch warm-up / first-session rules' },

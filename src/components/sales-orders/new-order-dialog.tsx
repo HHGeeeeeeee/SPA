@@ -191,11 +191,19 @@ export function NewOrderDialog({ branches, sources, billingDestinations, lockBra
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Business Unit *</Label>
+              <Label className="font-semibold">Business Unit{unitOptions.length > 1 ? ' *' : ''}</Label>
               {unitOptions.length === 0 ? (
                 <p className="text-sm font-medium text-muted-foreground rounded-md border border-dashed px-3 py-2">
                   This branch has no business units. Assign one in Settings → Branches.
                 </p>
+              ) : unitOptions.length === 1 ? (
+                // Only one business line at this branch — auto-applied, no choice
+                // to make. Show it read-only so staff aren't asked to "pick" from
+                // a single option. The picker returns only when a branch hosts 2+.
+                <div className="flex items-center justify-between rounded-lg border border-input bg-muted/40 px-3 py-2 text-sm font-semibold">
+                  <span>{unitOptions[0].label}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Only unit</span>
+                </div>
               ) : (
                 <Select items={unitOptions} value={businessUnitId} onValueChange={(v) => v && setBusinessUnitId(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>

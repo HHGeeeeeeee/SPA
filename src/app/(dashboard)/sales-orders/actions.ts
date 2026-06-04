@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createServiceClient, createAuditedClient } from '@/lib/supabase/server';
+import { nextOrderNo } from '@/lib/order-no';
 import { currentSession, isManager } from '@/lib/auth';
 import { isBusinessDayClosed } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
 import { canAccessBranch } from '@/lib/branch-access';
@@ -81,21 +82,6 @@ const schema = z.object({
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
-async function nextOrderNo(branchCode: string, serviceDate: string): Promise<string> {
-  const supabase = await createAuditedClient();
-  const ymd = serviceDate.replace(/-/g, '');
-  const prefix = `SO-${branchCode}-${ymd}-`;
-  const { data } = await supabase
-    .from('orders')
-    .select('order_no')
-    .like('order_no', `${prefix}%`)
-    .order('order_no', { ascending: false })
-    .limit(1);
-  const last = data?.[0]?.order_no;
-  const lastSeq = last ? Number(last.slice(prefix.length)) : 0;
-  return `${prefix}${String(lastSeq + 1).padStart(3, '0')}`;
-}
-
 export async function createDraftOrder(input: unknown): Promise<ActionResult<{ id: string }>> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -137,7 +123,7 @@ export async function createDraftOrder(input: unknown): Promise<ActionResult<{ i
     if (src.default_billing_to_id) billingToId = src.default_billing_to_id;
   }
 
-  const order_no = await nextOrderNo(branch.code, d.service_date);
+  const order_no = await nextOrderNo(supabase, d.service_date);
 
   const { data, error } = await supabase
     .from('orders')

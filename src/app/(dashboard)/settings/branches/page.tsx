@@ -50,6 +50,8 @@ async function fetchData() {
 export default async function BranchesPage() {
   const { branches, businessUnits, commissionPolicies, commissionClasses, ratesByBranch } = await fetchData();
   const activeCount = branches.filter((b) => b.active).length;
+  // Distinct therapist-sharing labels in use → autocomplete for the branch form.
+  const shareGroupSuggestions = [...new Set(branches.map((b) => b.therapist_share_group).filter(Boolean) as string[])].sort();
 
   return (
     <div className="flex flex-col gap-6 max-w-6xl">
@@ -72,6 +74,7 @@ export default async function BranchesPage() {
           businessUnits={businessUnits}
           commissionPolicies={commissionPolicies}
           commissionClasses={commissionClasses}
+          shareGroupSuggestions={shareGroupSuggestions}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -88,6 +91,7 @@ export default async function BranchesPage() {
               <TableHead className="w-32 font-bold">Code</TableHead>
               <TableHead className="w-72 font-bold">Name</TableHead>
               <TableHead className="font-bold whitespace-nowrap">Business Unit</TableHead>
+              <TableHead className="font-bold whitespace-nowrap">Sharing Group</TableHead>
               <TableHead className="w-28 font-bold">Reservations</TableHead>
               <TableHead className="w-32 font-bold">Status</TableHead>
               <TableHead className="w-48 font-bold">Updated</TableHead>
@@ -97,7 +101,7 @@ export default async function BranchesPage() {
           <TableBody>
             {branches.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12">
+                <TableCell colSpan={8} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
                     No branches yet. Click &ldquo;Add Branch&rdquo; above to create the
                     first one.
@@ -138,6 +142,15 @@ export default async function BranchesPage() {
                       </div>
                     </TableCell>
                     <TableCell>
+                      {b.therapist_share_group ? (
+                        <Badge variant="outline" className="font-bold text-xs whitespace-nowrap">
+                          {b.therapist_share_group}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       {b.reservation_enabled ? (
                         <Badge variant="default" className="font-bold">On</Badge>
                       ) : (
@@ -158,7 +171,7 @@ export default async function BranchesPage() {
                       })}
                     </TableCell>
                     <TableCell>
-                      <BranchRowActions branch={branchItem} businessUnits={businessUnits} commissionPolicies={commissionPolicies} commissionClasses={commissionClasses} />
+                      <BranchRowActions branch={branchItem} businessUnits={businessUnits} commissionPolicies={commissionPolicies} commissionClasses={commissionClasses} shareGroupSuggestions={shareGroupSuggestions} />
                     </TableCell>
                   </TableRow>
                 );

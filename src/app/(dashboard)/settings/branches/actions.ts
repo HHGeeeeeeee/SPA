@@ -80,6 +80,7 @@ export async function createBranch(input: unknown): Promise<ActionResult> {
   if (rateErr) return { ok: false, error: rateErr.message };
 
   revalidatePath('/settings/branches');
+  revalidatePath('/shift-schedule');
   return { ok: true };
 }
 
@@ -109,6 +110,7 @@ export async function updateBranch(input: unknown): Promise<ActionResult> {
   if (rateErr) return { ok: false, error: rateErr.message };
 
   revalidatePath('/settings/branches');
+  revalidatePath('/shift-schedule');
   return { ok: true };
 }
 
@@ -122,22 +124,5 @@ export async function setBranchActive(
   const { error } = await supabase.from('branches').update({ active }).eq('id', id);
   if (error) return { ok: false, error: error.message };
   revalidatePath('/settings/branches');
-  return { ok: true };
-}
-
-// Set/clear a branch's therapist sharing group (lightweight — used by the
-// Therapist Sharing management page). Branches sharing a non-empty label pool
-// their therapists for cross-branch borrowing.
-export async function setBranchShareGroup(id: string, group: string | null): Promise<ActionResult> {
-  const denied = await requireAdmin();
-  if (denied) return { ok: false, error: denied };
-  if (!id) return { ok: false, error: 'Missing branch' };
-  const value = (group ?? '').trim().slice(0, 60) || null;
-  const supabase = await createAuditedClient();
-  const { error } = await supabase.from('branches').update({ therapist_share_group: value }).eq('id', id);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath('/settings/therapist-groups');
-  revalidatePath('/settings/branches');
-  revalidatePath('/shift-schedule');
   return { ok: true };
 }

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
+import { nextOrderNo } from '@/lib/order-no';
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -62,11 +63,7 @@ export async function convertWaitlistToOrder(id: string): Promise<ActionResult<{
   const unitIds = (branch.branch_business_units ?? []).map((r) => r.business_unit_id);
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
-  const ymd = today.replace(/-/g, '');
-  const prefix = `SO-${branch.code}-${ymd}-`;
-  const { data: lastNo } = await supabase.from('orders').select('order_no').like('order_no', `${prefix}%`).order('order_no', { ascending: false }).limit(1);
-  const seq = lastNo?.[0]?.order_no ? Number(lastNo[0].order_no.slice(prefix.length)) : 0;
-  const order_no = `${prefix}${String(seq + 1).padStart(3, '0')}`;
+  const order_no = await nextOrderNo(supabase, today);
 
   const { data: order, error } = await supabase
     .from('orders')

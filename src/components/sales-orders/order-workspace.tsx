@@ -796,7 +796,7 @@ export function OrderWorkspace({
                         <ActionBtn
                           tip="Free the bed now, before the cleanup buffer ends."
                           variant="outline"
-                          className="border-teal-500/60 text-teal-700 hover:bg-teal-50 hover:text-teal-800 dark:text-teal-400 dark:hover:bg-teal-500/10"
+                          className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary"
                           onClick={() => doReleaseBed(it.id)}
                           disabled={pending}
                         >
@@ -812,7 +812,7 @@ export function OrderWorkspace({
                         <>
                           <ActionBtn
                             tip={guestHasLiveService ? 'Finish this guest’s current service before starting the next.' : 'Begin this service now — stamps the start time.'}
-                            className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 dark:bg-green-600 dark:hover:bg-green-700"
+                            className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                             onClick={() => doStartItem(it)}
                             disabled={pending || guestHasLiveService}
                           >

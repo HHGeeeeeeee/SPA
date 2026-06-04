@@ -27,13 +27,14 @@ import { setBranchActive } from '@/app/(dashboard)/settings/branches/actions';
 import { BranchFormDialog } from './branch-form-dialog';
 
 interface Props {
-  branch: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled: boolean; commission_policy_id: string | null; commission_rate_overrides: { commission_class_id: string; rate: number }[]; active: boolean };
+  branch: { id: string; code: string; name: string; business_unit_ids: string[]; reservation_enabled: boolean; therapist_share_group: string | null; commission_policy_id: string | null; commission_rate_overrides: { commission_class_id: string; rate: number }[]; active: boolean };
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: { id: string; class_code: string; name: string; commission_rate: number }[];
+  shareGroupSuggestions?: string[];
 }
 
-export function BranchRowActions({ branch, businessUnits, commissionPolicies, commissionClasses }: Props) {
+export function BranchRowActions({ branch, businessUnits, commissionPolicies, commissionClasses, shareGroupSuggestions }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -86,10 +87,11 @@ export function BranchRowActions({ branch, businessUnits, commissionPolicies, co
 
       <BranchFormDialog
         mode="edit"
-        branch={{ id: branch.id, code: branch.code, name: branch.name, business_unit_ids: branch.business_unit_ids, reservation_enabled: branch.reservation_enabled, commission_policy_id: branch.commission_policy_id, commission_rate_overrides: branch.commission_rate_overrides }}
+        branch={{ id: branch.id, code: branch.code, name: branch.name, business_unit_ids: branch.business_unit_ids, reservation_enabled: branch.reservation_enabled, therapist_share_group: branch.therapist_share_group, commission_policy_id: branch.commission_policy_id, commission_rate_overrides: branch.commission_rate_overrides }}
         businessUnits={businessUnits}
         commissionPolicies={commissionPolicies}
         commissionClasses={commissionClasses}
+        shareGroupSuggestions={shareGroupSuggestions}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

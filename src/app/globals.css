@@ -10,67 +10,67 @@
 
 :root {
   --radius: 0.625rem;
-  /* Forest sage SPA palette */
-  --background: oklch(0.99 0.008 145);
-  --foreground: oklch(0.18 0.02 150);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.02 150);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.02 150);
-  --primary: oklch(0.5 0.09 155);          /* Forest sage */
-  --primary-foreground: oklch(0.985 0.005 145);
-  --secondary: oklch(0.96 0.018 145);
-  --secondary-foreground: oklch(0.22 0.03 150);
-  --muted: oklch(0.96 0.018 145);
-  --muted-foreground: oklch(0.5 0.02 150);
-  --accent: oklch(0.93 0.04 145);          /* Soft mint highlight */
-  --accent-foreground: oklch(0.25 0.05 150);
+  /* Espresso / coffee SPA palette — anchored on #632a00 / #0f0702 / #f8f2eb */
+  --background: oklch(0.964 0.011 72);     /* Cream #f8f2eb */
+  --foreground: oklch(0.15 0.022 62);      /* Near-black coffee #0f0702 */
+  --card: oklch(0.995 0.004 72);
+  --card-foreground: oklch(0.15 0.022 62);
+  --popover: oklch(0.995 0.004 72);
+  --popover-foreground: oklch(0.15 0.022 62);
+  --primary: oklch(0.359 0.096 49.5);      /* Deep espresso #632a00 */
+  --primary-foreground: oklch(0.97 0.012 72);
+  --secondary: oklch(0.93 0.022 66);
+  --secondary-foreground: oklch(0.30 0.05 50);
+  --muted: oklch(0.94 0.016 66);
+  --muted-foreground: oklch(0.49 0.03 55);
+  --accent: oklch(0.90 0.05 66);           /* Warm latte highlight */
+  --accent-foreground: oklch(0.32 0.06 50);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.9 0.018 145);
-  --input: oklch(0.9 0.018 145);
-  --ring: oklch(0.5 0.09 155);
-  --chart-1: oklch(0.65 0.13 145);
-  --chart-2: oklch(0.55 0.1 165);
-  --chart-3: oklch(0.7 0.09 90);
-  --chart-4: oklch(0.6 0.08 35);
-  --chart-5: oklch(0.45 0.07 200);
-  --sidebar: oklch(0.97 0.018 145);        /* Pale sage tint */
-  --sidebar-foreground: oklch(0.2 0.03 150);
-  --sidebar-primary: oklch(0.5 0.09 155);
-  --sidebar-primary-foreground: oklch(0.985 0.005 145);
-  --sidebar-accent: oklch(0.92 0.04 145);
-  --sidebar-accent-foreground: oklch(0.25 0.05 150);
-  --sidebar-border: oklch(0.9 0.018 145);
-  --sidebar-ring: oklch(0.5 0.09 155);
+  --border: oklch(0.89 0.02 66);
+  --input: oklch(0.89 0.02 66);
+  --ring: oklch(0.359 0.096 49.5);
+  --chart-1: oklch(0.50 0.12 50);
+  --chart-2: oklch(0.62 0.10 75);
+  --chart-3: oklch(0.72 0.09 95);
+  --chart-4: oklch(0.45 0.09 32);
+  --chart-5: oklch(0.55 0.06 120);
+  --sidebar: oklch(0.95 0.016 68);         /* Pale mocha tint */
+  --sidebar-foreground: oklch(0.22 0.03 60);
+  --sidebar-primary: oklch(0.359 0.096 49.5);
+  --sidebar-primary-foreground: oklch(0.97 0.012 72);
+  --sidebar-accent: oklch(0.90 0.05 66);
+  --sidebar-accent-foreground: oklch(0.32 0.06 50);
+  --sidebar-border: oklch(0.89 0.02 66);
+  --sidebar-ring: oklch(0.359 0.096 49.5);
 }
 
 .dark {
-  --background: oklch(0.16 0.02 150);
-  --foreground: oklch(0.985 0.005 145);
-  --card: oklch(0.22 0.025 150);
-  --card-foreground: oklch(0.985 0.005 145);
-  --popover: oklch(0.22 0.025 150);
-  --popover-foreground: oklch(0.985 0.005 145);
-  --primary: oklch(0.65 0.1 150);
-  --primary-foreground: oklch(0.18 0.02 150);
-  --secondary: oklch(0.27 0.025 150);
-  --secondary-foreground: oklch(0.985 0.005 145);
-  --muted: oklch(0.27 0.025 150);
-  --muted-foreground: oklch(0.72 0.02 145);
-  --accent: oklch(0.3 0.04 150);
-  --accent-foreground: oklch(0.985 0.005 145);
+  --background: oklch(0.16 0.018 58);
+  --foreground: oklch(0.96 0.012 72);
+  --card: oklch(0.21 0.022 56);
+  --card-foreground: oklch(0.96 0.012 72);
+  --popover: oklch(0.21 0.022 56);
+  --popover-foreground: oklch(0.96 0.012 72);
+  --primary: oklch(0.62 0.11 55);          /* Lifted caramel so it reads on dark */
+  --primary-foreground: oklch(0.17 0.02 56);
+  --secondary: oklch(0.27 0.022 56);
+  --secondary-foreground: oklch(0.96 0.012 72);
+  --muted: oklch(0.27 0.022 56);
+  --muted-foreground: oklch(0.72 0.022 66);
+  --accent: oklch(0.33 0.04 56);
+  --accent-foreground: oklch(0.96 0.012 72);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.65 0.1 150);
-  --sidebar: oklch(0.22 0.025 150);
-  --sidebar-foreground: oklch(0.985 0.005 145);
-  --sidebar-primary: oklch(0.65 0.1 150);
-  --sidebar-primary-foreground: oklch(0.18 0.02 150);
-  --sidebar-accent: oklch(0.3 0.04 150);
-  --sidebar-accent-foreground: oklch(0.985 0.005 145);
+  --ring: oklch(0.62 0.11 55);
+  --sidebar: oklch(0.21 0.022 56);
+  --sidebar-foreground: oklch(0.96 0.012 72);
+  --sidebar-primary: oklch(0.62 0.11 55);
+  --sidebar-primary-foreground: oklch(0.17 0.02 56);
+  --sidebar-accent: oklch(0.33 0.04 56);
+  --sidebar-accent-foreground: oklch(0.96 0.012 72);
   --sidebar-border: oklch(1 0 0 / 12%);
-  --sidebar-ring: oklch(0.65 0.1 150);
+  --sidebar-ring: oklch(0.62 0.11 55);
 }
 
 @theme inline {
@@ -135,13 +135,13 @@
 /* Subtle SPA dot pattern — used on main content area for organic texture */
 .spa-pattern {
   background-image:
-    radial-gradient(circle at 1px 1px, oklch(0.5 0.09 155 / 0.06) 1px, transparent 0);
+    radial-gradient(circle at 1px 1px, oklch(0.359 0.096 50 / 0.06) 1px, transparent 0);
   background-size: 24px 24px;
 }
 
-/* Soft sage gradient — used on hero areas */
+/* Soft mocha gradient — used on hero areas */
 .spa-gradient {
   background:
-    radial-gradient(ellipse 80% 50% at 50% 0%, oklch(0.93 0.04 145 / 0.4), transparent 70%),
-    radial-gradient(ellipse 60% 40% at 100% 100%, oklch(0.93 0.04 145 / 0.3), transparent 70%);
+    radial-gradient(ellipse 80% 50% at 50% 0%, oklch(0.90 0.05 66 / 0.4), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, oklch(0.90 0.05 66 / 0.3), transparent 70%);
 }

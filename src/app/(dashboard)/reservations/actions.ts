@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
+import { nextOrderNo } from '@/lib/order-no';
 import { canAccessBranch } from '@/lib/branch-access';
 import { currentSession } from '@/lib/auth';
 import { getReservationGraceMinutes, isReservationOverdue } from '@/lib/reservations';
@@ -744,14 +745,8 @@ export async function convertReservationToOrder(id: string): Promise<ActionResul
   if (r.status === 'converted') return { ok: false, error: 'Already converted' };
   if (['cancelled', 'no_show'].includes(r.status)) return { ok: false, error: `Cannot convert a ${r.status} reservation` };
 
-  const { data: branch } = await supabase.from('branches').select('code').eq('id', r.branch_id).single();
   const serviceDate = r.desired_service_start.slice(0, 10);
-  const ymd = serviceDate.replace(/-/g, '');
-  const prefix = `SO-${branch?.code ?? 'X'}-${ymd}-`;
-  const { data: lastOrder } = await supabase
-    .from('orders').select('order_no').like('order_no', `${prefix}%`).order('order_no', { ascending: false }).limit(1);
-  const seq = lastOrder?.[0]?.order_no ? Number(lastOrder[0].order_no.slice(prefix.length)) : 0;
-  const order_no = `${prefix}${String(seq + 1).padStart(3, '0')}`;
+  const order_no = await nextOrderNo(supabase, serviceDate);
 
   const { data: order, error: oe } = await supabase
     .from('orders')

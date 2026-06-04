@@ -303,6 +303,46 @@ export async function updateOrderNote(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
+const sourceBillingSchema = z.object({
+  order_id: z.string().uuid(),
+  source_id: z.string().uuid().nullable(),
+  billing_to_id: z.string().uuid().nullable(),
+});
+
+// Edit an order's Customer Source / Billing To after creation. Allowed only
+// while the order is still editable (draft / open / in_service) — once it's
+// paid/closed/confirmed the billing is locked in for accounting. Logged to the
+// order edit trail like other post-creation changes.
+export async function updateOrderSourceBilling(input: unknown): Promise<ActionResult> {
+  const parsed = sourceBillingSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const session = await currentSession();
+  const supabase = await createAuditedClient();
+  const { data: order } = await supabase
+    .from('orders').select('status, branch_id, source_id, billing_to_id').eq('id', d.order_id).single();
+  if (!order) return { ok: false, error: 'Order not found' };
+  if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (!['draft', 'open', 'in_service'].includes(order.status)) {
+    return { ok: false, error: 'This order can no longer be edited' };
+  }
+  if ((order.source_id ?? null) === (d.source_id ?? null) && (order.billing_to_id ?? null) === (d.billing_to_id ?? null)) {
+    return { ok: true }; // unchanged — no-op
+  }
+  const { error } = await supabase
+    .from('orders').update({ source_id: d.source_id, billing_to_id: d.billing_to_id }).eq('id', d.order_id);
+  if (error) return { ok: false, error: error.message };
+  await supabase.from('order_edit_log').insert({
+    order_id: d.order_id,
+    before_snapshot: { source_id: order.source_id ?? null, billing_to_id: order.billing_to_id ?? null },
+    after_snapshot: { source_id: d.source_id, billing_to_id: d.billing_to_id },
+    edit_reason: 'Customer source / billing updated',
+    edited_by_staff_id: session?.staffUserId ?? null,
+  });
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Line-item editor
 // ---------------------------------------------------------------------------

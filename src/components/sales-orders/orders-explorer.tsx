@@ -200,11 +200,11 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
               <TableHead className="bg-transparent" />
             </TableRow>
             <TableRow>
-              <TableHead className="w-56 font-bold">Order No</TableHead>
               <TableHead className="w-20 font-bold">Branch</TableHead>
+              <TableHead className="w-32 font-bold">Service Date</TableHead>
+              <TableHead className="w-20 font-bold">Order No</TableHead>
               <TableHead className="w-24 font-bold">Billing To</TableHead>
               <TableHead className="w-16 font-bold">PAX</TableHead>
-              <TableHead className="w-32 font-bold">Service Date</TableHead>
               <TableHead className="w-28 font-bold text-center bg-muted/30 border-l border-border">Cash</TableHead>
               <TableHead className="w-28 font-bold text-center bg-muted/30">Paymaya</TableHead>
               <TableHead className="w-28 font-bold text-center bg-muted/30 border-r border-border">AR</TableHead>
@@ -225,13 +225,15 @@ export function OrdersExplorer({ rows, billingCodes }: { rows: OrderRow[]; billi
             ) : (
               filtered.map((o) => (
                 <TableRow key={o.id} className="cursor-pointer">
-                  <TableCell className="font-mono font-bold">
-                    <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link>
-                  </TableCell>
                   <TableCell className="font-mono font-bold">{o.branch_code}</TableCell>
+                  <TableCell className="font-medium tabular">{o.service_date}</TableCell>
+                  <TableCell className="font-mono font-bold">
+                    {/* Show just the daily sequence (last segment, e.g. 0002).
+                        Full SO-YYMMDD-NNNN stays as the hover tooltip. */}
+                    <Link href={`/sales-orders/${o.id}`} className="hover:text-primary" title={o.order_no}>{o.order_no.split('-').pop()}</Link>
+                  </TableCell>
                   <TableCell className="font-mono font-bold text-xs">{o.billing_code ?? '—'}</TableCell>
                   <TableCell className="font-bold tabular">{o.pax}</TableCell>
-                  <TableCell className="font-medium tabular">{o.service_date}</TableCell>
                   <TableCell className="font-medium tabular text-right bg-muted/20 border-l border-border">{moneyCell(o.cash_cents)}</TableCell>
                   <TableCell className="font-medium tabular text-right bg-muted/20">{moneyCell(o.paymaya_cents)}</TableCell>
                   <TableCell className="font-medium tabular text-right bg-muted/20 border-r border-border">{moneyCell(o.ar_cents)}</TableCell>

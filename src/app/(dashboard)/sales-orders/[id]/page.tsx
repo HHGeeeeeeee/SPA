@@ -7,6 +7,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
 import { OrderNoteEditor } from '@/components/sales-orders/order-note-editor';
+import { OrderSourceBillingEditor } from '@/components/sales-orders/order-source-billing-editor';
 import { PaymentAdjust } from '@/components/sales-orders/payment-adjust';
 import { OrderStatusActions } from '@/components/sales-orders/order-status-actions';
 import { ServiceBadge, PaymentBadge } from '@/components/sales-orders/order-badges';
@@ -30,7 +31,7 @@ async function fetchData(id: string) {
   const { data: order, error } = await supabase
     .from('orders')
     .select(`
-      id, order_no, status, order_type, service_date, note, branch_id,
+      id, order_no, status, order_type, service_date, note, branch_id, source_id, billing_to_id,
       subtotal_cents, discount_cents, total_cents, paid_cents,
       reservation:reservations ( gender_preference ),
       branch:branches!orders_branch_id_fkey ( code, name ),
@@ -58,7 +59,7 @@ async function fetchData(id: string) {
   if (error) throw new Error(error.message);
   if (!order) return null;
 
-  const [svc, emp, res, disc, pm, shifts, brs] = await Promise.all([
+  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll] = await Promise.all([
     supabase
       .from('service_items')
       .select('id, code, name, service_group, duration_minutes, required_resource_type, service_item_prices ( price_cents, price_class, branch_id )')
@@ -78,6 +79,10 @@ async function fetchData(id: string) {
       .in('shift_type', ['regular', 'cross_branch', 'on_call']),
     // Branches + their sharing group (to limit borrowing to the same pool).
     supabase.from('branches').select('id, therapist_share_group').eq('active', true),
+    // All customer sources / billing destinations — for the inline Source /
+    // Billing editor on the order detail panel.
+    supabase.from('customer_sources').select('id, code, name, default_billing_to_id').order('code'),
+    supabase.from('billing_destinations').select('id, code, name').eq('active', true).order('code'),
   ]);
 
   const svcCardsRes = await supabase
@@ -180,6 +185,8 @@ async function fetchData(id: string) {
       customer_name: one(c.customer)?.name ?? null,
     })),
     capabilityByEmployee,
+    allSources: (srcAll.data ?? []) as { id: string; code: string; name: string; default_billing_to_id: string | null }[],
+    allBilling: (billAll.data ?? []) as { id: string; code: string; name: string }[],
     // Default the line's therapist-gender filter from the source reservation.
     defaultGenderPref: one(order.reservation)?.gender_preference ?? null,
   };
@@ -190,7 +197,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, defaultGenderPref } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, defaultGenderPref } = result;
 
   const branch = one(order.branch);
   const source = one(order.source);
@@ -389,17 +396,26 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         <Card className="md:col-span-2">
           <CardHeader className="pb-3"><CardTitle className="text-base font-bold">Order Details</CardTitle></CardHeader>
           <CardContent>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <dl className="flex flex-wrap gap-x-10 gap-y-3 text-sm">
               <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Branch</dt>
-                <dd className="font-semibold mt-0.5">{branch ? `${branch.code} — ${branch.name}` : '—'}</dd></div>
-              <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Type</dt>
-                <dd className="font-semibold mt-0.5 capitalize">{order.order_type.replace('_', ' ')}</dd></div>
+                <dd className="font-semibold mt-0.5">{branch ? branch.name : '—'}</dd></div>
+              {/* Type = how the order originated. Hidden for plain walk-ins (the
+                  default for manually-created orders — no signal there); shown
+                  only when it's a reservation / stored-value / external order. */}
+              {order.order_type !== 'walk_in' && (
+                <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Type</dt>
+                  <dd className="font-semibold mt-0.5 capitalize">{order.order_type.replace('_', ' ')}</dd></div>
+              )}
               <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Service Date</dt>
                 <dd className="font-semibold mt-0.5 tabular">{order.service_date}</dd></div>
-              <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Customer Source</dt>
-                <dd className="font-semibold mt-0.5">{source ? `${source.code} — ${source.name}` : '—'}</dd></div>
-              <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Billing To</dt>
-                <dd className="font-semibold mt-0.5">{billing ? `${billing.code} — ${billing.name}` : 'Self-pay'}</dd></div>
+              <OrderSourceBillingEditor
+                orderId={order.id}
+                sources={allSources}
+                billingDestinations={allBilling}
+                currentSourceId={order.source_id}
+                currentBillingId={order.billing_to_id}
+                editable={editable}
+              />
             </dl>
             <OrderNoteEditor orderId={order.id} initialNote={order.note} />
           </CardContent>

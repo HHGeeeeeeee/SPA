@@ -149,7 +149,8 @@ export function NewOrderDialog({ branches, sources, billingDestinations, lockBra
         note: note || null,
       });
       if (r.ok && r.data) {
-        toast.success('Draft order created');
+        // Jump straight to the new order — the order screen itself is the
+        // confirmation, so skip the intermediate "created" toast.
         setOpen(false);
         router.push(`/sales-orders/${r.data.id}`);
       } else if (!r.ok) {

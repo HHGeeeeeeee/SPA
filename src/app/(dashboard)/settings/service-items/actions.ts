@@ -165,7 +165,7 @@ export interface PriceSegment {
 /** The Normal / all-branch price timeline for a service item, oldest first. */
 export async function loadPriceSchedule(serviceItemId: string): Promise<PriceSegment[]> {
   // Read-only loader; return shape is the timeline array. The writes that
-  // consume this (scheduleServicePriceChange / updateFuturePrice / etc.)
+  // consume this (scheduleServicePriceChange / updateScheduledPrice / etc.)
   // are admin-gated, so reading the price history isn't sensitive enough
   // to warrant gating here.
   const supabase = await createAuditedClient();
@@ -232,16 +232,47 @@ export async function scheduleServicePriceChange(input: unknown): Promise<Action
   return { ok: true };
 }
 
-/** Edit the price of a not-yet-effective (future) segment. */
-export async function updateFuturePrice(priceId: string, pricePhp: number): Promise<ActionResult> {
+/**
+ * Edit an editable price segment — its amount and, optionally, its effective-from
+ * date. Current and future segments can be edited; only ended (past) segments
+ * are locked as history. When the date moves, the segment immediately before it
+ * is re-capped so the timeline stays contiguous and non-overlapping.
+ */
+export async function updateScheduledPrice(priceId: string, pricePhp: number, effectiveFrom?: string): Promise<ActionResult> {
   const denied = await requireManager();
   if (denied) return { ok: false, error: denied };
   if (!(pricePhp > 0)) return { ok: false, error: 'Price must be greater than 0' };
   const supabase = await createAuditedClient();
-  const { data: row } = await supabase.from('service_item_prices').select('effective_from').eq('id', priceId).maybeSingle();
+  const { data: row } = await supabase
+    .from('service_item_prices')
+    .select('id, service_item_id, effective_from, effective_to')
+    .eq('id', priceId)
+    .maybeSingle();
   if (!row) return { ok: false, error: 'Price not found' };
-  if (row.effective_from <= todayPHT()) return { ok: false, error: 'Only a future price change can be edited' };
-  const { error } = await supabase.from('service_item_prices').update({ price_cents: Math.round(pricePhp * 100) }).eq('id', priceId);
+  if (row.effective_to < todayPHT()) return { ok: false, error: 'Ended prices are history and cannot be edited' };
+
+  const patch: { price_cents: number; effective_from?: string } = { price_cents: Math.round(pricePhp * 100) };
+
+  if (effectiveFrom && effectiveFrom !== row.effective_from) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) return { ok: false, error: 'Pick a valid date' };
+    if (effectiveFrom > row.effective_to) return { ok: false, error: 'Effective date must be on or before the end date' };
+    // Keep the chain contiguous: the segment right before this one (if any) must
+    // start earlier and is re-capped to end the day before the new start.
+    const { data: earlier } = await supabase
+      .from('service_item_prices')
+      .select('id, effective_from')
+      .eq('service_item_id', row.service_item_id).eq('price_class', 'Normal').is('branch_id', null)
+      .lt('effective_from', row.effective_from)
+      .order('effective_from', { ascending: false }).limit(1).maybeSingle();
+    if (earlier) {
+      if (effectiveFrom <= earlier.effective_from) return { ok: false, error: 'Date overlaps the previous price — pick a later date' };
+      const recap = await supabase.from('service_item_prices').update({ effective_to: addDays(effectiveFrom, -1) }).eq('id', earlier.id);
+      if (recap.error) return { ok: false, error: recap.error.message };
+    }
+    patch.effective_from = effectiveFrom;
+  }
+
+  const { error } = await supabase.from('service_item_prices').update(patch).eq('id', priceId);
   if (error) return { ok: false, error: error.message };
   revalidatePath('/settings/service-items');
   return { ok: true };
@@ -258,7 +289,7 @@ export async function deleteFuturePrice(priceId: string): Promise<ActionResult> 
     .eq('id', priceId)
     .maybeSingle();
   if (!row) return { ok: false, error: 'Price not found' };
-  if (row.effective_from <= todayPHT()) return { ok: false, error: 'Only a future price change can be removed' };
+  if (row.effective_to < todayPHT()) return { ok: false, error: 'Ended prices are history and cannot be removed' };
   // Only the latest segment can be removed, so the timeline stays a clean chain.
   const { data: later } = await supabase
     .from('service_item_prices')

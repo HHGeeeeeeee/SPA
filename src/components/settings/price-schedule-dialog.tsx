@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { CalendarClock, Check, Pencil, Trash2 } from 'lucide-react';
+import { CalendarClock, Check, Pencil, Trash2, X } from 'lucide-react';
 
 import {
   Dialog,
@@ -28,7 +28,7 @@ import {
 import {
   loadPriceSchedule,
   scheduleServicePriceChange,
-  updateFuturePrice,
+  updateScheduledPrice,
   deleteFuturePrice,
   type PriceSegment,
 } from '@/app/(dashboard)/settings/service-items/actions';
@@ -71,6 +71,7 @@ export function PriceScheduleDialog({
   const [newFrom, setNewFrom] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
   const [editPrice, setEditPrice] = useState('');
+  const [editFrom, setEditFrom] = useState('');
 
   async function reload() {
     setLoading(true);
@@ -94,8 +95,8 @@ export function PriceScheduleDialog({
   }
   function saveEdit(id: string) {
     startBusy(async () => {
-      const r = await updateFuturePrice(id, Number(editPrice));
-      if (r.ok) { toast.success('Scheduled price updated'); setEditId(null); await reload(); router.refresh(); }
+      const r = await updateScheduledPrice(id, Number(editPrice), editFrom || undefined);
+      if (r.ok) { toast.success('Price updated'); setEditId(null); await reload(); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -142,7 +143,11 @@ export function PriceScheduleDialog({
                 ) : (
                   segs.map((s) => (
                     <TableRow key={s.id}>
-                      <TableCell className="font-medium tabular">{s.effective_from}</TableCell>
+                      <TableCell className="font-medium tabular">
+                        {editId === s.id ? (
+                          <Input type="date" value={editFrom} onChange={(e) => setEditFrom(e.target.value)} className="h-8 w-40" />
+                        ) : s.effective_from}
+                      </TableCell>
                       <TableCell className="font-medium tabular text-muted-foreground">{s.open_ended ? 'until changed' : s.effective_to}</TableCell>
                       <TableCell className="font-bold tabular text-right">
                         {editId === s.id ? (
@@ -153,12 +158,15 @@ export function PriceScheduleDialog({
                         <Badge variant={STATUS[s.status].variant} className={`font-bold ${STATUS[s.status].cls}`}>{STATUS[s.status].label}</Badge>
                       </TableCell>
                       <TableCell>
-                        {s.status === 'future' && (
+                        {s.status !== 'past' && (
                           <div className="flex justify-end gap-1">
                             {editId === s.id ? (
-                              <Button size="icon" variant="ghost" disabled={busy} onClick={() => saveEdit(s.id)}><Check className="size-4" /></Button>
+                              <>
+                                <Button size="icon" variant="ghost" disabled={busy} onClick={() => saveEdit(s.id)}><Check className="size-4" /></Button>
+                                <Button size="icon" variant="ghost" disabled={busy} onClick={() => setEditId(null)}><X className="size-4" /></Button>
+                              </>
                             ) : (
-                              <Button size="icon" variant="ghost" disabled={busy} onClick={() => { setEditId(s.id); setEditPrice(String(s.price_cents / 100)); }}><Pencil className="size-4" /></Button>
+                              <Button size="icon" variant="ghost" disabled={busy} onClick={() => { setEditId(s.id); setEditPrice(String(s.price_cents / 100)); setEditFrom(s.effective_from); }}><Pencil className="size-4" /></Button>
                             )}
                             <Button size="icon" variant="ghost" className="text-destructive" disabled={busy} onClick={() => remove(s.id)}><Trash2 className="size-4" /></Button>
                           </div>

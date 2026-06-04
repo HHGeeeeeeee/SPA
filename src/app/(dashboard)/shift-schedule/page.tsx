@@ -247,18 +247,13 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
   const closeHH = (brHours?.close_time ?? '02:00').slice(0, 5);
   const rangeStart = `${day}T${openHH}:00+08:00`;
   const rangeEnd = `${crossesMidnight ? dayPlusOne(day) : day}T${closeHH}:00+08:00`;
-  const [bedsRes, itemsRes, resvRes, shiftRes, graceMin, unassignedRes] = await Promise.all([
+  const [bedsRes, itemsRes, shiftRes, unassignedRes] = await Promise.all([
     supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', branchId).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
       .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, order_customers ( id ) )')
       .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
-    supabase
-      .from('reservations')
-      .select('id, status, branch_id, source_id, guest_name, guest_phone, pax, gender_preference, service_location_type, note, seat_together, service_item_id, desired_service_start, desired_service_end, service:service_items ( prep_before_minutes, cleanup_after_minutes ), customer_sources ( code ), reservation_service_categories ( service_category_id, service_categories ( name ) ), reservation_resources ( resource_id )')
-      .eq('branch_id', branchId).in('status', ['reserved', 'confirmed']).is('deleted_at', null)
-      .gte('desired_service_start', rangeStart).lte('desired_service_start', rangeEnd).order('desired_service_start'),
     // Pull the full roster (with employee identity + position) instead of bare
     // time windows; the schedule board now uses this to power the per-position
     // hover popup ("who's free at 14:30?") on top of the original on-shift count.
@@ -266,7 +261,6 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
       .from('employee_shifts')
       .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
       .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
-    getReservationGraceMinutes(),
     // Unassigned lines (a booking with no bed yet) — they ride the unallocated
     // rail. No resource filter (they have none); branch/day filtered in the loop.
     supabase
@@ -338,53 +332,6 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     if (timed) mins.push(startMin, endMin);
   }
 
-  for (const r of resvRes.data ?? []) {
-    // External (hotel-dispatched) reservations belong to the Dispatch view —
-    // they never get a bed, and they shouldn't clutter "To place" in Station.
-    if (r.service_location_type === 'external_hotel') continue;
-    const cats = (r.reservation_service_categories ?? []).map((l) => one(l.service_categories)?.name).filter(Boolean).join(' + ');
-    const src = one(r.customer_sources)?.code;
-    const startMin = place(tsToMin(r.desired_service_start));
-    const endMin = Math.max(startMin + 15, place(tsToMin(r.desired_service_end)));
-    const dur = Math.max(15, endMin - startMin);
-    const pinnedIds = (r.reservation_resources ?? []).map((x) => x.resource_id);
-    const pending = r.status === 'reserved';
-    const overdue = isReservationOverdue({ desiredStartIso: r.desired_service_start, graceMin });
-    const prepMin = one(r.service)?.prep_before_minutes ?? 0;
-    const cleanupMin = one(r.service)?.cleanup_after_minutes ?? 0;
-    // Full record so the board can open this reservation in the edit dialog.
-    const editData: ReservationItem = {
-      id: r.id,
-      branch_id: r.branch_id,
-      source_id: r.source_id,
-      service_category_ids: (r.reservation_service_categories ?? []).map((l) => l.service_category_id),
-      guest_name: r.guest_name ?? '',
-      guest_phone: r.guest_phone,
-      pax: r.pax,
-      gender_preference: r.gender_preference,
-      service_location_type: r.service_location_type,
-      note: r.note,
-      desired_service_start: r.desired_service_start,
-      desired_service_end: r.desired_service_end,
-      resource_ids: pinnedIds,
-      seat_together: r.seat_together,
-      service_item_id: r.service_item_id,
-    };
-    // A confirmed booking pinned to a bed STAYS on that bed even if it's past
-    // its grace window — staff put it there on purpose; show it (with a late
-    // mark) rather than yanking it to the "To place" lane. Only pending or
-    // un-pinned reservations live in the lane.
-    const guest = `${overdue ? '⚠ ' : ''}${r.guest_name ?? 'Guest'}`;
-    const floating = pending || pinnedIds.length === 0;
-    if (floating) {
-      blocks.push({ key: `res:${r.id}`, kind: 'reservation', refId: r.id, bedId: null, guest, pax: r.pax, line1: cats || 'Service', line2: src ?? undefined, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: pending ? 'pending' : 'confirmed', draggable: true, editData });
-    } else {
-      for (const rid of pinnedIds) {
-        blocks.push({ key: `res:${r.id}:${rid}`, kind: 'reservation', refId: r.id, bedId: rid, guest, pax: r.pax, line1: cats || 'Service', line2: src ?? undefined, startMin, endMin, durationMin: dur, prepMin, cleanupMin, variant: 'confirmed', draggable: true, editData });
-      }
-    }
-    mins.push(startMin, endMin);
-  }
 
   // Service-providing positions only — receptionists / managers are on shift
   // but never relevant for "who's free to take a booking". Same prefix rule as
@@ -609,7 +556,7 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
   const STATION_LABEL: Record<string, string> = {
     massage_bed: 'bed', hair_chair: 'hair', nail_station: 'nail',
   };
-  const [stationsRes, shiftRes, itemsRes, resvRes, graceMin] = await Promise.all([
+  const [stationsRes, shiftRes, itemsRes] = await Promise.all([
     supabase
       .from('resources')
       .select('id, resource_name, resource_type')
@@ -626,12 +573,6 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
       .from('order_items')
       .select('therapist_id, resource_id, actual_start, actual_end, bed_released_at, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
       .not('actual_start', 'is', null),
-    supabase
-      .from('reservations')
-      .select('status, guest_name, desired_service_start, desired_service_end, service:service_items ( cleanup_after_minutes ), reservation_resources ( resource_id )')
-      .eq('branch_id', branchId).eq('status', 'confirmed').is('deleted_at', null)
-      .gte('desired_service_start', `${day}T00:00:00+08:00`).lte('desired_service_start', `${day}T23:59:59+08:00`),
-    getReservationGraceMinutes(),
   ]);
 
   const stationRows = stationsRes.data ?? [];
@@ -658,13 +599,6 @@ async function computeNowAvailability(branchId: string): Promise<NowAvailability
       busy = nowMin >= start; // ongoing
     }
     if (busy) { busyBeds.add(it.resource_id); busyBedInfo.set(it.resource_id, one(it.service)?.name ?? 'In service'); }
-  }
-  for (const r of resvRes.data ?? []) {
-    if (isReservationOverdue({ desiredStartIso: r.desired_service_start, graceMin })) continue;
-    const cleanup = one(r.service)?.cleanup_after_minutes ?? 0;
-    const start = tsToMin(r.desired_service_start);
-    const occEnd = tsToMin(r.desired_service_end) + cleanup;
-    if (nowMin >= start && nowMin < occEnd) for (const x of r.reservation_resources ?? []) if (stationIds.has(x.resource_id)) { busyBeds.add(x.resource_id); if (!busyBedInfo.has(x.resource_id)) busyBedInfo.set(x.resource_id, r.guest_name ?? 'Reserved'); }
   }
   const stations: StationNow[] = stationRows
     .map((b) => ({ id: b.id, name: b.resource_name, type: b.resource_type, free: !busyBeds.has(b.id), occupant: busyBedInfo.get(b.id) ?? null }))

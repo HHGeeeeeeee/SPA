@@ -69,7 +69,7 @@ async function fetchData(id: string) {
       .order('service_group')
       .order('duration_minutes'),
     supabase.from('employees').select('id, employee_code, name, gender, home_branch_id, home_branch:branches ( code )').eq('status', 'active').order('employee_code'),
-    supabase.from('resources').select('id, resource_name, resource_type').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
+    supabase.from('resources').select('id, resource_name, resource_type, branch:branches!resources_branch_id_fkey ( code )').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description, discount_percent, discount_amount_cents').eq('active', true).order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
     // Therapists with a working shift at this branch on the service date.
@@ -182,7 +182,7 @@ async function fetchData(id: string) {
     borrowableEmployees,
     busyTherapistIds,
     busyResourceIds,
-    resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null })),
+    resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null, branchCode: one(r.branch)?.code ?? null })),
     discountClasses: disc.data ?? [],
     paymentMethods: pm.data ?? [],
     storedValueCards: (svcCardsRes.data ?? []).map((c) => ({

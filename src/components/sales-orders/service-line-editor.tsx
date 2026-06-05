@@ -31,7 +31,7 @@ export interface LineDraft {
 }
 
 interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
-interface ResourceOpt { id: string; name: string; resource_type: string | null }
+interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface Emp { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
 interface BorrowEmp { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
@@ -85,11 +85,27 @@ export function ServiceLineEditor({
   const matchGender = (id: string) => matchesGender(genderOf.get(id), guestGender);
   const thisBranchOptions = employees
     .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.code} — ${e.name}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
+    .map((e) => ({ value: e.id, label: `${e.name}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
   const borrowOptions = borrowableEmployees
     .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.code} — ${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
-  const empItems = [{ value: NONE, label: 'Unassigned' }, ...thisBranchOptions, ...borrowOptions];
+    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
+  // Keep the line's currently-assigned therapist on the list even if today's
+  // skill/gender/busy filters would drop them (a share-group loan, or the
+  // service group changed after assignment). Without this the trigger can't
+  // resolve the name and shows a raw id.
+  const empById = new Map([...employees, ...borrowableEmployees].map((e) => [e.id, e] as const));
+  const assignedInList = draft.therapistId !== NONE
+    && (thisBranchOptions.some((o) => o.value === draft.therapistId) || borrowOptions.some((o) => o.value === draft.therapistId));
+  const assignedEmp = draft.therapistId !== NONE && !assignedInList ? empById.get(draft.therapistId) : null;
+  const assignedOption = assignedEmp
+    ? { value: assignedEmp.id, label: `${assignedEmp.name}${'homeBranchCode' in assignedEmp && assignedEmp.homeBranchCode ? ` · ${assignedEmp.homeBranchCode}` : ''}` }
+    : null;
+  const empItems = [
+    { value: NONE, label: 'Unassigned' },
+    ...(assignedOption ? [assignedOption] : []),
+    ...thisBranchOptions,
+    ...borrowOptions,
+  ];
 
   const busyRes = new Set(busyResourceIds);
   const svcSelected = serviceItems.find((s) => s.id === draft.svcId);
@@ -104,7 +120,7 @@ export function ServiceLineEditor({
     if (!resGroups.has(k)) resGroups.set(k, []);
     resGroups.get(k)!.push(r);
   }
-  const resLabel = (r: ResourceOpt) => `${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`;
+  const resLabel = (r: ResourceOpt) => `${r.branchCode ? `${r.branchCode} · ` : ''}${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`;
   const resItems = [{ value: NONE, label: 'None' }, ...eligibleResources.map((r) => ({ value: r.id, label: resLabel(r) }))];
 
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
@@ -167,6 +183,12 @@ export function ServiceLineEditor({
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>Unassigned</SelectItem>
+            {assignedOption && (
+              <SelectGroup>
+                <SelectLabel>Assigned</SelectLabel>
+                <SelectItem value={assignedOption.value}>{assignedOption.label}</SelectItem>
+              </SelectGroup>
+            )}
             <SelectGroup>
               <SelectLabel>At this branch</SelectLabel>
               {thisBranchOptions.length === 0 ? (

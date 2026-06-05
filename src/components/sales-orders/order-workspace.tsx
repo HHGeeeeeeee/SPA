@@ -60,7 +60,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_7rem_9.5rem_9.5rem_5.5rem_8.5rem_6rem_5.5rem_5.5rem_7rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_7rem_14rem_12rem_5.5rem_8.5rem_6rem_5.5rem_5.5rem_7rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -102,7 +102,7 @@ interface OrderCustomer {
 }
 interface Opt { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
 interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
-interface ResourceOpt { id: string; name: string; resource_type: string | null }
+interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface PaymentRecord {

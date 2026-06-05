@@ -161,7 +161,7 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
       list_price_cents: null,
       final_amount_cents: null,
       // On a bed ⇒ scheduled (sits on the board); else unassigned (rail).
-      status: bedId ? 'scheduled' : 'unassigned',
+      status: 'draft',
     });
     if (ie) return { ok: false, error: ie.message };
   }
@@ -213,7 +213,7 @@ export async function getReservationAvailability(input: {
   const { data: overlapping } = await supabase
     .from('order_items')
     .select('scheduled_start, actual_start, actual_end, duration_minutes, category:service_categories ( required_resource_type ), order:orders!order_items_order_id_fkey ( branch_id )')
-    .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted']);
+    .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']);
   const used: Record<string, number> = {};
   for (const it of overlapping ?? []) {
     if (one(it.order)?.branch_id !== input.branch_id) continue;
@@ -259,7 +259,7 @@ async function computeBusyResourceIds(
     .from('order_items')
     .select('resource_id, scheduled_start, actual_start, actual_end, duration_minutes, service:service_items ( prep_before_minutes, cleanup_after_minutes ), order:orders!order_items_order_id_fkey ( branch_id )')
     .not('resource_id', 'is', null)
-    .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted']);
+    .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']);
   for (const it of items ?? []) {
     if (one(it.order)?.branch_id !== branchId || !it.resource_id) continue;
     const startIso = it.actual_start ?? it.scheduled_start;

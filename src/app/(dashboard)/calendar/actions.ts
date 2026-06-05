@@ -57,7 +57,7 @@ async function bedHasConflict(
     .from('order_items')
     .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
     .eq('resource_id', bedId)
-    .in('status', ['scheduled', 'in_service']);
+    .in('status', ['draft', 'in_service']);
   for (const it of oi ?? []) {
     if (one(it.order)?.service_date !== day) continue;
     if (exclude.itemId && it.id === exclude.itemId) continue;
@@ -103,7 +103,7 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
     .eq('id', item_id)
     .single();
   if (!it) return { ok: false, error: 'Order item not found' };
-  if (!['unassigned', 'scheduled'].includes(it.status)) return { ok: false, error: 'Service already started — its bed is locked' };
+  if (it.status !== 'draft') return { ok: false, error: 'Service already started — its bed is locked' };
   const branchId = one(it.order)?.branch_id;
   if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
 
@@ -125,7 +125,7 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
   // Placing on a bed makes it scheduled (it now sits on the board axis).
   const { error } = await supabase
     .from('order_items')
-    .update({ resource_id: bed_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso, status: 'scheduled' })
+    .update({ resource_id: bed_id, scheduled_start: startIso, slot_start: startIso, slot_end: endIso })
     .eq('id', item_id);
   if (error) return { ok: false, error: error.message };
   revalidatePath('/calendar');
@@ -134,7 +134,7 @@ export async function moveScheduledOrderItem(input: unknown): Promise<ActionResu
 
 // Is `therapistId` already on another booking on `day` during [startMin, endMin)?
 // Mirrors bedHasConflict but keyed on the therapist. A therapist-assigned-but-
-// bedless booking keeps status 'unassigned', so that's included alongside
+// bedless booking keeps status 'draft', so that's included alongside
 // scheduled / in-service lines.
 async function therapistHasConflict(
   supabase: Awaited<ReturnType<typeof createAuditedClient>>,
@@ -148,7 +148,7 @@ async function therapistHasConflict(
     .from('order_items')
     .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
     .eq('therapist_id', therapistId)
-    .in('status', ['unassigned', 'scheduled', 'in_service']);
+    .in('status', ['draft', 'in_service']);
   for (const it of oi ?? []) {
     if (one(it.order)?.service_date !== day) continue;
     if (it.id === excludeItemId) continue;
@@ -189,7 +189,7 @@ export async function assignTherapistToOrderItem(input: unknown): Promise<Action
     .eq('id', item_id)
     .single();
   if (!it) return { ok: false, error: 'Order item not found' };
-  if (!['unassigned', 'scheduled'].includes(it.status)) return { ok: false, error: 'Service already started — assignment is locked' };
+  if (it.status !== 'draft') return { ok: false, error: 'Service already started — assignment is locked' };
   const branchId = one(it.order)?.branch_id;
   if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
 

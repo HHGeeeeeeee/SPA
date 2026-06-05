@@ -296,18 +296,18 @@ export async function reopenOrder(id: string, reason: string): Promise<ActionRes
   if (order.status !== 'completed') {
     return { ok: false, error: 'Only a Completed order can be reopened. Reverse the payment first if it is Paid.' };
   }
-  const { error } = await supabase.from('orders').update({ status: 'open' }).eq('id', id);
+  const { error } = await supabase.from('orders').update({ status: 'in_service' }).eq('id', id);
   if (error) return { ok: false, error: error.message };
   await supabase.from('order_edit_log').insert({
     order_id: id,
     before_snapshot: order,
-    after_snapshot: { ...order, status: 'open' },
+    after_snapshot: { ...order, status: 'in_service' },
     edit_reason: reason.trim(),
     from_status: 'completed',
-    to_status: 'open',
+    to_status: 'in_service',
     edited_by_staff_id: session!.staffUserId,
   });
-  await logStatus(id, 'completed', 'open', reason.trim(), session!.staffUserId);
+  await logStatus(id, 'completed', 'in_service', reason.trim(), session!.staffUserId);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${id}`);
   return { ok: true };
@@ -365,7 +365,7 @@ export async function updateOrderSourceBilling(input: unknown): Promise<ActionRe
     .from('orders').select('status, branch_id, source_id, billing_to_id').eq('id', d.order_id).single();
   if (!order) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (!['draft', 'open', 'in_service'].includes(order.status)) {
+  if (!['draft', 'in_service'].includes(order.status)) {
     return { ok: false, error: 'This order can no longer be edited' };
   }
   if ((order.source_id ?? null) === (d.source_id ?? null) && (order.billing_to_id ?? null) === (d.billing_to_id ?? null)) {
@@ -404,7 +404,7 @@ export async function updateOrderLocationType(input: unknown): Promise<ActionRes
     .from('orders').select('status, branch_id, service_location_type, external_hotel_id').eq('id', d.order_id).single();
   if (!order) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (!['draft', 'open', 'in_service'].includes(order.status)) {
+  if (!['draft', 'in_service'].includes(order.status)) {
     return { ok: false, error: 'This order can no longer be edited' };
   }
   // Hotel only applies to a dispatched order; on-site clears it.
@@ -446,7 +446,7 @@ export async function updateOrderBranchUnit(input: unknown): Promise<ActionResul
     .from('orders').select('status, branch_id, business_unit_id').eq('id', d.order_id).single();
   if (!order) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (!['draft', 'open', 'in_service'].includes(order.status)) {
+  if (!['draft', 'in_service'].includes(order.status)) {
     return { ok: false, error: 'This order can no longer be edited' };
   }
 
@@ -521,9 +521,9 @@ async function maybeAutoComplete(orderId: string) {
   if (!items || items.length === 0) return; // nothing to complete yet
   // unassigned/scheduled lines are still pending work — an order full of
   // not-yet-started bookings must not auto-complete.
-  if (items.some((i) => ['unassigned', 'scheduled', 'in_service'].includes(i.status))) return; // work still pending
+  if (items.some((i) => ['draft', 'in_service'].includes(i.status))) return; // work still pending
   const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single();
-  if (ord && ['open', 'in_service'].includes(ord.status)) {
+  if (ord && ['in_service'].includes(ord.status)) {
     await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
     await logStatus(orderId, ord.status, 'completed', 'All services finished or skipped', null);
   }
@@ -545,7 +545,7 @@ export async function addOrderCustomer(input: unknown): Promise<ActionResult> {
   const { data: ord } = await supabase.from('orders').select('status, branch_id').eq('id', d.order_id).single();
   if (!ord) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (!['draft', 'open', 'in_service'].includes(ord.status)) return { ok: false, error: 'This order can no longer be edited' };
+  if (!['draft', 'in_service'].includes(ord.status)) return { ok: false, error: 'This order can no longer be edited' };
   const { data: existing } = await supabase
     .from('order_customers')
     .select('seq_no')
@@ -579,7 +579,7 @@ export async function removeOrderCustomer(customerId: string, orderId: string): 
     .from('order_items')
     .select('status')
     .eq('order_customer_id', customerId);
-  if ((custItems ?? []).some((i) => !['scheduled', 'cancelled'].includes(i.status))) {
+  if ((custItems ?? []).some((i) => !['draft', 'cancelled'].includes(i.status))) {
     return { ok: false, error: 'This guest has a started or finished service and can\'t be removed.' };
   }
   const { data: custPays } = await supabase.from('payments').select('id').eq('order_customer_id', customerId).limit(1);
@@ -824,7 +824,7 @@ async function buildLineWrite(
   },
 ): Promise<{ error: string } | { patch: LineWrite }> {
   // Placed on a bed ⇒ scheduled (sits on the board); otherwise unassigned.
-  const status = d.resource_id ? 'scheduled' : 'unassigned';
+  const status = 'draft';
   if (d.service_item_id) {
     // Server-side backstop for the UI's station-by-type filter. The picker
     // already hides incompatible stations, but a stale form, a future API
@@ -869,7 +869,7 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
   const { data: ord } = await supabase.from('orders').select('status, branch_id').eq('id', d.order_id).single();
   if (!ord) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (!['draft', 'open', 'in_service'].includes(ord.status)) return { ok: false, error: 'This order can no longer be edited' };
+  if (!['draft', 'in_service'].includes(ord.status)) return { ok: false, error: 'This order can no longer be edited' };
 
   const r = await buildLineWrite(supabase, d);
   if ('error' in r) return { ok: false, error: r.error };
@@ -920,7 +920,7 @@ export async function updateOrderItem(input: unknown): Promise<ActionResult> {
 
   const { data: existing } = await supabase.from('order_items').select('status').eq('id', d.id).single();
   if (!existing) return { ok: false, error: 'Service line not found' };
-  if (!['unassigned', 'scheduled'].includes(existing.status)) return { ok: false, error: 'Only a not-yet-started line can be edited' };
+  if (!['draft'].includes(existing.status)) return { ok: false, error: 'Only a not-yet-started line can be edited' };
 
   const r = await buildLineWrite(supabase, d);
   if ('error' in r) return { ok: false, error: r.error };
@@ -950,7 +950,7 @@ export async function removeOrderItem(itemId: string, orderId: string): Promise<
   const ord = Array.isArray(item.order) ? item.order[0] : item.order;
   if (!ord) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(ord.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (!['unassigned', 'scheduled'].includes(item.status)) {
+  if (!['draft'].includes(item.status)) {
     return { ok: false, error: 'Only a not-yet-started service can be removed. Use Cancel or Interrupt for one that has started.' };
   }
   if (ord.status !== 'draft') {
@@ -972,7 +972,7 @@ export async function markNoShow(itemId: string, orderId: string): Promise<Actio
   const supabase = await createAuditedClient();
   const { data: item } = await supabase.from('order_items').select('status').eq('id', itemId).single();
   if (!item) return { ok: false, error: 'Service line not found' };
-  if (!['unassigned', 'scheduled'].includes(item.status)) {
+  if (!['draft'].includes(item.status)) {
     return { ok: false, error: 'Only a not-yet-started booking can be marked no-show.' };
   }
   const { error } = await supabase.from('order_items').update({ status: 'no_show' }).eq('id', itemId);
@@ -994,7 +994,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
     .eq('id', itemId)
     .single();
 
@@ -1002,6 +1002,14 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // started — the desk must pick the actual service first.
   if (!item?.service_item_id) {
     return { ok: false, error: 'Choose the service for this line before starting it.' };
+  }
+
+  // Revenue posts to the folio the moment a service starts, so an open cash
+  // shift must exist to receive it.
+  const { data: ordForShift } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
+  const openShift = ordForShift?.branch_id ? await getCurrentOpenShift(ordForShift.branch_id) : null;
+  if (!openShift) {
+    return { ok: false, error: 'No cash shift is open for this branch - open one on the Shift Remittance page before starting a service.' };
   }
 
   // Can't start a hands-on service with nobody to do it, or a service that needs
@@ -1083,12 +1091,23 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     .eq('id', itemId);
   if (error) return { ok: false, error: error.message };
 
+  // Post the service's revenue to the folio, bound to the open shift.
+  const startSession = await currentSession();
+  await supabase.from('folio_lines').insert({
+    order_id: orderId,
+    shift_id: openShift.id,
+    kind: 'revenue',
+    amount_cents: item?.final_amount_cents ?? 0,
+    posted_by: startSession?.staffUserId ?? null,
+    order_item_id: itemId,
+  });
+
   // Starting the first service moves the order into service automatically —
   // no separate "Start Service" step. Per-line starts still stamp each time.
   const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single();
-  if (ord?.status === 'open') {
+  if (ord?.status === 'draft') {
     await supabase.from('orders').update({ status: 'in_service' }).eq('id', orderId);
-    await logStatus(orderId, 'open', 'in_service', 'First service started', null);
+    await logStatus(orderId, 'draft', 'in_service', 'First service started', null);
   }
 
   revalidatePath(`/sales-orders/${orderId}`);
@@ -1114,7 +1133,7 @@ export async function startAllServices(orderId: string): Promise<ActionResult<{ 
   const picked: string[] = [];
   const seen = new Set<string>();
   for (const it of items) {
-    if (it.status !== 'scheduled' || busyCustomers.has(it.order_customer_id) || seen.has(it.order_customer_id)) continue;
+    if (it.status !== 'draft' || busyCustomers.has(it.order_customer_id) || seen.has(it.order_customer_id)) continue;
     seen.add(it.order_customer_id);
     picked.push(it.id);
   }
@@ -1193,7 +1212,7 @@ export async function skipOrderItem(itemId: string, orderId: string): Promise<Ac
   const supabase = await createAuditedClient();
   const { data: item } = await supabase.from('order_items').select('status').eq('id', itemId).single();
   if (!item) return { ok: false, error: 'Service line not found' };
-  if (item.status !== 'scheduled') {
+  if (item.status !== 'draft') {
     return { ok: false, error: 'Only a not-yet-started service can be cancelled (use Interrupt once it has started)' };
   }
   const { error } = await supabase.from('order_items').update({ status: 'cancelled' }).eq('id', itemId);
@@ -1387,7 +1406,7 @@ export async function redoOrderItem(itemId: string, orderId: string): Promise<Ac
   }
 
   if (order.status === 'completed') {
-    const re = await supabase.from('orders').update({ status: 'open' }).eq('id', orderId);
+    const re = await supabase.from('orders').update({ status: 'in_service' }).eq('id', orderId);
     if (re.error) return { ok: false, error: re.error.message };
   }
 
@@ -1429,7 +1448,7 @@ export async function switchService(itemId: string, orderId: string): Promise<Ac
 
   const { data: order } = await supabase.from('orders').select('status').eq('id', orderId).single();
   if (order?.status === 'completed') {
-    const re = await supabase.from('orders').update({ status: 'open' }).eq('id', orderId);
+    const re = await supabase.from('orders').update({ status: 'in_service' }).eq('id', orderId);
     if (re.error) return { ok: false, error: re.error.message };
     revalidatePath(`/sales-orders/${orderId}`);
   }
@@ -1524,8 +1543,7 @@ export async function requestOrderAdjustment(orderId: string, reason: string): P
 // reached only by Revenue Confirm (daily close); Void/Reopen are separate gated
 // actions.
 const ALLOWED_NEXT: Record<string, string[]> = {
-  draft: ['open'],
-  open: ['in_service'],
+  draft: ['in_service'],
   in_service: ['completed'],
 };
 
@@ -1543,28 +1561,6 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
   const allowed = ALLOWED_NEXT[order.status] ?? [];
   if (!allowed.includes(next)) {
     return { ok: false, error: `Cannot move from ${order.status} to ${next}` };
-  }
-
-  // Opening means the order is ready to run: it must have services, every guest
-  // must have one, and each service needs its therapist (hands-on) + bed.
-  if (next === 'open') {
-    const [{ data: customers }, { data: items }] = await Promise.all([
-      supabase.from('order_customers').select('id, customer_name').eq('order_id', orderId),
-      supabase
-        .from('order_items')
-        .select('therapist_id, resource_id, order_customer_id, service:service_items ( name, commission_applicable, allowed_resource_types )')
-        .eq('order_id', orderId)
-        .neq('status', 'cancelled'),
-    ]);
-    if (!items || items.length === 0) return { ok: false, error: 'Add at least one service before opening the order' };
-    const withService = new Set((items ?? []).map((i) => i.order_customer_id));
-    const emptyGuest = (customers ?? []).find((c) => !withService.has(c.id));
-    if (emptyGuest) return { ok: false, error: `${emptyGuest.customer_name || 'A guest'} has no service — add one or remove the guest` };
-    for (const it of items) {
-      const svc = Array.isArray(it.service) ? it.service[0] : it.service;
-      if (svc?.commission_applicable && !it.therapist_id) return { ok: false, error: `Assign a therapist to "${svc?.name ?? 'every service'}" before opening` };
-      if (svc?.allowed_resource_types?.length && !it.resource_id) return { ok: false, error: `Assign a station/bed to "${svc?.name ?? 'every service'}" before opening` };
-    }
   }
 
   const { error } = await supabase.from('orders').update({ status: next }).eq('id', orderId);

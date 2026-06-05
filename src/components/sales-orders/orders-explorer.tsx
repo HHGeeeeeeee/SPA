@@ -47,7 +47,6 @@ export interface OrderRow {
 // now, so they collapse into one filter option — payment is filtered separately.
 const SERVICE_OPTIONS: { value: string; label: string; match: (s: string) => boolean }[] = [
   { value: 'draft', label: 'Draft', match: (s) => s === 'draft' },
-  { value: 'open', label: 'Open', match: (s) => s === 'open' },
   { value: 'in_service', label: 'In service', match: (s) => s === 'in_service' },
   { value: 'done', label: 'Service done', match: (s) => s === 'completed' || s === 'paid' },
   { value: 'closed', label: 'Closed', match: (s) => s === 'closed' },

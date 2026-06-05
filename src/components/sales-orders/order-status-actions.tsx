@@ -7,7 +7,6 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
 import {
-  setOrderStatus,
   voidOrder,
   reopenOrder,
   requestOrderAdjustment,
@@ -30,13 +29,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
   const [reopenOpen, setReopenOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
 
-  function doStatus(next: string) {
-    startTransition(async () => {
-      const r = await setOrderStatus(orderId, next);
-      if (r.ok) { toast.success(`Order ${next.replace('_', ' ')}`); router.refresh(); }
-      else toast.error(r.error);
-    });
-  }
   function doVoid(reason: string) {
     startTransition(async () => {
       const r = await voidOrder(orderId, reason);
@@ -62,9 +54,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
   return (
     <>
       {status === 'draft' && (
-        <Button size="sm" onClick={() => doStatus('open')} disabled={pending || itemCount === 0}>Open Order</Button>
-      )}
-      {status === 'open' && (
         <span className="text-xs font-medium text-muted-foreground">Start each service below to begin</span>
       )}
       {status === 'in_service' && (
@@ -101,7 +90,7 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
         open={reopenOpen}
         onOpenChange={setReopenOpen}
         title="Reopen this order?"
-        description="Moves the order back to Open so it can be edited. Logged for audit."
+        description="Moves the order back to In Service so it can be edited. Logged for audit."
         confirmLabel="Reopen"
         pending={pending}
         onConfirm={doReopen}

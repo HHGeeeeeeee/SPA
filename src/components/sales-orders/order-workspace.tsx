@@ -319,7 +319,7 @@ export function OrderWorkspace({
       || d.discountId !== b.discountId || d.discountOverride !== b.discountOverride || d.start !== b.start || d.roomNo !== b.roomNo;
   };
   const guestGenderOf = (c: OrderCustomer): string => (c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER);
-  const isLineEditable = (it: OrderItem): boolean => order.editable && ['unassigned', 'scheduled'].includes(it.status);
+  const isLineEditable = (it: OrderItem): boolean => order.editable && ['draft'].includes(it.status);
 
   // Counter payment methods only — AR is an invoice arrangement, not a counter
   // collection, so it is never offered here. AR-billed orders skip payment.
@@ -339,7 +339,7 @@ export function OrderWorkspace({
 
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
-  const canRunService = ['open', 'in_service'].includes(order.status);
+  const canRunService = ['draft', 'in_service'].includes(order.status);
   // Whole order dispatched to a hotel → services use a room no, not an in-house station.
   const dispatch = order.service_location_type === 'external_hotel';
 
@@ -471,7 +471,7 @@ export function OrderWorkspace({
     const takenTherapists = new Set<string>(busyTherapistIds);
     const takenStations = new Set<string>(busyResourceIds);
     items
-      .filter((i) => ['unassigned', 'scheduled', 'in_service'].includes(i.status))
+      .filter((i) => ['draft', 'in_service'].includes(i.status))
       .forEach((i) => {
         if (i.therapist_id) takenTherapists.add(i.therapist_id);
         if (i.resource_id) takenStations.add(i.resource_id);
@@ -712,7 +712,7 @@ export function OrderWorkspace({
             </div>
           )}
         </div>
-        {canRunService && items.some((i) => i.status === 'scheduled') ? (
+        {canRunService && items.some((i) => i.status === 'draft') ? (
           <Button
             onClick={doStartAll}
             disabled={pending}
@@ -846,10 +846,10 @@ export function OrderWorkspace({
                               <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
                               <span className="text-xs font-medium text-muted-foreground">—</span>
                               <div className="flex flex-wrap items-center gap-1 justify-end">
-                                {canRunService && it.status === 'scheduled' && (
+                                {canRunService && it.status === 'draft' && (
                                   <ActionBtn tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'} className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={() => doStartItem(it)} disabled={pending || guestHasLiveService}>Start</ActionBtn>
                                 )}
-                                {canRunService && it.status === 'scheduled' && (
+                                {canRunService && it.status === 'draft' && (
                                   <ActionBtn tip="Cancel this service — drops it from the bill but keeps it in the record." variant="outline" className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => setCancelItem(it)} disabled={pending}>Cancel</ActionBtn>
                                 )}
                                 {!['paid', 'closed', 'void'].includes(order.status) && (

@@ -297,7 +297,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     };
   });
 
-  const editable = ['draft', 'open', 'in_service'].includes(order.status);
+  const editable = ['draft', 'in_service'].includes(order.status);
   // ERP posting outcome (denormalised columns). Read in a separate, cast query so
   // the typed select stays clean and the page is safe even before the migration
   // that adds these columns is applied (missing-column errors are tolerated).

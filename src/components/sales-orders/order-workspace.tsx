@@ -49,6 +49,7 @@ import {
   releaseBed,
   voidPayment,
 } from '@/app/(dashboard)/sales-orders/actions';
+import { ServiceLineEditor, type LineDraft } from '@/components/sales-orders/service-line-editor';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { AuditTrail } from '@/components/sales-orders/audit-trail';
@@ -231,10 +232,9 @@ export function OrderWorkspace({
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
 
-  // add item (per customer) — two-step: group → duration variant. The same panel
-  // edits an existing not-yet-started line when editingItemId is set.
+  // add item (per customer) — two-step: group → duration variant. This panel only
+  // ADDS new lines now; existing not-yet-started lines edit inline (per row).
   const [activeCustomer, setActiveCustomer] = useState<string | null>(null);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [groupSel, setGroupSel] = useState('');
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
@@ -248,6 +248,32 @@ export function OrderWorkspace({
   const [discountOverride, setDiscountOverride] = useState('');
   const selectedDiscountCode = discountClasses.find((d) => d.id === discountId)?.code ?? '';
   const needsDiscountAmount = ['DIS-91', 'DIS-99'].includes(selectedDiscountCode);
+
+  // Inline per-line editing: every not-yet-started line is open at once (no
+  // pencil). Each line keeps a draft; the guest's header Save commits the dirty
+  // ones (the server recomputes price). A draft falls back to the line's own
+  // values, so after a save (+ refresh) the cleared draft shows the fresh data.
+  const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
+  const draftFromItem = (it: OrderItem): LineDraft => ({
+    groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group ?? '',
+    svcId: it.service_item_id ?? '',
+    therapistId: it.therapist_id ?? NONE,
+    resourceId: it.resource_id ?? NONE,
+    discountId: it.discount_class_id ?? defaultDiscountId,
+    discountOverride: it.discount_amount_cents > 0 ? String(it.discount_amount_cents / 100) : '',
+  });
+  const effectiveDraft = (it: OrderItem): LineDraft => lineDrafts[it.id] ?? draftFromItem(it);
+  const setDraft = (it: OrderItem, patch: Partial<LineDraft>) =>
+    setLineDrafts((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] ?? draftFromItem(it)), ...patch } }));
+  const lineIsDirty = (it: OrderItem): boolean => {
+    const d = lineDrafts[it.id];
+    if (!d) return false;
+    const b = draftFromItem(it);
+    return d.svcId !== b.svcId || d.therapistId !== b.therapistId || d.resourceId !== b.resourceId
+      || d.discountId !== b.discountId || d.discountOverride !== b.discountOverride;
+  };
+  const guestGenderOf = (c: OrderCustomer): string => (c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER);
+  const isLineEditable = (it: OrderItem): boolean => order.editable && ['unassigned', 'scheduled'].includes(it.status);
 
   // Counter payment methods only — AR is an invoice arrangement, not a counter
   // collection, so it is never offered here. AR-billed orders skip payment.
@@ -321,7 +347,6 @@ export function OrderWorkspace({
 
   function closeItemForm() {
     setActiveCustomer(null);
-    setEditingItemId(null);
     setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
     setTherapistId(NONE); setResourceId(NONE);
   }
@@ -343,34 +368,33 @@ export function OrderWorkspace({
     });
   }
 
-  // Open the shared panel pre-filled to edit an existing (not-yet-started) line.
-  function startEditItem(it: OrderItem) {
-    const grp = serviceItems.find((s) => s.id === it.service_item_id)?.group ?? '';
-    setEditingItemId(it.id);
-    setActiveCustomer(it.order_customer_id);
-    setGroupSel(grp);
-    setSvcId(it.service_item_id ?? '');
-    setTherapistId(it.therapist_id ?? NONE);
-    setResourceId(it.resource_id ?? NONE);
-    setDiscountId(it.discount_class_id ?? defaultDiscountId);
-    setDiscountOverride(it.discount_amount_cents > 0 ? String(it.discount_amount_cents / 100) : '');
-  }
-
-  function doSaveItem() {
-    if (!editingItemId) return;
-    if (!svcId) return toast.error('Pick a service');
+  // Commit every dirty (edited) not-yet-started line for this guest in one go —
+  // the guest header's Save. The server recomputes list/final price from the
+  // chosen service + discount, so editing never touches the amount directly.
+  function doSaveGuest(c: OrderCustomer) {
+    const dirty = itemsByCustomer(c.id).filter((it) => isLineEditable(it) && lineIsDirty(it));
+    if (dirty.length === 0) { toast.info('No changes to save'); return; }
+    for (const it of dirty) {
+      if (!effectiveDraft(it).svcId) { toast.error('Pick a service for every line'); return; }
+    }
     startTransition(async () => {
-      const r = await updateOrderItem({
-        id: editingItemId,
-        order_id: order.id,
-        service_item_id: svcId,
-        therapist_id: therapistId === NONE ? null : therapistId,
-        resource_id: resourceId === NONE ? null : resourceId,
-        discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
-        discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
-      });
-      if (r.ok) { closeItemForm(); toast.success('Service updated'); router.refresh(); }
-      else toast.error(r.error);
+      for (const it of dirty) {
+        const d = effectiveDraft(it);
+        const code = discountClasses.find((x) => x.id === d.discountId)?.code ?? '';
+        const r = await updateOrderItem({
+          id: it.id,
+          order_id: order.id,
+          service_item_id: d.svcId,
+          therapist_id: d.therapistId === NONE ? null : d.therapistId,
+          resource_id: d.resourceId === NONE ? null : d.resourceId,
+          discount_class_id: sourceDiscountLocked ? defaultDiscountId : d.discountId,
+          discount_override: ['DIS-91', 'DIS-99'].includes(code) ? Number(d.discountOverride || 0) : null,
+        });
+        if (!r.ok) { toast.error(r.error); return; }
+      }
+      setLineDrafts((prev) => { const n = { ...prev }; dirty.forEach((it) => delete n[it.id]); return n; });
+      toast.success(dirty.length === 1 ? 'Service saved' : `${dirty.length} services saved`);
+      router.refresh();
     });
   }
 
@@ -547,7 +571,6 @@ export function OrderWorkspace({
       if (r.ok) {
         toast.success('Stopped (no charge) — pick the new service');
         router.refresh();
-        setEditingItemId(null);
         setActiveCustomer(it.order_customer_id);
         setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
       } else toast.error(r.error);
@@ -812,6 +835,16 @@ export function OrderWorkspace({
                 ) : (c.gender === 'M' || c.gender === 'F') ? (
                   <span className="text-xs font-semibold text-muted-foreground">{c.gender === 'F' ? 'Female only' : 'Male only'}</span>
                 ) : null}
+                {order.editable && itemsByCustomer(c.id).some(isLineEditable) && (
+                  <Button
+                    size="sm"
+                    onClick={() => doSaveGuest(c)}
+                    disabled={pending || !itemsByCustomer(c.id).some(lineIsDirty)}
+                    title="Save the edited service lines (recomputes price)"
+                  >
+                    <Check className="size-3.5" /> Save
+                  </Button>
+                )}
                 <span className="text-sm font-bold tabular">{peso(c.subtotal_cents)}</span>
                 {order.editable && customerRemovable(c) && (
                   <Button size="icon-sm" variant="ghost" onClick={() => doRemoveCustomer(c.id)} disabled={pending} title="Remove guest">
@@ -821,7 +854,7 @@ export function OrderWorkspace({
               </div>
             </CardHeader>
             <CardContent>
-              {itemsByCustomer(c.id).length > 0 && (
+              {itemsByCustomer(c.id).some((it) => !isLineEditable(it)) && (
                 <div className="grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-center gap-x-3 border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                   <span>Service</span>
                   <span>Therapist</span>
@@ -843,6 +876,77 @@ export function OrderWorkspace({
                   const isCleaning = cleaningUntil != null && cleaningUntil.getTime() > Date.now();
                   // This guest already has a live service → can't start another yet.
                   const guestHasLiveService = items.some((x) => x.id !== it.id && x.order_customer_id === it.order_customer_id && x.status === 'in_service');
+                  // Not-yet-started lines edit inline (no pencil) — the row IS the
+                  // editor; the guest header's Save commits. Started / done lines
+                  // fall through to the read-only grid row below.
+                  if (isLineEditable(it)) {
+                    const d = effectiveDraft(it);
+                    return (
+                      <li key={it.id} className="flex flex-wrap items-end gap-x-3 gap-y-2 border-b border-border py-2 last:border-0">
+                        <ServiceLineEditor
+                          draft={d}
+                          onChange={(patch) => setDraft(it, patch)}
+                          serviceItems={serviceItems}
+                          employees={employees}
+                          borrowableEmployees={borrowableEmployees}
+                          resources={resources}
+                          discountClasses={discountClasses}
+                          capabilityByEmployee={capabilityByEmployee}
+                          busyTherapistIds={busyTherapistIds}
+                          busyResourceIds={busyResourceIds}
+                          guestGender={guestGenderOf(c)}
+                          sourceDiscountLocked={sourceDiscountLocked}
+                          defaultDiscountId={defaultDiscountId}
+                          disabled={pending}
+                        />
+                        <div className="ml-auto flex items-center gap-2 pb-0.5">
+                          {canRunService && it.status === 'scheduled' && (
+                            <ActionBtn
+                              tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'}
+                              className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                              onClick={() => doStartItem(it)}
+                              disabled={pending || guestHasLiveService}
+                            >
+                              Start
+                            </ActionBtn>
+                          )}
+                          {canRunService && it.status === 'scheduled' && (
+                            <ActionBtn
+                              tip="Cancel this service — drops it from the bill but keeps it in the record."
+                              variant="outline"
+                              className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={() => setCancelItem(it)}
+                              disabled={pending}
+                            >
+                              Cancel
+                            </ActionBtn>
+                          )}
+                          {!['paid', 'closed', 'void'].includes(order.status) && (
+                            <ActionBtn
+                              tip="Guest didn't show — mark no-show (zero charge, leaves the schedule)."
+                              variant="outline"
+                              className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={() => doNoShow(it.id)}
+                              disabled={pending}
+                            >
+                              No-show
+                            </ActionBtn>
+                          )}
+                          <span className="font-bold tabular w-24 text-right">
+                            {it.discount_amount_cents > 0 && (
+                              <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>
+                            )}
+                            {peso(it.final_amount_cents)}
+                          </span>
+                          {order.status === 'draft' && (
+                            <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending} title="Remove service">
+                              <Trash2 className="size-3.5 text-destructive" />
+                            </Button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  }
                   const detailParts = [
                     it.duration_minutes ? `${it.duration_minutes} min` : null,
                     it.station_name,
@@ -980,17 +1084,6 @@ export function OrderWorkspace({
                           {peso(it.final_amount_cents)}
                         </span>
                       )}
-                      {order.editable && ['unassigned', 'scheduled'].includes(it.status) && (
-                        <Button size="icon-sm" variant="ghost" onClick={() => startEditItem(it)} disabled={pending} title="Edit service">
-                          <Pencil className="size-3.5 text-muted-foreground" />
-                        </Button>
-                      )}
-                      {/* Hard delete only on a draft order; once open, Skip is the remove path. */}
-                      {order.status === 'draft' && ['unassigned', 'scheduled'].includes(it.status) && (
-                        <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending} title="Remove service">
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      )}
                     </div>
                   </li>
                   );
@@ -1004,7 +1097,7 @@ export function OrderWorkspace({
                 activeCustomer === c.id ? (
                   <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-border p-3">
                     <p className="col-span-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                      {editingItemId ? 'Edit service' : 'Add service'}
+                      Add service
                     </p>
                     <div className="max-w-[15rem]">
                       <Label className="text-xs font-semibold">Service</Label>
@@ -1141,11 +1234,7 @@ export function OrderWorkspace({
                     </div>
                     <div className="col-span-3 flex gap-2 justify-end">
                       <Button size="sm" variant="ghost" onClick={closeItemForm} disabled={pending}>Cancel</Button>
-                      {editingItemId ? (
-                        <Button size="sm" onClick={doSaveItem} disabled={pending || !svcId}>Save changes</Button>
-                      ) : (
-                        <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
-                      )}
+                      <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
                     </div>
                   </div>
                 ) : (

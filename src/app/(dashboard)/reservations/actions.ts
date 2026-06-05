@@ -76,13 +76,14 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
     return { ok: false, error: 'A guest phone is required for this source' };
   }
 
-  // Resolve beds: explicit override, else seat-together auto-assign, else none.
-  const pinned = await resolveEffectiveBeds({
-    branchId: d.branch_id, resourceIds: d.resource_ids, seatTogether: d.seat_together,
-    categoryIds: d.service_category_ids, pax: d.pax,
-    start: d.desired_service_start, end: d.desired_service_end,
-    locationType: d.service_location_type, excludeReservationId: null,
-  });
+  // Beds: only honor an EXPLICIT pick (e.g. the board's click-a-slot, carried in
+  // resource_ids). No auto-assign, no seat-together top-up, no capacity gate — a
+  // booking with no pick stays unassigned in the To-place rail for the desk to
+  // place manually.
+  const pinned = await resolvePinnedBeds(
+    d.branch_id, d.resource_ids, d.pax, d.service_category_ids,
+    d.desired_service_start, d.desired_service_end, d.service_location_type, null,
+  );
   if (!pinned.ok) return { ok: false, error: pinned.error };
 
   // Duration: the chosen service's, else 60 (a category-only booking).
@@ -141,7 +142,8 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
   }
   if (!discountClassId) return { ok: false, error: 'No default discount class configured' };
 
-  // One unassigned line per guest: primary category + booked time + (pinned) bed.
+  // One line per guest: primary category + booked time + (only if explicitly
+  // picked) a bed. Extra guests beyond the picked beds stay unassigned.
   const beds = pinned.ids;
   const primaryCategory = d.service_category_ids[0];
   for (let i = 0; i < sortedCustomers.length; i++) {
@@ -428,8 +430,10 @@ export async function getFreeBeds(input: {
   return { ok: true, data: { beds } };
 }
 
-// Validate pinned beds: belong to the branch, within pax, and free for the window.
-// External (in-room) reservations consume no bed here, so pins are dropped.
+// Validate EXPLICITLY chosen beds (e.g. the board's click-a-slot) — belong to
+// the branch, type-compatible with the categories, and free for the window. No
+// auto-assignment / top-up happens: a booking only lands on a bed the user
+// actually picked; everything else stays unassigned in the To-place rail.
 async function resolvePinnedBeds(
   branchId: string,
   resourceIds: string[],
@@ -455,138 +459,10 @@ async function resolvePinnedBeds(
   const found = new Map((rows ?? []).map((r) => [r.id, r.resource_name]));
   const missing = ids.filter((id) => !found.has(id));
   if (missing.length) return { ok: false, error: 'A pinned bed is not an active resource of this branch' };
-  // Resource-type guard — a Hair Salon booking can't pin Bed #1 (massage_bed)
-  // just because it's free. The previous code only enforced this for the
-  // auto-picked "extra" beds in a group; the anchor / first pin was unchecked.
   const compat = await assertBedsMatchCategories(ids, categoryIds);
   if (!compat.ok) return { ok: false, error: compat.error };
   const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
   const taken = ids.filter((id) => busy.has(id)).map((id) => found.get(id));
   if (taken.length) return { ok: false, error: `Already taken for this window: ${taken.join(', ')}` };
   return { ok: true, ids };
-}
-
-const bedNum = (name: string): number => { const m = name.match(/(\d+)/); return m ? Number(m[1]) : 9999; };
-
-// Auto-pick `pax` "together" beds for a seat-together group. Adjacency =
-// same resource type + same zone + consecutive bed numbers. Degrades gracefully:
-// consecutive-in-a-zone → any free in one zone → any free of the type. Returns []
-// if it can't fit (stays unassigned, in the top lane).
-async function autoAssignAdjacentBeds(
-  branchId: string,
-  categoryIds: string[],
-  pax: number,
-  start: string,
-  end: string,
-  excludeReservationId?: string | null,
-): Promise<string[]> {
-  if (pax < 1) return [];
-  const supabase = await createAuditedClient();
-  const { data: cats } = await supabase
-    .from('service_categories').select('required_resource_type').in('id', categoryIds);
-  const types = [...new Set((cats ?? []).map((c) => c.required_resource_type).filter(Boolean) as string[])];
-  if (types.length === 0) return [];
-  const { data: resources } = await supabase
-    .from('resources').select('id, resource_name, resource_type, location_zone')
-    .eq('branch_id', branchId).eq('status', 'active').in('resource_type', types);
-  const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
-  const all = (resources ?? []).map((r) => ({ id: r.id, name: r.resource_name, type: r.resource_type, zone: r.location_zone ?? '', free: !busy.has(r.id) }));
-
-  // First free consecutive-number run within a single zone.
-  const consecutiveRun = (zoneBeds: typeof all): string[] | null => {
-    const sorted = [...zoneBeds].sort((a, b) => bedNum(a.name) - bedNum(b.name));
-    for (let i = 0; i + pax <= sorted.length; i++) {
-      const win = sorted.slice(i, i + pax);
-      const ok = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
-      if (ok && win.every((b) => b.free)) return win.map((b) => b.id);
-    }
-    return null;
-  };
-
-  for (const t of types) {
-    const ofType = all.filter((b) => b.type === t);
-    const zones = [...new Set(ofType.map((b) => b.zone))];
-    // 1) consecutive run inside one zone (true adjacency)
-    for (const z of zones) { const run = consecutiveRun(ofType.filter((b) => b.zone === z)); if (run) return run; }
-    // 2) any free beds within one zone (same area, may not be consecutive)
-    for (const z of zones) { const free = ofType.filter((b) => b.zone === z && b.free).slice(0, pax); if (free.length === pax) return free.map((b) => b.id); }
-    // 3) last resort: any free beds of the type, across zones
-    const anyFree = ofType.filter((b) => b.free).slice(0, pax);
-    if (anyFree.length === pax) return anyFree.map((b) => b.id);
-  }
-  return [];
-}
-
-// Top up an explicit set of pinned beds to `pax` total — add free beds nearest
-// (by bed number, same zone preferred) to the pinned ones. So clicking one bed
-// for a group reserves a consecutive-ish run that includes it.
-async function topUpBeds(
-  branchId: string,
-  categoryIds: string[],
-  seedIds: string[],
-  need: number,
-  start: string,
-  end: string,
-  excludeReservationId?: string | null,
-): Promise<string[]> {
-  if (need <= 0) return [];
-  const supabase = await createAuditedClient();
-  const { data: cats } = await supabase.from('service_categories').select('required_resource_type').in('id', categoryIds);
-  const types = [...new Set((cats ?? []).map((c) => c.required_resource_type).filter(Boolean) as string[])];
-  if (types.length === 0) return [];
-  const { data: resources } = await supabase
-    .from('resources').select('id, resource_name, resource_type, location_zone')
-    .eq('branch_id', branchId).eq('status', 'active').in('resource_type', types);
-  const busy = await computeBusyResourceIds(branchId, start, end, excludeReservationId);
-  const seed = new Set(seedIds);
-  const all = (resources ?? []).map((r) => ({ id: r.id, zone: r.location_zone ?? '', num: bedNum(r.resource_name) }));
-  const seedBeds = all.filter((b) => seed.has(b.id));
-  const seedZone = seedBeds[0]?.zone;
-  const nums = seedBeds.map((b) => b.num);
-  const lo = nums.length ? Math.min(...nums) : 0;
-  const hi = nums.length ? Math.max(...nums) : 0;
-  const free = all.filter((b) => !busy.has(b.id) && !seed.has(b.id));
-  const score = (b: { zone: string; num: number }) => {
-    const dist = b.num > hi ? b.num - hi : b.num < lo ? lo - b.num : 0;
-    return (seedZone != null && b.zone !== seedZone ? 1000 : 0) + dist;
-  };
-  return [...free].sort((a, b) => score(a) - score(b) || a.num - b.num).slice(0, need).map((b) => b.id);
-}
-
-// Decide the beds to pin: an explicit staff override wins (topped up to pax for a
-// group); otherwise a multi-pax booking is auto-assigned adjacent beds; otherwise
-// none (unassigned).
-async function resolveEffectiveBeds(args: {
-  branchId: string;
-  resourceIds: string[];
-  seatTogether: boolean;
-  categoryIds: string[];
-  pax: number;
-  start: string;
-  end: string;
-  locationType: string;
-  excludeReservationId?: string | null;
-}): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
-  if (args.locationType === 'external_hotel') return { ok: true, ids: [] };
-  if (args.resourceIds.length > 0) {
-    const pinned = await resolvePinnedBeds(args.branchId, args.resourceIds, args.pax, args.categoryIds, args.start, args.end, args.locationType, args.excludeReservationId);
-    if (!pinned.ok) return pinned;
-    // One bed per guest: if fewer beds were pinned than pax (e.g. clicked a single
-    // slot on the board for a group), top up to pax with nearby free beds.
-    if (args.pax > pinned.ids.length) {
-      const extra = await topUpBeds(args.branchId, args.categoryIds, pinned.ids, args.pax - pinned.ids.length, args.start, args.end, args.excludeReservationId);
-      return { ok: true, ids: [...pinned.ids, ...extra] };
-    }
-    return pinned;
-  }
-  // One bed per guest: any multi-pax booking auto-reserves `pax` beds (consecutive
-  // preferred — see autoAssignAdjacentBeds; seat_together just makes adjacency a
-  // firmer intent, which the helper already tries first). A single guest stays
-  // unassigned (placed/picked later). Degrades to [] if `pax` beds can't be found,
-  // so the booking simply floats in the To-place lane for manual placement.
-  if (args.pax > 1) {
-    const ids = await autoAssignAdjacentBeds(args.branchId, args.categoryIds, args.pax, args.start, args.end, args.excludeReservationId);
-    return { ok: true, ids };
-  }
-  return { ok: true, ids: [] };
 }

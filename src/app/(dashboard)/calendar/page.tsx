@@ -303,7 +303,7 @@ async function fetchBoardDialogData(): Promise<BoardDialogData> {
   const [br, src, cat, si] = await Promise.all([
     supabase.from('branches').select('id, code, name, branch_business_units ( business_unit_id )').eq('active', true).order('code'),
     supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
-    supabase.from('service_categories').select('id, code, name, required_resource_type, service_category_business_units ( business_unit_id )').eq('active', true).order('code'),
+    supabase.from('service_categories').select('id, code, name, required_resource_type, required_resource_types, service_category_business_units ( business_unit_id )').eq('active', true).order('code'),
     supabase.from('service_items').select('id, name, service_group, service_category_id, duration_minutes').eq('active', true).order('service_group'),
   ]);
   const branches = (br.data ?? []).filter((b) => allowed.has(b.id)).map((b) => ({
@@ -313,6 +313,7 @@ async function fetchBoardDialogData(): Promise<BoardDialogData> {
     id: c.id, code: c.code, name: c.name,
     businessUnitIds: (c.service_category_business_units ?? []).map((x) => x.business_unit_id),
     requiredResourceType: c.required_resource_type,
+    requiredResourceTypes: c.required_resource_types ?? [],
   }));
   const serviceItems = (si.data ?? [])
     .filter((s) => s.service_group)

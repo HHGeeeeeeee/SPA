@@ -26,19 +26,13 @@ import {
 
 import {
   createBooking,
-  getReservationAvailability,
-  getFreeBeds,
   nextAvailableSlot,
 } from '@/app/(dashboard)/reservations/actions';
 import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
-interface FreeBed { id: string; name: string; type: string; zone: string; free: boolean }
-// Trailing number in "Bed #3" → 3, for natural sort + adjacency runs.
-function bedNum(name: string): number { const m = name.match(/(\d+)/); return m ? Number(m[1]) : 9999; }
-
 interface SourceOpt { id: string; code: string; name: string; phone_required: boolean }
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
-interface CategoryOpt { id: string; code: string; name: string; businessUnitIds: string[]; requiredResourceType: string | null }
+interface CategoryOpt { id: string; code: string; name: string; businessUnitIds: string[]; requiredResourceType: string | null; requiredResourceTypes?: string[] }
 
 export interface ReservationItem {
   id: string;
@@ -194,20 +188,9 @@ export function NewReservationDialog({
   const [locationType, setLocationType] = useState(reservation?.service_location_type ?? 'on_site');
   const [roomNo, setRoomNo] = useState('');
   const [note, setNote] = useState(reservation?.note ?? '');
-  // Booking-side intent (groups who want to sit together → system auto-assigns
-  // adjacent beds). Staff can override the actual beds via the picker below.
-  const [seatTogether, setSeatTogether] = useState(reservation?.seat_together ?? false);
-  const [pinnedBeds, setPinnedBeds] = useState<string[]>(reservation?.resource_ids ?? []);
-  // Beds stay hidden until staff explicitly opens the picker — opening a
-  // reservation never reveals bed numbers on its own.
-  const [showBedPicker, setShowBedPicker] = useState(false);
-  const [beds, setBeds] = useState<FreeBed[] | null>(null);
   const [finding, setFinding] = useState(false);
   const [walkInMsg, setWalkInMsg] = useState<string | null>(null);
   const [specificItemId, setSpecificItemId] = useState(reservation?.service_item_id ?? initial?.serviceItemId ?? ''); // '' = any service in the category
-
-  // Capacity snapshot for the chosen branch + window (used per resource type).
-  const [avail, setAvail] = useState<Record<string, { capacity: number; used: number }> | null>(null);
 
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
   const sourceOptions = sources.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
@@ -232,7 +215,6 @@ export function NewReservationDialog({
 
   function pickBranch(v: string) {
     setBranchId(v);
-    setPinnedBeds([]); // beds belong to a branch; clear when switching
     const units = branches.find((b) => b.id === v)?.businessUnitIds ?? [];
     // Drop selected categories not offered at the new branch.
     setCategoryIds((prev) =>
@@ -245,45 +227,15 @@ export function NewReservationDialog({
 
   function pickLocation(v: string) {
     setLocationType(v);
-    if (v === 'external_hotel') setPinnedBeds([]); // in-room: no branch bed
   }
 
   const selectedSource = sources.find((s) => s.id === sourceId) ?? null;
   const phoneRequired = selectedSource ? selectedSource.phone_required : true;
 
   // Refresh the capacity snapshot when branch/time changes (debounced).
-  useEffect(() => {
-    if (!open || !branchId || !start || !end) { setAvail(null); return; }
-    if (new Date(end) <= new Date(start)) return;
-    const t = setTimeout(async () => {
-      const r = await getReservationAvailability({
-        branch_id: branchId,
-        start: new Date(start).toISOString(),
-        end: new Date(end).toISOString(),
-        exclude_id: isEdit ? (reservation?.id ?? null) : null,
-      });
-      if (r.ok && r.data) setAvail(r.data.byType);
-    }, 350);
-    return () => clearTimeout(t);
-  }, [open, branchId, start, end, reservation?.id]);
-
-  // Free/busy beds for the optional pin picker (on-site only).
-  useEffect(() => {
-    if (!open || locationType !== 'on_site' || !branchId || !start || !end) { setBeds(null); return; }
-    if (new Date(end) <= new Date(start)) return;
-    const t = setTimeout(async () => {
-      const r = await getFreeBeds({
-        branch_id: branchId,
-        start: new Date(start).toISOString(),
-        end: new Date(end).toISOString(),
-        exclude_id: isEdit ? (reservation?.id ?? null) : null,
-      });
-      if (r.ok && r.data) setBeds(r.data.beds);
-    }, 350);
-    return () => clearTimeout(t);
-  }, [open, locationType, branchId, start, end, reservation?.id]);
-
-  // Per resource type needed by the selected categories, vs window capacity.
+  // Resource types needed by the selected categories (drives the walk-in
+  // soonest-slot probe). Bed assignment is fully manual on the board now —
+  // bookings always land unassigned, so there's no capacity check here.
   const paxNum = Math.max(1, Number(pax) || 1);
   const neededTypes = [
     ...new Set(
@@ -297,62 +249,6 @@ export function NewReservationDialog({
   const cat0 = serviceCategories.find((c) => categoryIds.includes(c.id) && c.requiredResourceType === neededTypes[0]) ?? null;
   const itemChoices = cat0 ? serviceItems.filter((s) => s.categoryId === cat0.id) : [];
   const specificGroup = serviceItems.find((s) => s.id === specificItemId)?.group ?? null;
-  const capacityRows = neededTypes.map((rt) => {
-    const cap = avail?.[rt]?.capacity ?? 0;
-    const usedOther = avail?.[rt]?.used ?? 0;
-    const free = cap - usedOther - paxNum;
-    return { rt, cap, usedOther, free, over: usedOther + paxNum > cap };
-  });
-  const hasOver = capacityRows.some((r) => r.over);
-  const missingResourceType = categoryIds.some((id) => !serviceCategories.find((c) => c.id === id)?.requiredResourceType);
-
-  // Beds the picker offers = active resources of the types this reservation needs.
-  // Sorted by zone then number so same-zone beds cluster (adjacency reads naturally).
-  const pinnableBeds = (beds ?? []).filter((b) => neededTypes.includes(b.type));
-  const bedsByType = neededTypes
-    .map((rt) => ({
-      rt,
-      list: pinnableBeds.filter((b) => b.type === rt)
-        .sort((a, b) => (a.zone === b.zone ? bedNum(a.name) - bedNum(b.name) : a.zone.localeCompare(b.zone))),
-    }))
-    .filter((g) => g.list.length > 0);
-  const isFreeOrMine = (b: FreeBed) => b.free || pinnedBeds.includes(b.id);
-
-  function toggleBed(id: string) {
-    setPinnedBeds((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      if (prev.length >= paxNum) { toast.error(`Can't pin more than ${paxNum} bed(s) for ${paxNum} pax`); return prev; }
-      return [...prev, id];
-    });
-  }
-
-  // Pick `pax` "together" beds in a type group: a consecutive-number run inside a
-  // single zone first, then any free beds in one zone, then any free of the type.
-  function pickAdjacent(list: FreeBed[]) {
-    const n = paxNum;
-    const zones = [...new Set(list.map((b) => b.zone))];
-    const runInZone = (zoneBeds: FreeBed[]): string[] => {
-      const sorted = [...zoneBeds].sort((a, b) => bedNum(a.name) - bedNum(b.name));
-      for (let i = 0; i + n <= sorted.length; i++) {
-        const win = sorted.slice(i, i + n);
-        const ok = win.every((b, k) => k === 0 || bedNum(b.name) - bedNum(win[k - 1].name) === 1);
-        if (ok && win.every(isFreeOrMine)) return win.map((b) => b.id);
-      }
-      return [];
-    };
-    let chosen: string[] = [];
-    for (const z of zones) { chosen = runInZone(list.filter((b) => b.zone === z)); if (chosen.length) break; }
-    if (chosen.length === 0) {
-      for (const z of zones) {
-        const free = list.filter((b) => b.zone === z && isFreeOrMine(b)).slice(0, n);
-        if (free.length === n) { chosen = free.map((b) => b.id); break; }
-      }
-    }
-    if (chosen.length === 0) chosen = list.filter(isFreeOrMine).slice(0, n).map((b) => b.id);
-    if (chosen.length === 0) { toast.error('No free beds of this type for the window'); return; }
-    const typeIds = new Set(list.map((b) => b.id));
-    setPinnedBeds((prev) => [...prev.filter((id) => !typeIds.has(id)), ...chosen]);
-  }
 
   // Walk-in helper: find the soonest time `pax` stations of the needed type AND
   // matching therapists are free (60-min probe) and fill start/end. `silent` =
@@ -427,9 +323,11 @@ export function NewReservationDialog({
       service_location_type: locationType,
       external_room_no: locationType === 'external_hotel' ? (roomNo.trim() || null) : null,
       note: note || null,
-      resource_ids: locationType === 'external_hotel' ? [] : pinnedBeds,
-      seat_together: locationType === 'external_hotel' ? false : seatTogether && paxNum > 1,
-      confirmed: walkIn || prefillConfirmed, // walk-in / desk-placed → confirmed, holds the bed
+      // No auto-assign: only an explicit pick (the board's click-a-slot, carried
+      // on the reservation) lands on a bed. A plain booking has none → unassigned.
+      resource_ids: locationType === 'external_hotel' ? [] : (reservation?.resource_ids ?? []),
+      seat_together: false,
+      confirmed: walkIn || prefillConfirmed, // walk-in / desk-placed → confirmed
       service_item_id: specificItemId || null, // optional specific service
       therapist_id: reservation?.therapist_id ?? null, // People-board pre-assignment
       // Reschedule origin (when opened from /sales-orders/reschedules) — the
@@ -444,7 +342,7 @@ export function NewReservationDialog({
         toast.success(isEdit ? 'Reservation updated' : walkIn ? 'Walk-in booked (confirmed)' : 'Reservation created');
         setOpen(false);
         if (!isEdit) {
-          setGuestName(''); setGuestPhone(''); setStart(toLocalInput(nextQuarterHourIso())); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]); setSeatTogether(false); setShowBedPicker(false); setWalkInMsg(null);
+          setGuestName(''); setGuestPhone(''); setStart(toLocalInput(nextQuarterHourIso())); setEnd(''); setNote(''); setCategoryIds([]); setWalkInMsg(null);
         }
       } else toast.error(r.error);
     });
@@ -550,7 +448,12 @@ export function NewReservationDialog({
                         />
                         <span className="text-sm font-semibold">{c.name}</span>
                         <span className="text-xs font-medium text-muted-foreground">
-                          {c.requiredResourceType ? rtLabel(c.requiredResourceType) : 'no resource set'}
+                          {(c.requiredResourceTypes?.length
+                            ? c.requiredResourceTypes
+                            : c.requiredResourceType
+                              ? [c.requiredResourceType]
+                              : []
+                          ).map(rtLabel).join(' / ') || 'no resource set'}
                         </span>
                       </label>
                     );
@@ -619,124 +522,14 @@ export function NewReservationDialog({
               </div>
             )}
 
-            {/* Soft capacity check for the window — never blocks, just warns.
-                Hidden in walk-in mode (no chosen window yet; the soonest-slot box
-                is the source of truth there). */}
-            {!walkIn && capacityRows.length > 0 && (
-              <div className={`col-span-2 rounded-lg border p-3 text-sm ${hasOver ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-muted/30'}`}>
-                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
-                  Capacity for this window · {paxNum} pax
-                </p>
-                <div className="flex flex-col gap-1">
-                  {capacityRows.map((r) => (
-                    <div key={r.rt} className="flex items-center justify-between">
-                      <span className="font-semibold">{rtLabel(r.rt)}</span>
-                      <span className={`font-bold tabular ${r.over ? 'text-destructive' : 'text-foreground'}`}>
-                        {r.over
-                          ? `over by ${r.usedOther + paxNum - r.cap} (${r.usedOther}+${paxNum} / ${r.cap})`
-                          : `${Math.max(0, r.free)} free (${r.usedOther}+${paxNum} / ${r.cap})`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                {hasOver && <p className="text-xs font-semibold text-destructive mt-1.5">Over capacity — you can still book, but resources may be short.</p>}
-                {!avail && <p className="text-xs font-medium text-muted-foreground mt-1.5">Checking…</p>}
-              </div>
-            )}
-            {missingResourceType && (
-              <p className="col-span-2 text-xs font-medium text-amber-600 dark:text-amber-400">
-                Some picked types have no resource set — capacity can&apos;t be checked for them. Set it in Settings → Service Categories.
-              </p>
-            )}
-
-            {/* Beds: the booker only chooses "sit together" for a group — the
-                system auto-assigns adjacent beds. Staff can override the actual
-                beds via the optional picker. In-room (external) uses no bed.
-                Hidden when the board already locked a specific bed. */}
+            {/* No capacity check and no auto / in-dialog bed assignment: every
+                booking lands unassigned in the board's To-place rail; the desk
+                assigns a station by dragging it onto a bed. In-room (external)
+                and board-locked-bed flows skip this note. */}
             {locationType === 'on_site' && !lockedBed && (
-              <div className="col-span-2 rounded-lg border border-border bg-muted/30 p-3">
-                {paxNum > 1 ? (
-                  <label className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 size-4 cursor-pointer accent-primary"
-                      checked={seatTogether}
-                      onChange={(e) => setSeatTogether(e.target.checked)}
-                    />
-                    <span>
-                      <span className="text-sm font-semibold">Seat the group together</span>
-                      <span className="block text-xs font-medium text-muted-foreground">
-                        Reserve {paxNum} adjacent beds automatically. Otherwise a bed is assigned at check-in.
-                      </span>
-                    </span>
-                  </label>
-                ) : (
-                  <p className="text-xs font-medium text-muted-foreground">
-                    A bed is assigned automatically at check-in.
-                  </p>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setShowBedPicker((v) => !v)}
-                  className="mt-2 text-xs font-bold text-primary hover:underline"
-                >
-                  {showBedPicker ? 'Hide bed assignment ▲' : 'Adjust beds (staff) ▾'}
-                </button>
-
-                {showBedPicker && (
-                  <div className="mt-2 border-t border-border pt-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Assign specific beds</p>
-                      <span className="text-xs font-bold tabular text-muted-foreground">{pinnedBeds.length} / {paxNum} pinned</span>
-                    </div>
-                    {bedsByType.length === 0 ? (
-                      <p className="text-xs font-medium text-muted-foreground">Pick service type(s) and a time to list beds.</p>
-                    ) : (
-                      <div className="flex flex-col gap-3">
-                        {bedsByType.map((g) => (
-                          <div key={g.rt}>
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-bold text-foreground">{rtLabel(g.rt)}</span>
-                              {paxNum > 1 && (
-                                <button type="button" onClick={() => pickAdjacent(g.list)} className="text-xs font-bold text-primary hover:underline">
-                                  Pick {paxNum} adjacent free
-                                </button>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {g.list.map((b) => {
-                                const picked = pinnedBeds.includes(b.id);
-                                const disabled = !isFreeOrMine(b);
-                                return (
-                                  <button
-                                    key={b.id}
-                                    type="button"
-                                    disabled={disabled}
-                                    onClick={() => toggleBed(b.id)}
-                                    title={disabled ? 'Taken for this window' : b.zone ? `Zone ${b.zone}` : undefined}
-                                    className={
-                                      picked
-                                        ? 'rounded-md border border-violet-500 bg-violet-500/20 px-2 py-1 text-xs font-bold text-violet-700 dark:text-violet-200'
-                                        : disabled
-                                          ? 'rounded-md border border-dashed border-border bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground/50 line-through cursor-not-allowed'
-                                          : 'rounded-md border border-input bg-card px-2 py-1 text-xs font-semibold hover:bg-accent'
-                                    }
-                                  >
-                                    {b.name}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {beds === null && <p className="text-xs font-medium text-muted-foreground mt-1.5">Loading beds…</p>}
-                    <p className="text-xs font-medium text-muted-foreground mt-2">Picking beds here overrides the automatic assignment.</p>
-                  </div>
-                )}
-              </div>
+              <p className="col-span-2 text-xs font-medium text-muted-foreground">
+                Unassigned by default — assign a station on the board after booking.
+              </p>
             )}
 
             <div className="flex flex-col gap-2">

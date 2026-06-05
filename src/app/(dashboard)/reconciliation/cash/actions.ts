@@ -28,21 +28,10 @@ function nextDate(date: string): string {
   return dt.toISOString().slice(0, 10);
 }
 
-/** A branch's cash-shift config (open time + ordered named shifts).
- *  Resolution: branch override → global default → built-in single Full day. */
-export async function getBranchShiftConfig(branchId: string): Promise<CashShiftConfig> {
-  const supabase = await createAuditedClient();
-  const { data: rows } = await supabase
-    .from('settings').select('value, branch_id').eq('key', CASH_SHIFT_CONFIG_KEY)
-    .or(`branch_id.eq.${branchId},branch_id.is.null`);
-  const value = (rows ?? []).find((r) => r.branch_id === branchId)?.value
-    ?? (rows ?? []).find((r) => r.branch_id === null)?.value;
-  if (value) {
-    try {
-      const cfg = parseConfig(JSON.parse(value));
-      if (cfg) return cfg;
-    } catch { /* fall through to default */ }
-  }
+/** The cash-shift set — fixed AM / PM / GY for every branch, no per-branch
+ *  config. The cashier picks one when opening the drawer; postings bind to the
+ *  open shift, so there are no configurable times. */
+export async function getBranchShiftConfig(_branchId: string): Promise<CashShiftConfig> {
   return DEFAULT_CONFIG;
 }
 

@@ -68,12 +68,7 @@ export function ShiftCard({ branchId, date, item, canReopen }: Props) {
     });
   }
 
-  const title = (
-    <span className="font-bold">
-      {item.label}
-      <span className="ml-2 text-xs font-medium text-muted-foreground tabular">{item.windowLabel}</span>
-    </span>
-  );
+  const title = <span className="font-bold">{item.label}</span>;
 
   // Money rows shared by the open + closed views. Folio totals are 0 until the
   // posting paths land — the structure is ready for them.

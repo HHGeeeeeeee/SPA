@@ -45,6 +45,10 @@ function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
+// AM / Mid / PM shift band, derived from an employee's clock-in time. null =
+// no working shift this week.
+type ShiftBand = 'am' | 'mid' | 'pm' | null;
+
 // Roster data for one branch + week: the branch's own (home-branch) therapists
 // and their shifts for the week. The roster is home-branch only — cross-branch
 // borrowing is arranged on the Calendar, not on this page. Position is joined so
@@ -59,7 +63,7 @@ async function fetchRoster(branchParam?: string, weekParam?: string) {
   const monday = weekParam ?? thisMonday();
   const days = weekDays(monday);
 
-  let employees: { id: string; employee_code: string; name: string; home_branch_id: string | null; position_code: string | null }[] = [];
+  let employees: { id: string; employee_code: string; name: string; home_branch_id: string | null; position_code: string | null; shiftBand: ShiftBand }[] = [];
   let shifts: ShiftRow[] = [];
   if (branchId) {
     const [emp, sh] = await Promise.all([
@@ -70,11 +74,46 @@ async function fetchRoster(branchParam?: string, weekParam?: string) {
         .gte('shift_date', days[0].date)
         .lte('shift_date', days[6].date),
     ]);
-    employees = (emp.data ?? []).map((e) => ({
-      id: e.id, employee_code: e.employee_code, name: e.name, home_branch_id: e.home_branch_id,
-      position_code: one(e.position)?.code ?? null,
-    }));
     shifts = (sh.data ?? []) as ShiftRow[];
+
+    // Each employee's band = their most common clock-in this week (ties ->
+    // earliest). Bands by start time: AM < 11:00, Mid 11:00-13:59, PM >= 14:00;
+    // off / leave (no start) are ignored, and an employee with no working shift
+    // sorts last. Used to order the roster so early/mid/late cluster together
+    // instead of interleaving.
+    const startMin = (t: string | null): number | null => {
+      if (!t) return null;
+      const [h, m] = t.split(':');
+      return Number(h) * 60 + Number(m);
+    };
+    const startsByEmp = new Map<string, number[]>();
+    for (const s of shifts) {
+      const m = startMin(s.shift_start);
+      if (m == null) continue;
+      const arr = startsByEmp.get(s.employee_id) ?? [];
+      arr.push(m);
+      startsByEmp.set(s.employee_id, arr);
+    }
+    const bandOf = (empId: string): ShiftBand => {
+      const arr = startsByEmp.get(empId);
+      if (!arr?.length) return null;
+      const counts = new Map<number, number>();
+      for (const v of arr) counts.set(v, (counts.get(v) ?? 0) + 1);
+      let best = arr[0];
+      let bestN = 0;
+      for (const [v, n] of counts) if (n > bestN || (n === bestN && v < best)) { best = v; bestN = n; }
+      return best < 660 ? 'am' : best < 840 ? 'mid' : 'pm';
+    };
+    const rank: Record<'am' | 'mid' | 'pm', number> = { am: 0, mid: 1, pm: 2 };
+    employees = (emp.data ?? [])
+      .map((e) => ({
+        id: e.id, employee_code: e.employee_code, name: e.name, home_branch_id: e.home_branch_id,
+        position_code: one(e.position)?.code ?? null,
+        shiftBand: bandOf(e.id),
+      }))
+      .sort((a, b) =>
+        ((a.shiftBand ? rank[a.shiftBand] : 3) - (b.shiftBand ? rank[b.shiftBand] : 3)) || a.name.localeCompare(b.name),
+      );
   }
 
   return { branches: list, branchId, monday, days, employees, shifts };

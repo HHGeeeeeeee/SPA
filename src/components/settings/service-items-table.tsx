@@ -1,11 +1,12 @@
 'use client';
 
-import { Fragment, useState } from 'react';
-import { Tag } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
+import { Search, Tag, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -55,13 +56,37 @@ export function ServiceItemsTable({
   const allRows = groups.flatMap((g) => g.rows);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchOpen, setBatchOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
-  const allSelected = allRows.length > 0 && selected.size === allRows.length;
+  // Filter by service name, code, group name or category code. A group matches
+  // wholesale if its name/category hits; otherwise only its matching rows show.
+  const visibleGroups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return groups;
+    return groups
+      .map((g) => {
+        if (g.name.toLowerCase().includes(q) || g.categoryCode.toLowerCase().includes(q)) return g;
+        const rows = g.rows.filter(
+          (r) => r.code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q),
+        );
+        return rows.length ? { ...g, rows } : null;
+      })
+      .filter((g): g is ServiceGroupVM => g !== null);
+  }, [groups, query]);
+
+  const visibleRows = visibleGroups.flatMap((g) => g.rows);
+
+  const allSelected = visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.id));
   function toggle(id: string) {
     setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(allRows.map((r) => r.id)));
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (allSelected) visibleRows.forEach((r) => n.delete(r.id));
+      else visibleRows.forEach((r) => n.add(r.id));
+      return n;
+    });
   }
 
   const targets: BatchTarget[] = allRows
@@ -70,6 +95,33 @@ export function ServiceItemsTable({
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by name, code, group or category…"
+          className="h-9 pl-8 pr-8"
+          aria-label="Search service items"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            aria-label="Clear search"
+          >
+            <X className="size-4" />
+          </button>
+        )}
+      </div>
+      {query.trim() && (
+        <p className="-mt-1 text-xs font-semibold text-muted-foreground">
+          {visibleRows.length} of {allRows.length} service items
+        </p>
+      )}
+
       {selected.size > 0 && (
         <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
           <span className="text-sm font-bold">{selected.size} selected</span>
@@ -106,14 +158,16 @@ export function ServiceItemsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {allRows.length === 0 ? (
+            {visibleGroups.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={9} className="text-center py-12">
-                  <p className="text-sm font-semibold text-muted-foreground">No service items yet.</p>
+                  <p className="text-sm font-semibold text-muted-foreground">
+                    {allRows.length === 0 ? 'No service items yet.' : `No service items match “${query.trim()}”.`}
+                  </p>
                 </TableCell>
               </TableRow>
             ) : (
-              groups.map((grp) => (
+              visibleGroups.map((grp) => (
                 <Fragment key={grp.key}>
                   {grp.rows.map((r, idx) => (
                     <TableRow key={r.id} className={idx === grp.rows.length - 1 ? 'border-b-2 border-border' : ''}>

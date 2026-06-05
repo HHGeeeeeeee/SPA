@@ -1,11 +1,10 @@
-import Link from 'next/link';
-
 import { getAllowedBranches } from '@/lib/branch-access';
 import { currentSession, isManager } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
 import { ReconDatePicker } from '@/components/reconciliation/recon-date-picker';
 import { ShiftCard } from '@/components/reconciliation/shift-card';
+import { OpenShiftControl } from '@/components/reconciliation/open-shift-control';
+import { RemittanceBranchPicker } from '@/components/reconciliation/remittance-branch-picker';
 import { loadShiftRemittance } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +27,10 @@ export default async function ShiftRemittancePage({
 
   const shifts = branchId ? await loadShiftRemittance(branchId, date) : [];
   const openShift = shifts.find((s) => s.shift?.status === 'open');
+  // Only shifts actually opened (open or closed) get a card. The rest are just
+  // choices in the "Open shift" picker — we don't pre-list empty shift cards.
+  const opened = shifts.filter((s) => s.shift);
+  const availableLabels = shifts.filter((s) => !s.shift).map((s) => s.label);
 
   return (
     <div className="flex flex-col gap-6">
@@ -38,19 +41,10 @@ export default async function ShiftRemittancePage({
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {branches.map((b) => (
-          <Link
-            key={b.id}
-            href={`/reconciliation/shift-remittance?branch=${b.id}&date=${date}`}
-            className={cn('rounded-lg px-3 py-1.5 text-sm font-bold transition-colors', b.id === branchId ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:bg-accent')}
-          >
-            {b.code}
-          </Link>
-        ))}
-        <div className="ml-auto">
-          <ReconDatePicker basePath="/reconciliation/shift-remittance" branchId={branchId} date={date} />
-        </div>
+      {branchId && <RemittanceBranchPicker branches={branches} branchId={branchId} date={date} />}
+
+      <div className="flex items-center justify-end">
+        <ReconDatePicker basePath="/reconciliation/shift-remittance" branchId={branchId} date={date} />
       </div>
 
       {!branchId ? (
@@ -59,14 +53,25 @@ export default async function ShiftRemittancePage({
         <Card>
           <CardHeader className="pb-2 flex-row items-center justify-between">
             <CardTitle className="text-base font-bold">{date}</CardTitle>
-            <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
-              {openShift ? `${openShift.label} open` : 'No shift open'}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                {openShift ? `${openShift.label} open` : 'No shift open'}
+              </span>
+              {/* One open action — pick AM / PM / GY in the dialog. Hidden while a
+                  shift is already open (only one at a time). */}
+              {!openShift && <OpenShiftControl branchId={branchId} date={date} labels={availableLabels} />}
+            </div>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {shifts.map((s) => (
-              <ShiftCard key={s.label} branchId={branchId} date={date} item={s} canReopen={canReopen} />
-            ))}
+            {opened.length === 0 ? (
+              <p className="col-span-full py-6 text-center text-sm font-medium text-muted-foreground">
+                No shift opened yet today. Click “Open shift” to start one.
+              </p>
+            ) : (
+              opened.map((s) => (
+                <ShiftCard key={s.label} branchId={branchId} date={date} item={s} canReopen={canReopen} />
+              ))
+            )}
           </CardContent>
         </Card>
       )}

@@ -959,6 +959,7 @@ export function OrderWorkspace({
                     : (it.status === 'service_completed') ? { t: 'Done', c: 'text-primary' }
                     : it.status === 'interrupted' ? (it.switched ? { t: 'Switched', c: 'text-amber-600 dark:text-amber-400' } : { t: 'Interrupted', c: 'text-destructive' })
                     : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
+                    : it.status === 'no_show' ? { t: 'No-show', c: 'text-muted-foreground' }
                     : null;
                   return (
                   <li key={it.id} className={`grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
@@ -1074,7 +1075,7 @@ export function OrderWorkspace({
                       )}
                     </div>
                     <div className="flex items-center gap-2 justify-self-end">
-                      {it.status === 'cancelled' ? (
+                      {['cancelled', 'no_show'].includes(it.status) ? (
                         <span className="font-medium tabular line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>
                       ) : (
                         <span className="font-bold tabular">

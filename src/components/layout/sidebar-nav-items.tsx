@@ -1,6 +1,5 @@
 import {
   LayoutDashboard,
-  Receipt,
   CalendarDays,
   CalendarClock,
   CreditCard,
@@ -64,7 +63,8 @@ export const mainNavItems: NavItem[] = [
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarDays },
   // Pending Reschedules child temporarily disabled (2026-05-31) — re-enable
   // when the reschedule handling option is re-added to interrupt-taxonomy.
-  { label: 'Sales Orders', href: '/sales-orders', icon: Receipt },
+  // Sales Orders is reachable from the Calendar control bar (opens in a new tab),
+  // not the sidebar.
 
   { label: 'Customers', href: '/customers', icon: Users, managerOnly: true },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the

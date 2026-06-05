@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble, Receipt } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -64,6 +64,17 @@ export function ShiftControls({ branches, branchId, selected, day, view }: Props
           <Users className="size-4" /> People
         </button>
       </div>
+
+      {/* Sales Order — opens the orders page in a NEW TAB (it's no longer in the
+          sidebar; the desk jumps to an order without leaving the board). */}
+      <a
+        href="/sales-orders"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-bold text-muted-foreground transition-colors hover:bg-accent"
+      >
+        <Receipt className="size-4" /> Sales Order
+      </a>
 
       {/* Branch switcher lives in the global top bar (top-right), hoisted there
           via the topbar portal slot. */}

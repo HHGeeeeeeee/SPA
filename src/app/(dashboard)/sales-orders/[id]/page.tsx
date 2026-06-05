@@ -64,7 +64,7 @@ async function fetchData(id: string) {
   const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
     supabase
       .from('service_items')
-      .select('id, code, name, service_group, duration_minutes, required_resource_type, service_item_prices ( price_cents, price_class, branch_id )')
+      .select('id, code, name, service_group, duration_minutes, allowed_resource_types, service_item_prices ( price_cents, price_class, branch_id )')
       .eq('active', true)
       .order('service_group')
       .order('duration_minutes'),
@@ -175,7 +175,7 @@ async function fetchData(id: string) {
         group: s.service_group ?? s.name,
         duration_minutes: s.duration_minutes,
         price_cents: normal?.price_cents ?? null,
-        required_resource_type: s.required_resource_type ?? null,
+        allowed_resource_types: s.allowed_resource_types ?? [],
       };
     }),
     employees: thisBranchEmployees,

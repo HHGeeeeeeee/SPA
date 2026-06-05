@@ -17,6 +17,7 @@ import {
 import { ServiceItemRowActions } from '@/components/settings/service-item-row-actions';
 import { BatchPriceDialog, type BatchTarget } from '@/components/settings/batch-price-dialog';
 import type { ServiceItemRecord } from '@/components/settings/service-item-form-dialog';
+import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
 export interface ServiceRowVM {
   id: string;
@@ -27,7 +28,7 @@ export interface ServiceRowVM {
   validFrom: string | null;
   validTo: string | null;
   future: { price_cents: number; effective_from: string } | null;
-  requiredResourceType: string | null;
+  allowedResourceTypes: string[];
   active: boolean;
   itemRecord: ServiceItemRecord;
 }
@@ -142,8 +143,10 @@ export function ServiceItemsTable({
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="font-mono font-medium text-muted-foreground">
-                        {r.requiredResourceType ?? '—'}
+                      <TableCell className="font-medium text-muted-foreground">
+                        {r.allowedResourceTypes.length
+                          ? r.allowedResourceTypes.map((t) => RESOURCE_TYPE_LABEL[t] ?? t).join(', ')
+                          : '—'}
                       </TableCell>
                       <TableCell>
                         {r.active ? (

@@ -993,7 +993,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, service:service_items ( commission_applicable, required_resource_type, service_group )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
     .eq('id', itemId)
     .single();
 
@@ -1009,7 +1009,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   if (svc?.commission_applicable && !item?.therapist_id) {
     return { ok: false, error: 'Assign a therapist before starting this service' };
   }
-  if (svc?.required_resource_type && !item?.resource_id) {
+  if (svc?.allowed_resource_types?.length && !item?.resource_id) {
     return { ok: false, error: 'Assign a station/bed before starting this service' };
   }
   // Type-match the assigned station to the service. The picker already does
@@ -1551,7 +1551,7 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
       supabase.from('order_customers').select('id, customer_name').eq('order_id', orderId),
       supabase
         .from('order_items')
-        .select('therapist_id, resource_id, order_customer_id, service:service_items ( name, commission_applicable, required_resource_type )')
+        .select('therapist_id, resource_id, order_customer_id, service:service_items ( name, commission_applicable, allowed_resource_types )')
         .eq('order_id', orderId)
         .neq('status', 'cancelled'),
     ]);
@@ -1562,7 +1562,7 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
     for (const it of items) {
       const svc = Array.isArray(it.service) ? it.service[0] : it.service;
       if (svc?.commission_applicable && !it.therapist_id) return { ok: false, error: `Assign a therapist to "${svc?.name ?? 'every service'}" before opening` };
-      if (svc?.required_resource_type && !it.resource_id) return { ok: false, error: `Assign a station/bed to "${svc?.name ?? 'every service'}" before opening` };
+      if (svc?.allowed_resource_types?.length && !it.resource_id) return { ok: false, error: `Assign a station/bed to "${svc?.name ?? 'every service'}" before opening` };
     }
   }
 

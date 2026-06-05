@@ -61,7 +61,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_5rem_9.5rem_9.5rem_9rem_5.5rem_5.5rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_5rem_9.5rem_9.5rem_5.5rem_5.5rem_8.5rem_6rem_5.5rem_7rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -105,7 +105,7 @@ interface Opt { id: string; code: string; name: string; gender?: string | null; 
 interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
+interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface PaymentRecord {
   id: string;
   amount_cents: number;
@@ -455,9 +455,10 @@ export function OrderWorkspace({
     const borrowedFree = ownHomeFree || ownVisitingFree ? undefined : borrowableEmployees.find(matchTherapist);
     const freeTherapist = ownHomeFree ?? ownVisitingFree ?? borrowedFree;
     const note = ownVisitingFree ? ' (visiting)' : borrowedFree?.homeBranchCode ? ` (borrowed · ${borrowedFree.homeBranchCode})` : '';
-    const neededType = serviceItems.find((s) => s.id === svcId)?.required_resource_type ?? null;
+    const neededTypes = serviceItems.find((s) => s.id === svcId)?.allowed_resource_types ?? [];
+    const neededLabel = neededTypes.length ? neededTypes.join(' or ') : '';
     const freeStation = resources.find(
-      (r) => !takenStations.has(r.id) && (!neededType || r.resource_type === neededType),
+      (r) => !takenStations.has(r.id) && (neededTypes.length === 0 || (r.resource_type != null && neededTypes.includes(r.resource_type))),
     );
 
     // Only set fields that were empty — preserves the pinned bed from the
@@ -480,13 +481,13 @@ export function OrderWorkspace({
     } else if (changed.length === 1 && !missingTherapist && !missingStation) {
       toast.success(`Auto-assigned ${changed[0]}${hasTherapist ? ' (therapist kept)' : ' (station kept)'}`);
     } else if (changed.length === 1) {
-      toast.warning(`${changed[0]} set — ${missingTherapist ? 'no free therapist (own or borrowable)' : `no free station${neededType ? ` (${neededType})` : ''}`}`);
+      toast.warning(`${changed[0]} set — ${missingTherapist ? 'no free therapist (own or borrowable)' : `no free station${neededLabel ? ` (${neededLabel})` : ''}`}`);
     } else if (missingTherapist && missingStation) {
       toast.error('No free therapist (own or borrowable) or station');
     } else if (missingTherapist) {
       toast.error('No free therapist (own or borrowable)');
     } else if (missingStation) {
-      toast.error(`No free station${neededType ? ` (${neededType})` : ''}`);
+      toast.error(`No free station${neededLabel ? ` (${neededLabel})` : ''}`);
     }
   }
 
@@ -667,7 +668,6 @@ export function OrderWorkspace({
         <TabsList className="w-fit">
           <TabsTrigger value="guests"><Users /> Guest List</TabsTrigger>
           <TabsTrigger value="folio"><Receipt /> Folio</TabsTrigger>
-          <TabsTrigger value="feedback"><Star /> Feedback</TabsTrigger>
           <TabsTrigger value="history"><History /> Change History</TabsTrigger>
         </TabsList>
 
@@ -803,9 +803,12 @@ export function OrderWorkspace({
                       <span>Start</span>
                       <span>Therapist</span>
                       <span>{dispatch ? 'Room' : 'Station'}</span>
-                      <span>Discount</span>
                       <span>Status</span>
+                      <span className="text-right">Price</span>
+                      <span>Discount</span>
+                      <span>Disc.</span>
                       <span className="text-right">Amount</span>
+                      <span>Feedback</span>
                       <span />
                     </div>
                     <ul className="flex flex-col divide-y divide-border">
@@ -841,8 +844,8 @@ export function OrderWorkspace({
                                 dispatch={dispatch}
                                 disabled={pending}
                               />
-                              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
                               <span className="text-right font-bold tabular text-sm">{peso(it.final_amount_cents)}</span>
+                              <span className="text-xs font-medium text-muted-foreground">—</span>
                               <div className="flex flex-wrap items-center gap-1 justify-end">
                                 {canRunService && it.status === 'scheduled' && (
                                   <ActionBtn tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'} className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={() => doStartItem(it)} disabled={pending || guestHasLiveService}>Start</ActionBtn>
@@ -870,7 +873,12 @@ export function OrderWorkspace({
                           : it.status === 'no_show' ? { t: 'No-show', c: 'text-muted-foreground' }
                           : null;
                         const tw = timeWindow(it.actual_start, it.actual_end, it.duration_minutes, it.prep_minutes);
-                        const discCode = discountClasses.find((dd) => dd.id === it.discount_class_id)?.description ?? '—';
+                        const dc = discountClasses.find((dd) => dd.id === it.discount_class_id);
+                        const discCode = dc?.description ?? '—';
+                        // Discount value: percent classes show the rate, fixed/manual show the peso amount applied.
+                        const discValue = it.discount_amount_cents > 0
+                          ? (dc && dc.discount_percent > 0 ? `-${dc.discount_percent}%` : `-${peso(it.discount_amount_cents)}`)
+                          : '—';
                         return (
                           <li key={it.id} className={`${SERVICE_GRID} py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
                             <span className="font-semibold truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.group ?? it.service_name}</span>
@@ -890,18 +898,29 @@ export function OrderWorkspace({
                                 </span>
                               )}
                             </span>
-                            <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
                             <span className="text-[10px] font-bold uppercase tracking-wide truncate">
                               {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
                             </span>
+                            <span className="text-right tabular text-sm font-medium text-muted-foreground">{peso(it.list_price_cents)}</span>
+                            <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
+                            <span className="text-xs font-medium text-muted-foreground tabular truncate">{discValue}</span>
                             <span className="text-right tabular text-sm">
                               {['cancelled', 'no_show'].includes(it.status) ? (
                                 <span className="font-medium line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>
                               ) : (
-                                <span className="font-bold">
-                                  {it.discount_amount_cents > 0 && <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>}
-                                  {peso(it.final_amount_cents)}
+                                <span className="font-bold">{peso(it.final_amount_cents)}</span>
+                              )}
+                            </span>
+                            {/* Feedback — score once submitted, an entry button once the service is done, else nothing applies yet. */}
+                            <span className="text-xs">
+                              {it.feedback_score != null ? (
+                                <span className="inline-flex items-center gap-1 font-bold text-amber-600 dark:text-amber-400" title="Guest feedback score">
+                                  <Star className="size-3.5 fill-current" /> {it.feedback_score}/10
                                 </span>
+                              ) : it.status === 'service_completed' ? (
+                                <ActionBtn tip="Record the guest's feedback — a score is required." variant="outline" className="border-violet-500/60 text-violet-700 hover:bg-violet-50 hover:text-violet-800 dark:text-violet-400 dark:hover:bg-violet-500/10" onClick={() => setFeedbackItem(it)} disabled={pending}><Star className="size-3.5" /> Rate</ActionBtn>
+                              ) : (
+                                <span className="font-medium text-muted-foreground">—</span>
                               )}
                             </span>
                             <div className="flex flex-wrap items-center gap-1 justify-end">
@@ -911,9 +930,6 @@ export function OrderWorkspace({
                                   <ActionBtn tip="Stop this service with no charge and pick a different one." variant="outline" className="border-amber-500/60 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-500/10" onClick={() => doSwitchItem(it)} disabled={pending}>Switch</ActionBtn>
                                   <ActionBtn tip="Stop mid-service and decide the charge (none / partial / full / reschedule)." variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</ActionBtn>
                                 </>
-                              )}
-                              {it.status === 'service_completed' && it.feedback_score == null && (
-                                <ActionBtn tip="Record the guest's feedback — a score is required." variant="outline" className="border-violet-500/60 text-violet-700 hover:bg-violet-50 hover:text-violet-800 dark:text-violet-400 dark:hover:bg-violet-500/10" onClick={() => setFeedbackItem(it)} disabled={pending}><Star className="size-3.5" /> Feedback</ActionBtn>
                               )}
                               {['interrupted', 'cancelled'].includes(it.status) && !it.switched && !['paid', 'closed', 'void'].includes(order.status) && (
                                 <ActionBtn tip="Re-add this service as a fresh line to do again." variant="outline" className="border-indigo-500/60 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-500/10" onClick={() => doRedoItem(it.id)} disabled={pending}>Redo</ActionBtn>
@@ -1097,27 +1113,6 @@ export function OrderWorkspace({
           </CardContent>
         </Card>
       )}
-        </TabsContent>
-
-        <TabsContent value="feedback" className="flex flex-col gap-2">
-          {items.length === 0 ? (
-            <p className="text-sm font-medium text-muted-foreground px-1">No services yet.</p>
-          ) : (
-            <Card>
-              <CardContent className="py-2 flex flex-col divide-y divide-border">
-                {items.map((it) => (
-                  <div key={it.id} className={`flex items-center justify-between py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
-                    <span className="font-semibold">{it.service_name}<span className="ml-2 font-medium text-muted-foreground">{it.therapist_name ?? 'Unassigned'}</span></span>
-                    {it.status === 'cancelled'
-                      ? <span className="text-xs font-medium text-muted-foreground">Cancelled</span>
-                      : it.feedback_score != null
-                        ? <span className="font-bold text-amber-600 dark:text-amber-400">★ {it.feedback_score}/10</span>
-                        : <span className="text-xs font-medium text-muted-foreground">Not submitted</span>}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
         </TabsContent>
 
         <TabsContent value="history">

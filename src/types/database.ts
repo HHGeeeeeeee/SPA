@@ -3000,7 +3000,7 @@ export type Database = {
           name: string
           prep_before_minutes: number
           pricing_model: string
-          required_resource_type: string | null
+          allowed_resource_types: string[]
           service_category_id: string
           service_group: string | null
           tip_applicable: boolean
@@ -3020,7 +3020,7 @@ export type Database = {
           name: string
           prep_before_minutes?: number
           pricing_model?: string
-          required_resource_type?: string | null
+          allowed_resource_types?: string[]
           service_category_id: string
           service_group?: string | null
           tip_applicable?: boolean
@@ -3040,7 +3040,7 @@ export type Database = {
           name?: string
           prep_before_minutes?: number
           pricing_model?: string
-          required_resource_type?: string | null
+          allowed_resource_types?: string[]
           service_category_id?: string
           service_group?: string | null
           tip_applicable?: boolean

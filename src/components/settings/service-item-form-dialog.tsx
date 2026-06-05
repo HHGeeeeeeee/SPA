@@ -36,7 +36,7 @@ export interface ServiceItemRecord {
   duration_minutes: number;
   prep_before_minutes: number;
   cleanup_after_minutes: number;
-  required_resource_type: string | null;
+  allowed_resource_types: string[];
   pricing_model: 'per_session' | 'membership_unlimited' | 'membership_quota' | 'subscription';
   commission_applicable: boolean;
   tip_applicable: boolean;
@@ -67,8 +67,6 @@ interface Props {
   onOpenChange?: (open: boolean) => void;
 }
 
-const NONE = '__none__';
-
 export function ServiceItemFormDialog({
   mode = 'create',
   item,
@@ -91,7 +89,9 @@ export function ServiceItemFormDialog({
   const [duration, setDuration] = useState(String(item?.duration_minutes ?? 60));
   const [prep, setPrep] = useState(String(item?.prep_before_minutes ?? 5));
   const [cleanup, setCleanup] = useState(String(item?.cleanup_after_minutes ?? 5));
-  const [resourceType, setResourceType] = useState(item?.required_resource_type ?? 'massage_bed');
+  const [resourceTypes, setResourceTypes] = useState<string[]>(item?.allowed_resource_types ?? []);
+  const toggleResourceType = (value: string) =>
+    setResourceTypes((cur) => (cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value]));
   const [pricingModel, setPricingModel] = useState<ServiceItemRecord['pricing_model']>(
     item?.pricing_model ?? 'per_session',
   );
@@ -116,7 +116,7 @@ export function ServiceItemFormDialog({
       duration_minutes: Number(duration),
       prep_before_minutes: Number(prep),
       cleanup_after_minutes: Number(cleanup),
-      required_resource_type: resourceType === NONE ? null : resourceType,
+      allowed_resource_types: resourceTypes,
       pricing_model: pricingModel,
       commission_applicable: commissionApplicable,
       tip_applicable: tipApplicable,
@@ -264,21 +264,33 @@ export function ServiceItemFormDialog({
               />
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 col-span-2">
               <Label className="font-semibold">Station Type</Label>
-              <Select
-                items={[{ value: NONE, label: '— None —' }, ...RESOURCE_TYPES]}
-                value={resourceType ?? NONE}
-                onValueChange={(v) => setResourceType(v ?? NONE)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>— None —</SelectItem>
-                  {RESOURCE_TYPES.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex flex-wrap gap-2">
+                {RESOURCE_TYPES.map((t) => {
+                  const on = resourceTypes.includes(t.value);
+                  return (
+                    <button
+                      type="button"
+                      key={t.value}
+                      onClick={() => toggleResourceType(t.value)}
+                      aria-pressed={on}
+                      className={`rounded-full border px-3 py-1 text-sm font-semibold transition-colors ${
+                        on
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs font-medium text-muted-foreground">
+                Which stations this service can be performed at — pick all that apply
+                (e.g. nail work at a Nail Station <em>or</em> a Chair). Leave all off if
+                the service needs no station.
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">

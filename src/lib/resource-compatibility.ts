@@ -45,8 +45,13 @@ export async function assertBedsMatchCategories(
 
 /**
  * Same compatibility check, expressed per service item — the order_item flow
- * has a single service rather than a list of categories. Looks up the
- * service's category and delegates to assertBedsMatchCategories.
+ * has a single service rather than a list of categories.
+ *
+ * The service item's own `allowed_resource_types` is the authoritative rule: a
+ * service may name several acceptable station types (e.g. nail work at a Nail
+ * Station OR a Chair), and the pinned bed must match one of them. When the item
+ * pins no types it falls back to the coarser category-level rule, so older items
+ * that only carry a category constraint keep working unchanged.
  */
 export async function assertBedMatchesServiceItem(
   bedId: string,
@@ -55,9 +60,26 @@ export async function assertBedMatchesServiceItem(
   const supabase = createServiceClient();
   const { data: svc } = await supabase
     .from('service_items')
-    .select('service_category_id')
+    .select('allowed_resource_types, service_category_id')
     .eq('id', serviceItemId)
     .maybeSingle();
+
+  const allowed = svc?.allowed_resource_types ?? [];
+  if (allowed.length > 0) {
+    const { data: bed } = await supabase
+      .from('resources')
+      .select('resource_name, resource_type')
+      .eq('id', bedId)
+      .maybeSingle();
+    if (!bed) return { ok: true };
+    if (bed.resource_type && allowed.includes(bed.resource_type)) return { ok: true };
+    return {
+      ok: false,
+      error: `${bed.resource_name} can't be used for this service (requires ${allowed.join(' or ')})`,
+    };
+  }
+
+  // No item-level types pinned — fall back to the service category's rule.
   if (!svc?.service_category_id) return { ok: true };
   return assertBedsMatchCategories([bedId], [svc.service_category_id]);
 }

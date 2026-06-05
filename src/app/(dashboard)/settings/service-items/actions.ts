@@ -17,7 +17,7 @@ const schema = z.object({
   duration_minutes: z.coerce.number().int().min(1).max(600),
   prep_before_minutes: z.coerce.number().int().min(0).max(120).default(0),
   cleanup_after_minutes: z.coerce.number().int().min(0).max(120).default(0),
-  required_resource_type: z.string().max(40).optional().nullable(),
+  allowed_resource_types: z.array(z.string().max(40)).max(8).optional().default([]),
   pricing_model: z.enum(['per_session', 'membership_unlimited', 'membership_quota', 'subscription']).default('per_session'),
   commission_applicable: z.boolean().default(true),
   tip_applicable: z.boolean().default(true),
@@ -80,7 +80,7 @@ export async function createServiceItem(input: unknown): Promise<ActionResult> {
       // Employees skill picker, which is a silent-failure trap; auto-deriving
       // matches what the backfill migration did for the seed rows.
       service_group: fields.service_group || deriveServiceGroup(fields.name),
-      required_resource_type: fields.required_resource_type || null,
+      allowed_resource_types: fields.allowed_resource_types ?? [],
       active: true,
     })
     .select('id')
@@ -125,7 +125,7 @@ export async function updateServiceItem(input: unknown): Promise<ActionResult> {
   if (d.duration_minutes !== undefined) patch.duration_minutes = d.duration_minutes;
   if (d.prep_before_minutes !== undefined) patch.prep_before_minutes = d.prep_before_minutes;
   if (d.cleanup_after_minutes !== undefined) patch.cleanup_after_minutes = d.cleanup_after_minutes;
-  if (d.required_resource_type !== undefined) patch.required_resource_type = d.required_resource_type || null;
+  if (d.allowed_resource_types !== undefined) patch.allowed_resource_types = d.allowed_resource_types ?? [];
   if (d.pricing_model !== undefined) patch.pricing_model = d.pricing_model;
   if (d.commission_applicable !== undefined) patch.commission_applicable = d.commission_applicable;
   if (d.tip_applicable !== undefined) patch.tip_applicable = d.tip_applicable;

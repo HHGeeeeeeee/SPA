@@ -16,7 +16,7 @@ async function fetchData() {
       .select(`
         id, code, name, service_group, service_category_id, duration_minutes,
         prep_before_minutes, cleanup_after_minutes,
-        required_resource_type, pricing_model,
+        allowed_resource_types, pricing_model,
         commission_applicable, tip_applicable, business_unit_id, active,
         category:service_categories ( code, name ),
         service_item_prices ( price_cents, price_class, branch_id, effective_from, effective_to )
@@ -63,7 +63,7 @@ export default async function ServiceItemsPage() {
       duration_minutes: i.duration_minutes,
       prep_before_minutes: i.prep_before_minutes,
       cleanup_after_minutes: i.cleanup_after_minutes,
-      required_resource_type: i.required_resource_type,
+      allowed_resource_types: i.allowed_resource_types ?? [],
       pricing_model: i.pricing_model as ServiceItemRecord['pricing_model'],
       commission_applicable: i.commission_applicable,
       tip_applicable: i.tip_applicable,
@@ -83,7 +83,7 @@ export default async function ServiceItemsPage() {
       validFrom: current?.effective_from ?? null,
       validTo: current?.effective_to ?? null,
       future: future ? { price_cents: future.price_cents, effective_from: future.effective_from } : null,
-      requiredResourceType: i.required_resource_type,
+      allowedResourceTypes: i.allowed_resource_types ?? [],
       active: i.active,
       itemRecord,
     });

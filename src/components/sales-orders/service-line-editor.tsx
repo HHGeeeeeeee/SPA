@@ -30,7 +30,7 @@ export interface LineDraft {
   discountOverride: string;
 }
 
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; required_resource_type: string | null }
+interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface ResourceOpt { id: string; name: string; resource_type: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface Emp { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
@@ -94,8 +94,10 @@ export function ServiceLineEditor({
   const busyRes = new Set(busyResourceIds);
   const svcSelected = serviceItems.find((s) => s.id === draft.svcId);
   const groupRep = !svcSelected && draft.groupSel ? serviceItems.find((s) => s.group === draft.groupSel) : null;
-  const neededType = (svcSelected ?? groupRep)?.required_resource_type ?? null;
-  const eligibleResources = neededType ? resources.filter((r) => r.resource_type === neededType) : resources;
+  const neededTypes = (svcSelected ?? groupRep)?.allowed_resource_types ?? [];
+  const eligibleResources = neededTypes.length
+    ? resources.filter((r) => r.resource_type != null && neededTypes.includes(r.resource_type))
+    : resources;
   const resGroups = new Map<string, ResourceOpt[]>();
   for (const r of eligibleResources) {
     const k = r.resource_type ?? '__untyped__';
@@ -106,8 +108,17 @@ export function ServiceLineEditor({
   const resItems = [{ value: NONE, label: 'None' }, ...eligibleResources.map((r) => ({ value: r.id, label: resLabel(r) }))];
 
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
-  const selectedDiscountCode = discountClasses.find((d) => d.id === draft.discountId)?.code ?? '';
-  const needsDiscountAmount = ['DIS-91', 'DIS-99'].includes(selectedDiscountCode);
+  const effectiveDiscountId = sourceDiscountLocked ? defaultDiscountId : draft.discountId;
+  const selectedDiscount = discountClasses.find((d) => d.id === effectiveDiscountId);
+  const needsDiscountAmount = ['DIS-91', 'DIS-99'].includes(selectedDiscount?.code ?? '');
+  // Live preview shown alongside the pickers: the chosen variant's list price, and
+  // the discount value (rate for percent classes, peso amount for fixed classes).
+  const priceLabel = svcSelected?.price_cents != null ? money0(svcSelected.price_cents) : '—';
+  const discValueLabel = !selectedDiscount
+    ? '—'
+    : selectedDiscount.discount_percent > 0 ? `-${selectedDiscount.discount_percent}%`
+    : selectedDiscount.discount_amount_cents > 0 ? `-${money0(selectedDiscount.discount_amount_cents)}`
+    : '—';
 
   // Switching the service group can invalidate the therapist (skill) and the
   // station (required type) — drop those so the operator re-picks a valid one.
@@ -115,9 +126,9 @@ export function ServiceLineEditor({
     if (!v) return;
     const patch: Partial<LineDraft> = { groupSel: v, svcId: '', therapistId: NONE };
     if (draft.resourceId !== NONE) {
-      const newType = serviceItems.find((s) => s.group === v)?.required_resource_type ?? null;
+      const newTypes = serviceItems.find((s) => s.group === v)?.allowed_resource_types ?? [];
       const cur = resources.find((r) => r.id === draft.resourceId);
-      if (newType && cur && cur.resource_type !== newType) patch.resourceId = NONE;
+      if (newTypes.length && cur && (cur.resource_type == null || !newTypes.includes(cur.resource_type))) patch.resourceId = NONE;
     }
     onChange(patch);
   };
@@ -125,9 +136,9 @@ export function ServiceLineEditor({
     if (!v) return;
     const patch: Partial<LineDraft> = { svcId: v };
     if (draft.resourceId !== NONE) {
-      const need = serviceItems.find((s) => s.id === v)?.required_resource_type ?? null;
+      const need = serviceItems.find((s) => s.id === v)?.allowed_resource_types ?? [];
       const cur = resources.find((r) => r.id === draft.resourceId);
-      if (need && cur && cur.resource_type !== need) patch.resourceId = NONE;
+      if (need.length && cur && (cur.resource_type == null || !need.includes(cur.resource_type))) patch.resourceId = NONE;
     }
     onChange(patch);
   };
@@ -185,7 +196,7 @@ export function ServiceLineEditor({
           <SelectContent>
             <SelectItem value={NONE}>None</SelectItem>
             {eligibleResources.length === 0 ? (
-              <SelectItem value="__nomatch__" disabled>{neededType ? `No ${RESOURCE_TYPE_LABEL[neededType] ?? neededType} here` : 'No stations'}</SelectItem>
+              <SelectItem value="__nomatch__" disabled>{neededTypes.length ? `No ${neededTypes.map((t) => RESOURCE_TYPE_LABEL[t] ?? t).join(' / ')} here` : 'No stations'}</SelectItem>
             ) : (
               [...resGroups.entries()].map(([type, list]) => (
                 <SelectGroup key={type}>
@@ -198,13 +209,22 @@ export function ServiceLineEditor({
         </Select>
         )}
       </div>
+      {/* Status — a not-yet-started line has none; placeholder keeps the column aligned. */}
+      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
+      {/* Price — list price of the chosen variant, previewed live before save. */}
+      <span className="text-right tabular text-sm font-medium text-muted-foreground">{priceLabel}</span>
       <div className="min-w-0">
-        <Select items={discOptions} value={sourceDiscountLocked ? defaultDiscountId : draft.discountId} onValueChange={(v) => v && onChange({ discountId: v })} disabled={disabled || sourceDiscountLocked}>
+        <Select items={discOptions} value={effectiveDiscountId} onValueChange={(v) => v && onChange({ discountId: v })} disabled={disabled || sourceDiscountLocked}>
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>{discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
-        {needsDiscountAmount && (
-          <Input className="h-7 mt-1" type="number" min="0" step="0.01" value={draft.discountOverride} onChange={(e) => onChange({ discountOverride: e.target.value })} placeholder={`${selectedDiscountCode} amt`} disabled={disabled} />
+      </div>
+      {/* Disc. — manual classes get an inline amount input here (own column, no wrap); others show the value. */}
+      <div className="min-w-0">
+        {needsDiscountAmount ? (
+          <Input className="h-8 w-full text-right" type="number" min="0" step="0.01" value={draft.discountOverride} onChange={(e) => onChange({ discountOverride: e.target.value })} placeholder="Amt" disabled={disabled} />
+        ) : (
+          <span className="block text-xs font-medium text-muted-foreground tabular">{discValueLabel}</span>
         )}
       </div>
     </>

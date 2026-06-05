@@ -179,13 +179,16 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
-  // Window spans ALL selected branches' hours (union) so an earlier-opening
-  // branch's morning shifts don't wrap past midnight (and lose their band).
+  // Branch hours for the selected branches. The window opens at the earliest open
+  // (lowered below if shifts start before open) and closes at the latest close;
+  // place() folds genuine after-midnight times — before a midnight-crossing
+  // branch's close — to the next day, NOT pre-open morning hours.
   const { data: brHoursAll } = await supabase.from('branches').select('open_time, close_time').in('id', branchIds);
-  const openMin = Math.min(...((brHoursAll ?? []).map((b) => timeToMin(b.open_time ?? '10:00') ?? 600).concat(600)));
-  const windowStartMin = openMin;
-  const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
-  const windowEndMin = Math.max(...((brHoursAll ?? []).map((b) => place(timeToMin(b.close_time ?? '02:00') ?? 120)).concat(120)));
+  const branchHours = (brHoursAll ?? []).map((b) => ({ open: timeToMin(b.open_time ?? '10:00') ?? 600, close: timeToMin(b.close_time ?? '02:00') ?? 120 }));
+  const branchOpen = Math.min(...branchHours.map((h) => h.open).concat([600]));
+  const crossingCloses = branchHours.filter((h) => h.close <= h.open).map((h) => h.close);
+  const wrapThreshold = crossingCloses.length ? Math.max(...crossingCloses) : -1;
+  const place = (clockMin: number) => (clockMin < wrapThreshold ? clockMin + 1440 : clockMin);
   const isServicePosition = (code: string | null): boolean =>
     !!code && (code.startsWith('MASSAGE_') || code.startsWith('HAIR_') || code.startsWith('NAIL_'));
 
@@ -204,6 +207,19 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type )')
       .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted', 'unassigned']),
   ]);
+
+  // Open the window early enough to cover shifts that start before the branch
+  // opens (e.g. 09:00 vs a 10:00 open) — only the few hours before open, so a
+  // genuine after-midnight shift can't drag the window backwards.
+  const earlyStarts = (shiftRes.data ?? [])
+    .map((s) => timeToMin(s.shift_start))
+    .filter((m): m is number => m != null && m < branchOpen && m >= branchOpen - 360);
+  const windowStartMin = earlyStarts.length ? Math.min(branchOpen, ...earlyStarts) : branchOpen;
+  const windowEndMin = Math.max(
+    ...branchHours.map((h) => (h.close <= h.open ? h.close + 1440 : h.close)),
+    ...(shiftRes.data ?? []).map((s) => { const m = timeToMin(s.shift_end); return m == null ? 0 : place(m); }),
+    windowStartMin + 60,
+  );
 
   // Rows = on-shift service therapists today, carrying their shift window so the
   // row paints a faint "on shift" band.

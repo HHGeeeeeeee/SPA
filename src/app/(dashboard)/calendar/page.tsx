@@ -194,7 +194,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   const [shiftRes, itemsRes] = await Promise.all([
     supabase
       .from('employee_shifts')
-      .select('employee_id, branch_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
+      .select('employee_id, branch_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
       .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
@@ -206,7 +206,12 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   // row paints a faint "on shift" band.
   const rowsById = new Map<string, BoardBed>();
   const staffShifts: BoardStaffShift[] = [];
-  for (const s of shiftRes.data ?? []) {
+  // A therapist loaned out (cross_branch) can also carry a home regular shift the
+  // same day; process cross_branch LAST so it wins the row's branch — they're
+  // physically at the branch they're loaned to.
+  const shiftRank = (t: string | null) => (t === 'cross_branch' ? 2 : t === 'on_call' ? 1 : 0);
+  const sortedShifts = [...(shiftRes.data ?? [])].sort((a, b) => shiftRank(a.shift_type) - shiftRank(b.shift_type));
+  for (const s of sortedShifts) {
     const e = one(s.employees);
     const positionCode = e ? one(e.position)?.code ?? null : null;
     if (!isServicePosition(positionCode)) continue;

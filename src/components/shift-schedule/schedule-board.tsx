@@ -87,7 +87,7 @@ export interface BoardDialogData {
 
 const PX_PER_HOUR = 160;
 const PX_PER_MIN = PX_PER_HOUR / 60;
-const LANE_H = 56;
+const LANE_H = 40; // two compact lines (guest·service / therapist)
 const LABEL_W = 160;
 
 // Grid lines are 15-min for readability, but clicks/drags snap to 5-min so you
@@ -250,11 +250,12 @@ function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windo
       className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
       title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}`}
     >
-      {/* One line: guest · service · therapist. Full detail (pax / time / status)
-          lives in the title tooltip and the click popover. */}
+      {/* Two lines: guest · service on top, therapist below. Pax / time / status
+          live in the title tooltip + the click popover. */}
       <span className="truncate font-semibold">
-        {block.guest ? `${block.guest} · ` : ''}{block.line1}{block.line2 ? ` · ${block.line2}` : ''}
+        {block.guest ? `${block.guest} · ` : ''}{block.line1}
       </span>
+      {block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>}
     </div>
   );
 }

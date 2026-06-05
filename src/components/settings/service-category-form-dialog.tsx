@@ -16,13 +16,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 import {
   createServiceCategory,
@@ -38,10 +31,8 @@ export interface CategoryItem {
   commission_applicable: boolean;
   tip_applicable: boolean;
   revenue_account: string | null;
-  required_resource_type: string | null;
+  required_resource_types: string[];
 }
-
-const RT_NONE = '__none__';
 
 interface BusinessUnitOption {
   id: string;
@@ -75,7 +66,7 @@ export function ServiceCategoryFormDialog({
   const [commissionApplicable, setCommissionApplicable] = useState(item?.commission_applicable ?? true);
   const [tipApplicable, setTipApplicable] = useState(item?.tip_applicable ?? true);
   const [revenueAccount, setRevenueAccount] = useState(item?.revenue_account ?? '');
-  const [resourceType, setResourceType] = useState(item?.required_resource_type ?? RT_NONE);
+  const [resourceTypes, setResourceTypes] = useState<string[]>(item?.required_resource_types ?? []);
   const [pending, startTransition] = useTransition();
 
   const isEdit = mode === 'edit';
@@ -85,6 +76,9 @@ export function ServiceCategoryFormDialog({
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   }
+
+  const toggleResourceType = (value: string) =>
+    setResourceTypes((cur) => (cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value]));
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -99,7 +93,7 @@ export function ServiceCategoryFormDialog({
       commission_applicable: commissionApplicable,
       tip_applicable: tipApplicable,
       revenue_account: revenueAccount || null,
-      required_resource_type: resourceType === RT_NONE ? null : resourceType,
+      required_resource_types: resourceTypes,
     };
     startTransition(async () => {
       const r = isEdit
@@ -113,6 +107,7 @@ export function ServiceCategoryFormDialog({
           setName('');
           setRevenueAccount('');
           setUnitIds([]);
+          setResourceTypes([]);
         }
       } else {
         toast.error(r.error);
@@ -197,16 +192,30 @@ export function ServiceCategoryFormDialog({
                 payload kept so existing values are preserved on edit. */}
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Resource Type</Label>
-              <Select items={[{ value: RT_NONE, label: 'None' }, ...RESOURCE_TYPES]} value={resourceType} onValueChange={(v) => setResourceType(v ?? RT_NONE)}>
-                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={RT_NONE}>None</SelectItem>
-                  {RESOURCE_TYPES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label className="font-semibold">Station Types</Label>
+              <div className="flex flex-wrap gap-2">
+                {RESOURCE_TYPES.map((t) => {
+                  const on = resourceTypes.includes(t.value);
+                  return (
+                    <button
+                      type="button"
+                      key={t.value}
+                      onClick={() => toggleResourceType(t.value)}
+                      aria-pressed={on}
+                      className={`rounded-full border px-3 py-1 text-sm font-semibold transition-colors ${
+                        on
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
               <p className="text-xs font-medium text-muted-foreground">
-                Which station this category uses — drives reservation bed/station capacity checks.
+                Which stations this category can use — pick all that apply. Drives
+                reservation bed/station capacity checks. Leave all off if it needs no station.
               </p>
             </div>
 

@@ -24,7 +24,7 @@ async function fetchData() {
     supabase
       .from('service_categories')
       .select(`
-        id, code, name, commission_applicable, tip_applicable, revenue_account, required_resource_type, active, updated_at,
+        id, code, name, commission_applicable, tip_applicable, revenue_account, required_resource_types, active, updated_at,
         service_category_business_units ( business_unit_id, business_units ( id, code, name ) )
       `)
       .order('code'),
@@ -113,7 +113,7 @@ export default async function ServiceCategoriesPage() {
                   commission_applicable: c.commission_applicable,
                   tip_applicable: c.tip_applicable,
                   revenue_account: c.revenue_account,
-                  required_resource_type: c.required_resource_type,
+                  required_resource_types: c.required_resource_types ?? [],
                   active: c.active,
                 };
                 return (

@@ -51,7 +51,7 @@ async function fetchData(id: string) {
         therapist_id, resource_id, duration_minutes, actual_start, actual_end, bed_released_at, interruption_reason,
         service:service_items ( name, prep_before_minutes, cleanup_after_minutes ),
         therapist:employees ( name, home_branch:branches!employees_home_branch_id_fkey ( code ) ),
-        resource:resources ( resource_name )
+        resource:resources ( resource_name, branch:branches!resources_branch_id_fkey ( code ) )
       )
     `)
     .eq('id', id)
@@ -276,6 +276,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       therapist_id: it.therapist_id,
       resource_id: it.resource_id,
       station_name: resource?.resource_name ?? null,
+      station_branch_code: resource ? one(resource.branch)?.code ?? null : null,
       duration_minutes: it.duration_minutes,
       prep_minutes: svc?.prep_before_minutes ?? 0,
       cleanup_minutes: svc?.cleanup_after_minutes ?? 0,

@@ -74,6 +74,7 @@ interface OrderItem {
   therapist_id: string | null;
   resource_id: string | null;
   station_name: string | null;
+  station_branch_code: string | null;
   duration_minutes: number | null;
   prep_minutes: number;
   cleanup_minutes: number;
@@ -851,16 +852,16 @@ export function OrderWorkspace({
                         const discCode = discountClasses.find((dd) => dd.id === it.discount_class_id)?.code ?? '—';
                         return (
                           <li key={it.id} className={`${SERVICE_GRID} py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
-                            <span className="font-semibold truncate">{it.service_name}</span>
+                            <span className="font-semibold truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.group ?? it.service_name}</span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
                               {tw && <span className="block tabular opacity-80">{tw}</span>}
                             </span>
                             <span className="font-medium text-muted-foreground truncate">
-                              {it.therapist_name ?? 'Unassigned'}{it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
+                              {it.therapist_name ?? 'Unassigned'}
                             </span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
-                              {it.station_name ?? '—'}
+                              {it.station_branch_code ? `${it.station_branch_code} · ` : ''}{it.station_name ?? '—'}
                               {isCleaning && (
                                 <span className="mt-0.5 block">
                                   <ActionBtn tip="Free the bed now, before the cleanup buffer ends." variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => doReleaseBed(it.id)} disabled={pending}>Ready now</ActionBtn>
@@ -902,9 +903,6 @@ export function OrderWorkspace({
                     </ul>
                   </div>
                 </div>
-              )}
-              {itemsByCustomer(c.id).length === 0 && (
-                <p className="py-2 text-sm font-medium text-muted-foreground">No services yet</p>
               )}
 
               {order.editable && (

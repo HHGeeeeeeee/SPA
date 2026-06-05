@@ -35,7 +35,7 @@ function tsToMin(iso: string): number {
 // in-service / done order item on its bed, pinned reservations as bed blocks,
 // and unplaced reservations in the "To place" lane (drag onto a bed).
 // Service names bake the duration in as "… 90min"; show it compactly as "(90)".
-const fmtSvc = (name: string | null | undefined): string => (name ?? 'Service').replace(/s*(d+)s*min/i, ' ($1)');
+const fmtSvc = (name: string | null | undefined): string => (name ?? 'Service').replace(/\s*(\d+)\s*min\b/i, ' ($1)');
 
 async function fetchStationBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
   const supabase = createServiceClient();

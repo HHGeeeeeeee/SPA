@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
+import { startOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 
 export interface BoardBed {
   id: string;
@@ -64,6 +65,9 @@ export interface BoardBlock {
    *  a placeholder (windowStartMin) for these. */
   untimed?: boolean;
   orderId?: string;
+  /** The order still has a balance (total ≠ paid) — drawn as a red dot on the
+   *  block so the desk can spot unsettled bookings at a glance. */
+  owing?: boolean;
   editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
   /** Therapist on this block. Used by the hover popup to mark staff busy at
    *  a hovered minute (block's own variant decides if it actually occupies
@@ -263,8 +267,13 @@ function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: Board
       onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
       className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]} ${assignMode && canAssign ? (isOver ? 'ring-2 ring-primary ring-offset-1' : 'ring-2 ring-primary/40') : ''}`}
-      title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}`}
+      title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}${block.owing ? ' · balance due' : ''}`}
     >
+      {/* Balance-due flag: a red dot on any order block that isn't paid in full
+          (total ≠ paid), so unsettled bookings stand out on the board. */}
+      {block.owing && (
+        <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-red-600 ring-1 ring-white dark:ring-black/40" title="Balance due" />
+      )}
       {/* Two lines: guest · service on top, therapist below. Pax / time / status
           live in the title tooltip + the click popover. */}
       <span className="truncate font-semibold">
@@ -477,7 +486,7 @@ export function ScheduleBoard({
   subjectLabel?: string;
 }) {
   const router = useRouter();
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
   const suppressClick = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   // The grid's full-width content div — used to turn a drop's pointer-X into a
@@ -702,6 +711,16 @@ export function ScheduleBoard({
     startTransition(async () => {
       const r = await assignTherapistToOrderItem({ item_id: refId, therapist_id: therapistId, start_min: startMin, day });
       if (r.ok) { toast.success(name ? `Assigned ${name}` : 'Therapist assigned'); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+  // Start a scheduled service straight from the board's detail popover. Reuses
+  // startOrderItem so all the therapist/bed/shift checks (and their error
+  // messages) are identical to starting from the order page.
+  function doStartFromBoard(itemId: string, orderId: string) {
+    startTransition(async () => {
+      const r = await startOrderItem(itemId, orderId);
+      if (r.ok) { toast.success('Service started'); setDetail(null); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -1068,7 +1087,23 @@ export function ScheduleBoard({
               )}
               <div className="mt-3 flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
-                {b.orderId && <Button size="sm" onClick={() => router.push(`/sales-orders/${b.orderId}`)}>Open order</Button>}
+                {b.orderId && (
+                  <Button
+                    size="sm"
+                    variant={b.variant === 'scheduled' ? 'outline' : 'default'}
+                    onClick={() => router.push(`/sales-orders/${b.orderId}`)}
+                  >
+                    Open order
+                  </Button>
+                )}
+                {/* Start a not-yet-started service inline. Same guards as the order
+                    page (needs service picked, therapist/bed where required, an
+                    open shift) — errors surface as a toast. */}
+                {b.variant === 'scheduled' && b.orderId && (
+                  <Button size="sm" disabled={pending} onClick={() => doStartFromBoard(b.refId, b.orderId!)}>
+                    Start
+                  </Button>
+                )}
               </div>
             </div>
           </>

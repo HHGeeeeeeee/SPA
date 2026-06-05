@@ -43,12 +43,12 @@ export interface OrderRow {
   tip_cents: number;
 }
 
-// Service / lifecycle axis. `completed` + `paid` both read as "Service done"
-// now, so they collapse into one filter option — payment is filtered separately.
+// Service / lifecycle axis. `completed` reads as "Service done" (payment is
+// filtered separately); `closed` is its own option (service done + paid).
 const SERVICE_OPTIONS: { value: string; label: string; match: (s: string) => boolean }[] = [
   { value: 'draft', label: 'Draft', match: (s) => s === 'draft' },
   { value: 'in_service', label: 'In service', match: (s) => s === 'in_service' },
-  { value: 'done', label: 'Service done', match: (s) => s === 'completed' || s === 'paid' },
+  { value: 'done', label: 'Service done', match: (s) => s === 'completed' },
   { value: 'closed', label: 'Closed', match: (s) => s === 'closed' },
   { value: 'void', label: 'Void', match: (s) => s === 'void' },
 ];

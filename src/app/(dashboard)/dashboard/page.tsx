@@ -34,7 +34,7 @@ async function fetchData() {
   const orders = todayOrders.data ?? [];
   const bookings = orders.length;
   const pax = orders.reduce((s, o) => s + (o.order_customers?.length ?? 0), 0);
-  const revenue = orders.filter((o) => ['paid', 'closed'].includes(o.status)).reduce((s, o) => s + o.total_cents, 0);
+  const revenue = orders.filter((o) => o.status === 'closed').reduce((s, o) => s + o.total_cents, 0);
   const discount = orders.reduce((s, o) => s + o.discount_cents, 0);
   const tipsOpen = (openTips.data ?? []).reduce((s, t) => s + t.amount_cents, 0);
   const svcLiability = (svc.data ?? []).reduce((s, c) => s + c.current_balance_cents, 0);

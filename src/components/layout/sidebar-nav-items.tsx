@@ -61,7 +61,7 @@ export const mainNavItems: NavItem[] = [
   // feeds it) lead the list — the desk's daily-start workflow precedes taking
   // individual orders against it.
   { label: 'Calendar', href: '/calendar', icon: CalendarClock },
-  { label: 'Shift Remittance', href: '/reconciliation/shift-remittance', icon: Receipt },
+  { label: 'Sales Remittance', href: '/reconciliation/shift-remittance', icon: Receipt },
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarDays },
   // Pending Reschedules child temporarily disabled (2026-05-31) — re-enable
   // when the reschedule handling option is re-added to interrupt-taxonomy.

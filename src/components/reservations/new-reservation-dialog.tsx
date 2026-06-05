@@ -548,6 +548,23 @@ export function NewReservationDialog({
               )}
             </div>
 
+            {/* Start date + time, right under Service Types so the slot is set
+                before capacity / bed availability (which depend on the window)
+                are shown. End is derived (start + service duration / 60 min), so
+                there's no manual End input. Walk-in mode finds its own slot. */}
+            {!walkIn && (
+              <>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="r-start-date" className="font-semibold">Date *</Label>
+                  <Input id="r-start-date" type="date" value={start.slice(0, 10)} onChange={(e) => setStart(`${e.target.value}T${start.slice(11, 16) || '00:00'}`)} required />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="r-start-time" className="font-semibold">Time *</Label>
+                  <Input id="r-start-time" type="time" value={start.slice(11, 16)} onChange={(e) => setStart(`${start.slice(0, 10) || toLocalInput(new Date().toISOString()).slice(0, 10)}T${e.target.value}`)} required />
+                </div>
+              </>
+            )}
+
             {/* Optional specific service. Walk-ins usually set it (so the order
                 line + capable therapist are confirmed); advance bookings can leave
                 it "Any" and let the guest choose at check-in. Never required.
@@ -726,7 +743,7 @@ export function NewReservationDialog({
                 </SelectContent>
               </Select>
             </div>
-            {walkIn ? (
+            {walkIn && (
               <div className="col-span-2 rounded-lg border border-primary/40 bg-primary/5 p-3 flex items-center justify-between gap-3">
                 <div className="text-sm">
                   <div className="font-bold">{finding ? 'Finding soonest…' : walkInMsg ?? 'Pick a service type & pax to find the soonest slot.'}</div>
@@ -736,19 +753,6 @@ export function NewReservationDialog({
                   {finding ? '…' : 'Refresh'}
                 </Button>
               </div>
-            ) : (
-              <>
-                {/* Start date + time as separate fields; end is derived (start +
-                    service duration / 60 min), so there's no manual End input. */}
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="r-start-date" className="font-semibold">Date *</Label>
-                  <Input id="r-start-date" type="date" value={start.slice(0, 10)} onChange={(e) => setStart(`${e.target.value}T${start.slice(11, 16) || '00:00'}`)} required />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="r-start-time" className="font-semibold">Time *</Label>
-                  <Input id="r-start-time" type="time" value={start.slice(11, 16)} onChange={(e) => setStart(`${start.slice(0, 10) || toLocalInput(new Date().toISOString()).slice(0, 10)}T${e.target.value}`)} required />
-                </div>
-              </>
             )}
             {!walkIn && (
               <div className="flex flex-col gap-2 col-span-2">

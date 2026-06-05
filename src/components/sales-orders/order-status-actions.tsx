@@ -70,9 +70,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
           <span className="text-xs font-medium text-muted-foreground">All services must be finished, skipped, or cancelled first</span>
         </>
       )}
-      {status === 'paid' && (
-        <span className="text-xs font-medium text-muted-foreground">Paid — closes at daily Revenue Confirm</span>
-      )}
       {status === 'completed' && canManage && (
         <Button size="sm" variant="outline" onClick={() => setReopenOpen(true)} disabled={pending}>Reopen</Button>
       )}

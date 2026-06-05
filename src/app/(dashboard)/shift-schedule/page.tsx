@@ -18,20 +18,25 @@ interface ShiftRow {
   leave_type: string | null;
 }
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const isoUTC = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+// Monday of the current Manila week. Anchor "today" in PHT, then do the day math
+// in UTC so midnight never drifts a day (the server may be in any timezone).
 function thisMonday(): string {
-  const now = new Date();
-  const day = (now.getDay() + 6) % 7;
-  now.setDate(now.getDate() - day);
-  return now.toISOString().slice(0, 10);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const [y, m, d] = today.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7)); // back up to Monday (0 = Mon)
+  return isoUTC(dt);
 }
+// The 7 day cells from `monday` (YYYY-MM-DD), in UTC so each date matches its
+// Mon..Sun label exactly (no local-midnight → UTC roll-back).
 function weekDays(monday: string): { date: string; label: string; dow: string }[] {
-  const out: { date: string; label: string; dow: string }[] = [];
-  const base = new Date(`${monday}T00:00:00`);
+  const [y, m, d] = monday.split('-').map(Number);
   const dows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const out: { date: string; label: string; dow: string }[] = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(base);
-    d.setDate(base.getDate() + i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = isoUTC(new Date(Date.UTC(y, m - 1, d + i)));
     out.push({ date: iso, label: iso.slice(5), dow: dows[i] });
   }
   return out;

@@ -13,16 +13,19 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const isoUTC = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+// UTC date math so a +N/-N day shift never drifts across a local-midnight / UTC boundary.
 function addDays(date: string, delta: number): string {
-  const d = new Date(`${date}T00:00:00`);
-  d.setDate(d.getDate() + delta);
-  return d.toISOString().slice(0, 10);
+  const [y, m, d] = date.split('-').map(Number);
+  return isoUTC(new Date(Date.UTC(y, m - 1, d + delta)));
 }
 function thisMonday(): string {
-  const now = new Date();
-  const day = (now.getDay() + 6) % 7;
-  now.setDate(now.getDate() - day);
-  return now.toISOString().slice(0, 10);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const [y, m, d] = today.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+  return isoUTC(dt);
 }
 
 // Branch switcher (hoisted to the top bar) + week navigation for the roster.

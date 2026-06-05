@@ -7,6 +7,7 @@ import { createServiceClient, createAuditedClient } from '@/lib/supabase/server'
 import { nextOrderNo } from '@/lib/order-no';
 import { currentSession, isManager } from '@/lib/auth';
 import { isBusinessDayClosed } from '@/app/(dashboard)/reconciliation/end-of-day/actions';
+import { getCurrentOpenShift } from '@/app/(dashboard)/reconciliation/shift-remittance/actions';
 import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
 import { canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 import { assertBedMatchesServiceItem } from '@/lib/resource-compatibility';
@@ -1593,7 +1594,8 @@ const paymentSchema = z.object({
 });
 
 export async function takePayment(input: unknown): Promise<ActionResult> {
-  if (!(await currentSession())) return { ok: false, error: 'Sign in required' };
+  const session = await currentSession();
+  if (!session) return { ok: false, error: 'Sign in required' };
   const parsed = paymentSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
@@ -1612,6 +1614,12 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   }
   if (await isBusinessDayClosed(order.branch_id, order.service_date)) {
     return { ok: false, error: 'The business day is closed — payments can no longer post to this date.' };
+  }
+  // Every posting needs an open cash shift to land in. Block the payment when
+  // none is open for the branch.
+  const openShift = order.branch_id ? await getCurrentOpenShift(order.branch_id) : null;
+  if (!openShift) {
+    return { ok: false, error: 'No cash shift is open for this branch - open one on the Shift Remittance page before taking payment.' };
   }
   // No overpayment: a collection can't push the paid total past the order total.
   if (order.paid_cents + amountCents > order.total_cents) {
@@ -1687,9 +1695,22 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     .single();
   if (pe || !payment) return { ok: false, error: pe?.message ?? 'Payment insert failed' };
 
+  // Mirror the payment as a folio line bound to the open shift (the ledger
+  // Shift Remittance + the revenue paths read). Dual-written alongside the
+  // payments row until reads repoint and the payments table retires.
+  await supabase.from('folio_lines').insert({
+    order_id: d.order_id,
+    shift_id: openShift.id,
+    kind: 'payment',
+    amount_cents: amountCents,
+    posted_by: session.staffUserId,
+    payment_method_id: d.payment_method_id,
+    payment_ref: d.payment_ref || null,
+    stored_value_card_id: svcCard?.id ?? null,
+  });
+
   if (svcCard) {
     const balanceAfter = svcCard.current_balance_cents - amountCents;
-    const session = await currentSession();
     await supabase
       .from('stored_value_cards')
       .update({ current_balance_cents: balanceAfter, status: balanceAfter === 0 ? 'depleted' : 'active' })

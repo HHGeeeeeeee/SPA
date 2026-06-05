@@ -563,6 +563,25 @@ export function ScheduleBoard({
   useEffect(() => {
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsedTypes])); } catch { /* defensive */ }
   }, [collapsedTypes, STORAGE_KEY]);
+  // "Available only" filter: hide rows that can't take a booking in the viewed
+  // window — off-shift (person) / inactive, OR fully occupied (no free gap).
+  // Persisted per branch + axis so each board remembers its own state.
+  const AVAIL_KEY = `hhg-spa:schedule-board:availableOnly:${branchId}:${axis}`;
+  const [availableOnly, setAvailableOnly] = useState(false);
+  // The minute the "available" check is evaluated at — a whole-day gap test is
+  // useless (nearly everything has some gap), so availability is "free at this
+  // time". Defaults to now (clamped to the window), then the desk adjusts it.
+  const [availAt, setAvailAt] = useState(() =>
+    Math.max(windowStartMin, Math.min(windowEndMin, nowMin ?? windowStartMin)),
+  );
+  useEffect(() => {
+    // Load after mount (not in a lazy initializer) so SSR markup stays stable.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    try { setAvailableOnly(window.localStorage.getItem(AVAIL_KEY) === '1'); } catch { /* defensive */ }
+  }, [AVAIL_KEY]);
+  useEffect(() => {
+    try { window.localStorage.setItem(AVAIL_KEY, availableOnly ? '1' : '0'); } catch { /* defensive */ }
+  }, [availableOnly, AVAIL_KEY]);
   // On open, jump the horizontal scroll to ~2h before "now" so the desk lands on
   // the live part of the 24h board instead of at 00:00. Only when viewing today
   // (nowMin set); other days stay at the start.
@@ -608,12 +627,31 @@ export function ScheduleBoard({
   const groupIcon = (t: string): React.ComponentType<{ className?: string }> =>
     axis === 'person' ? Users : (STATION_GROUP_ICON[t] ?? BedDouble);
 
+  // A row is "available" if it can take a booking AT `availAt`. Mirrors the
+  // hover popover's "who's free at this minute": a station is busy if a block
+  // overlaps [start − prep, end + cleanup]; a person must be on shift at that
+  // minute and not running a scheduled/in-service/confirmed block then.
+  function isFreeAt(bed: BoardBed): boolean {
+    const t = availAt;
+    const rowBlocks = blocksByBed.get(bed.id) ?? [];
+    if (axis === 'person') {
+      if (bed.shiftStartMin == null || bed.shiftEndMin == null) return false;
+      if (!(t >= bed.shiftStartMin && t < bed.shiftEndMin)) return false; // off shift at t
+      const busy = rowBlocks.some((b) =>
+        !b.untimed && (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed') && t >= b.startMin && t < b.endMin);
+      return !busy;
+    }
+    const busy = rowBlocks.some((b) => !b.untimed && t >= b.startMin - b.prepMin && t < b.endMin + b.cleanupMin);
+    return !busy;
+  }
+  const visibleBeds = availableOnly ? beds.filter(isFreeAt) : beds;
+
   // Bed board nesting: Branch > Type > Zone > Station. STATION_ORDER orders the
   // types; branches + zones sort alphabetically. (The person board keeps the flat
   // position grouping above.)
   const groupTree = (() => {
     const byBranch = new Map<string, BoardBed[]>();
-    for (const b of beds) { const k = b.branch ?? '—'; if (!byBranch.has(k)) byBranch.set(k, []); byBranch.get(k)!.push(b); }
+    for (const b of visibleBeds) { const k = b.branch ?? '—'; if (!byBranch.has(k)) byBranch.set(k, []); byBranch.get(k)!.push(b); }
     return [...byBranch.keys()].sort().map((branch) => {
       const rows = byBranch.get(branch)!;
       const byType = new Map<string, BoardBed[]>();
@@ -888,7 +926,30 @@ export function ScheduleBoard({
         >
           {/* hour + 15-min ruler */}
           <div className="flex border-b border-border sticky top-0 z-30 bg-muted">
-            <div className="w-40 shrink-0 p-2 flex items-center justify-center text-center text-xs font-bold text-muted-foreground sticky left-0 z-40 bg-muted">{subjectLabel}</div>
+            <div className="w-40 shrink-0 p-2 flex flex-col items-center justify-center gap-1 text-center sticky left-0 z-40 bg-muted">
+              <span className="text-xs font-bold text-muted-foreground">{subjectLabel}</span>
+              <button
+                type="button"
+                onClick={() => setAvailableOnly((v) => !v)}
+                aria-pressed={availableOnly}
+                title={`Show only ${subjectLabel.toLowerCase()}s that are free at the chosen time`}
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-bold leading-tight transition-colors ${availableOnly ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground hover:bg-accent'}`}
+              >
+                Available only
+              </button>
+              {availableOnly && (
+                <input
+                  type="time"
+                  value={hhmm(Math.max(windowStartMin, Math.min(windowEndMin, availAt)))}
+                  onChange={(e) => {
+                    const [h, m] = e.target.value.split(':').map(Number);
+                    if (!Number.isNaN(h) && !Number.isNaN(m)) setAvailAt(h * 60 + m);
+                  }}
+                  title="Free at this time"
+                  className="w-full rounded border border-input bg-background px-1 py-0.5 text-[10px] font-bold tabular"
+                />
+              )}
+            </div>
             <div className="relative h-12" style={{ minWidth: trackWidth }}>
               {/* top tier: the hour, centered over its band */}
               {hours.slice(0, -1).map((h) => (
@@ -957,8 +1018,12 @@ export function ScheduleBoard({
             </div>
           </div>
 
-          {beds.length === 0 ? (
-            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">{axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}</div>
+          {visibleBeds.length === 0 ? (
+            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">
+              {availableOnly && beds.length > 0
+                ? `No ${axis === 'person' ? 'staff' : 'stations'} free at ${hhmm(availAt)} — change the time or turn off “Available only”.`
+                : axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}
+            </div>
           ) : (
             groupTree.map((bg) => {
               const bKey = `b:${bg.branch}`;

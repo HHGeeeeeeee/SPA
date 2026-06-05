@@ -2,7 +2,7 @@
 
 import { type ComponentProps, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History, Play, Pencil, Check, X } from 'lucide-react';
+import { Plus, Trash2, UserPlus, CreditCard, Wand2, Users, Receipt, Star, History, Play, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -61,7 +61,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_5rem_9.5rem_9.5rem_5.5rem_5.5rem_8.5rem_6rem_5.5rem_7rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_7rem_9.5rem_9.5rem_5.5rem_8.5rem_6rem_5.5rem_5.5rem_7rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -197,6 +197,46 @@ function ActionBtn({ tip, children, ...props }: { tip: string } & ComponentProps
   );
 }
 
+// Always-open name + phone fields for a guest — no edit-pencil toggle. Local
+// state is the source of truth while typing; edits persist on blur / Enter and
+// only when the name is non-empty and something actually changed. Keyed by
+// customer id at the call site so each guest keeps its own buffer.
+function GuestIdentity({ name: initialName, phone: initialPhone, onSave }: {
+  name: string;
+  phone: string | null;
+  onSave: (name: string, phone: string | null) => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const [phone, setPhone] = useState(initialPhone ?? '');
+  const commit = () => {
+    const nm = name.trim();
+    const ph = phone.trim();
+    if (nm === (initialName ?? '').trim() && ph === (initialPhone ?? '').trim()) return;
+    if (!nm) { toast.error('Customer name required'); return; }
+    onSave(nm, ph || null);
+  };
+  return (
+    <>
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        placeholder="Name"
+        className="h-8 w-40"
+      />
+      <Input
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        placeholder="Phone (optional)"
+        className="h-8 w-36"
+      />
+    </>
+  );
+}
+
 export function OrderWorkspace({
   order,
   customers,
@@ -234,10 +274,6 @@ export function OrderWorkspace({
   // add customer
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
-  // inline rename of an existing guest (fill in a converted "Guest 2" placeholder)
-  const [editCust, setEditCust] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
 
   // add item (per customer) — two-step: group → duration variant. This panel only
   // ADDS new lines now; existing not-yet-started lines edit inline (per row).
@@ -491,22 +527,10 @@ export function OrderWorkspace({
     }
   }
 
-  function startEditCustomer(c: { id: string; customer_name: string; customer_phone: string | null }) {
-    setEditCust(c.id);
-    setEditName(c.customer_name);
-    setEditPhone(c.customer_phone ?? '');
-  }
-  function doRenameCustomer() {
-    if (!editCust) return;
-    if (!editName.trim()) return toast.error('Customer name required');
+  function doUpdateGuest(id: string, name: string, phone: string | null) {
     startTransition(async () => {
-      const r = await updateOrderCustomer({
-        id: editCust,
-        order_id: order.id,
-        customer_name: editName,
-        customer_phone: editPhone || null,
-      });
-      if (r.ok) { setEditCust(null); toast.success('Guest updated'); router.refresh(); }
+      const r = await updateOrderCustomer({ id, order_id: order.id, customer_name: name, customer_phone: phone });
+      if (r.ok) { toast.success('Guest updated'); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -718,63 +742,44 @@ export function OrderWorkspace({
         customers.sort((a, b) => a.seq_no - b.seq_no).map((c) => (
           <Card key={c.id}>
             <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-              {editCust === c.id ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Name"
-                    className="h-8 w-44"
-                    autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Enter') doRenameCustomer(); if (e.key === 'Escape') setEditCust(null); }}
-                  />
-                  <Input
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    placeholder="Phone (optional)"
-                    className="h-8 w-36"
-                    onKeyDown={(e) => { if (e.key === 'Enter') doRenameCustomer(); if (e.key === 'Escape') setEditCust(null); }}
-                  />
-                  <Button size="icon-sm" variant="ghost" onClick={doRenameCustomer} disabled={pending}>
-                    <Check className="size-4 text-primary" />
-                  </Button>
-                  <Button size="icon-sm" variant="ghost" onClick={() => setEditCust(null)} disabled={pending}>
-                    <X className="size-4 text-muted-foreground" />
-                  </Button>
-                </div>
-              ) : (
-                <CardTitle className="text-sm font-bold flex items-center gap-2">
-                  <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
-                  {c.customer_name}
-                  {c.customer_phone && <span className="font-medium text-muted-foreground">{c.customer_phone}</span>}
-                  {order.editable && (
-                    <Button size="icon-sm" variant="ghost" className="size-6" onClick={() => startEditCustomer(c)} disabled={pending}>
-                      <Pencil className="size-3.5 text-muted-foreground" />
-                    </Button>
-                  )}
-                </CardTitle>
-              )}
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Preferred therapist gender is a guest attribute (applies to
-                    all of this guest's services), not a per-service setting. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{c.seq_no}</span>
                 {order.editable ? (
-                  <div className="flex items-center gap-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Therapist gender</Label>
-                    <Select
-                      items={GENDER_OPTS}
-                      value={c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER}
-                      onValueChange={(v) => doSetGuestGender(c, v ?? ANY_GENDER)}
-                    >
-                      <SelectTrigger className="h-8 w-32" aria-label="Preferred therapist gender"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {GENDER_OPTS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (c.gender === 'M' || c.gender === 'F') ? (
-                  <span className="text-xs font-semibold text-muted-foreground">{c.gender === 'F' ? 'Female only' : 'Male only'}</span>
-                ) : null}
+                  <>
+                    {/* Name + phone are always open for editing — no pencil toggle. */}
+                    <GuestIdentity
+                      key={c.id}
+                      name={c.customer_name}
+                      phone={c.customer_phone}
+                      onSave={(name, phone) => doUpdateGuest(c.id, name, phone)}
+                    />
+                    {/* Preferred therapist gender is a guest attribute (applies to
+                        all of this guest's services), not a per-service setting. */}
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Therapist gender</Label>
+                      <Select
+                        items={GENDER_OPTS}
+                        value={c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER}
+                        onValueChange={(v) => doSetGuestGender(c, v ?? ANY_GENDER)}
+                      >
+                        <SelectTrigger className="h-8 w-32" aria-label="Preferred therapist gender"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {GENDER_OPTS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                ) : (
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    {c.customer_name}
+                    {c.customer_phone && <span className="font-medium text-muted-foreground">{c.customer_phone}</span>}
+                    {(c.gender === 'M' || c.gender === 'F') && (
+                      <span className="text-xs font-semibold text-muted-foreground">{c.gender === 'F' ? 'Female only' : 'Male only'}</span>
+                    )}
+                  </CardTitle>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
                 {order.editable && itemsByCustomer(c.id).some(isLineEditable) && (
                   <Button
                     size="sm"
@@ -803,11 +808,11 @@ export function OrderWorkspace({
                       <span>Start</span>
                       <span>Therapist</span>
                       <span>{dispatch ? 'Room' : 'Station'}</span>
-                      <span>Status</span>
                       <span className="text-right">Price</span>
                       <span>Discount</span>
                       <span>Disc.</span>
                       <span className="text-right">Amount</span>
+                      <span>Status</span>
                       <span>Feedback</span>
                       <span />
                     </div>
@@ -845,6 +850,7 @@ export function OrderWorkspace({
                                 disabled={pending}
                               />
                               <span className="text-right font-bold tabular text-sm">{peso(it.final_amount_cents)}</span>
+                              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
                               <span className="text-xs font-medium text-muted-foreground">—</span>
                               <div className="flex flex-wrap items-center gap-1 justify-end">
                                 {canRunService && it.status === 'scheduled' && (
@@ -898,9 +904,6 @@ export function OrderWorkspace({
                                 </span>
                               )}
                             </span>
-                            <span className="text-[10px] font-bold uppercase tracking-wide truncate">
-                              {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
-                            </span>
                             <span className="text-right tabular text-sm font-medium text-muted-foreground">{peso(it.list_price_cents)}</span>
                             <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
                             <span className="text-xs font-medium text-muted-foreground tabular truncate">{discValue}</span>
@@ -910,6 +913,9 @@ export function OrderWorkspace({
                               ) : (
                                 <span className="font-bold">{peso(it.final_amount_cents)}</span>
                               )}
+                            </span>
+                            <span className="text-[10px] font-bold uppercase tracking-wide truncate">
+                              {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
                             </span>
                             {/* Feedback — score once submitted, an entry button once the service is done, else nothing applies yet. */}
                             <span className="text-xs">
@@ -975,6 +981,7 @@ export function OrderWorkspace({
                           dispatch={dispatch}
                           disabled={pending}
                         />
+                        <span />
                         <span />
                         <span />
                         <div className="flex flex-wrap items-center gap-1 justify-end">

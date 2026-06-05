@@ -209,8 +209,6 @@ export function ServiceLineEditor({
         </Select>
         )}
       </div>
-      {/* Status — a not-yet-started line has none; placeholder keeps the column aligned. */}
-      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
       {/* Price — list price of the chosen variant, previewed live before save. */}
       <span className="text-right tabular text-sm font-medium text-muted-foreground">{priceLabel}</span>
       <div className="min-w-0">

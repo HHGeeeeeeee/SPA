@@ -633,6 +633,7 @@ const addItemSchema = z.object({
   // Booked start (ISO, +08:00). Optional — an untimed booking sits in the
   // unallocated lane with no position on the board axis.
   scheduled_start: z.string().optional().nullable(),
+  external_room_no: z.string().optional().nullable(),
   // Used only when no concrete service is chosen (else duration comes from the
   // service item). Defaults to 60 min server-side.
   duration_minutes: z.coerce.number().int().positive().optional().nullable(),
@@ -872,6 +873,7 @@ export async function addOrderItem(input: unknown): Promise<ActionResult> {
     order_customer_id: d.order_customer_id,
     ...r.patch,
     scheduled_start: d.scheduled_start ?? null,
+    external_room_no: d.external_room_no ?? null,
   });
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);
@@ -894,6 +896,7 @@ const updateItemSchema = z.object({
   // Booked start time (ISO). Edited inline on the order's service table; null
   // clears it (a timed booking drops back to "no time yet").
   scheduled_start: z.string().optional().nullable(),
+  external_room_no: z.string().optional().nullable(),
 }).refine((d) => d.service_item_id || d.service_category_id, {
   message: 'Pick a service or at least a service category',
 });
@@ -918,7 +921,7 @@ export async function updateOrderItem(input: unknown): Promise<ActionResult> {
 
   // The inline table edits the booked start time too; the rest of the patch
   // (service/therapist/station/discount/price) comes from buildLineWrite.
-  const patch = { ...r.patch, scheduled_start: d.scheduled_start ?? null };
+  const patch = { ...r.patch, scheduled_start: d.scheduled_start ?? null, external_room_no: d.external_room_no ?? null };
   const { error } = await supabase.from('order_items').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);

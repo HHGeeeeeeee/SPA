@@ -76,6 +76,7 @@ interface OrderItem {
   station_name: string | null;
   station_branch_code: string | null;
   scheduled_start: string | null;
+  external_room_no: string | null;
   duration_minutes: number | null;
   prep_minutes: number;
   cleanup_minutes: number;
@@ -125,6 +126,7 @@ interface Props {
     paid_cents: number;
     editable: boolean;
     service_date: string;
+    service_location_type: string | null;
   };
   customers: OrderCustomer[];
   items: OrderItem[];
@@ -252,6 +254,7 @@ export function OrderWorkspace({
   const [discountId, setDiscountId] = useState(defaultDiscountId);
   const [discountOverride, setDiscountOverride] = useState('');
   const [addStart, setAddStart] = useState('');
+  const [addRoomNo, setAddRoomNo] = useState('');
   const selectedDiscountCode = discountClasses.find((d) => d.id === discountId)?.code ?? '';
   const needsDiscountAmount = ['DIS-91', 'DIS-99'].includes(selectedDiscountCode);
 
@@ -266,6 +269,7 @@ export function OrderWorkspace({
     start: toHHmm(it.scheduled_start),
     therapistId: it.therapist_id ?? NONE,
     resourceId: it.resource_id ?? NONE,
+    roomNo: it.external_room_no ?? '',
     discountId: it.discount_class_id ?? defaultDiscountId,
     discountOverride: it.discount_amount_cents > 0 ? String(it.discount_amount_cents / 100) : '',
   });
@@ -277,7 +281,7 @@ export function OrderWorkspace({
     if (!d) return false;
     const b = draftFromItem(it);
     return d.svcId !== b.svcId || d.therapistId !== b.therapistId || d.resourceId !== b.resourceId
-      || d.discountId !== b.discountId || d.discountOverride !== b.discountOverride || d.start !== b.start;
+      || d.discountId !== b.discountId || d.discountOverride !== b.discountOverride || d.start !== b.start || d.roomNo !== b.roomNo;
   };
   const guestGenderOf = (c: OrderCustomer): string => (c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER);
   const isLineEditable = (it: OrderItem): boolean => order.editable && ['unassigned', 'scheduled'].includes(it.status);
@@ -301,6 +305,8 @@ export function OrderWorkspace({
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
   const canRunService = ['open', 'in_service'].includes(order.status);
+  // Whole order dispatched to a hotel → services use a room no, not an in-house station.
+  const dispatch = order.service_location_type === 'external_hotel';
 
   // Therapist-gender preference now lives on the guest, not the service line.
   // The service editor (only ever open for one guest at a time) filters its
@@ -354,7 +360,7 @@ export function OrderWorkspace({
 
   function closeItemForm() {
     setActiveCustomer(null);
-    setAddStart('');
+    setAddStart(''); setAddRoomNo('');
     setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
     setTherapistId(NONE); setResourceId(NONE);
   }
@@ -371,6 +377,7 @@ export function OrderWorkspace({
         discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
         discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
         scheduled_start: addStart ? `${order.service_date}T${addStart}:00+08:00` : null,
+        external_room_no: dispatch ? (addRoomNo.trim() || null) : null,
       });
       if (r.ok) { closeItemForm(); toast.success('Service added'); router.refresh(); }
       else toast.error(r.error);
@@ -399,6 +406,7 @@ export function OrderWorkspace({
           discount_class_id: sourceDiscountLocked ? defaultDiscountId : d.discountId,
           discount_override: ['DIS-91', 'DIS-99'].includes(code) ? Number(d.discountOverride || 0) : null,
           scheduled_start: d.start ? `${order.service_date}T${d.start}:00+08:00` : null,
+          external_room_no: dispatch ? (d.roomNo.trim() || null) : null,
         });
         if (!r.ok) { toast.error(r.error); return; }
       }
@@ -794,7 +802,7 @@ export function OrderWorkspace({
                       <span>Duration</span>
                       <span>Start</span>
                       <span>Therapist</span>
-                      <span>Station</span>
+                      <span>{dispatch ? 'Room' : 'Station'}</span>
                       <span>Discount</span>
                       <span>Status</span>
                       <span className="text-right">Amount</span>
@@ -830,6 +838,7 @@ export function OrderWorkspace({
                                 guestGender={guestGenderOf(c)}
                                 sourceDiscountLocked={sourceDiscountLocked}
                                 defaultDiscountId={defaultDiscountId}
+                                dispatch={dispatch}
                                 disabled={pending}
                               />
                               <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
@@ -874,7 +883,7 @@ export function OrderWorkspace({
                               {it.therapist_name ?? 'Unassigned'}
                             </span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
-                              {it.station_branch_code ? `${it.station_branch_code} · ` : ''}{it.station_name ?? '—'}
+                              {dispatch ? (it.external_room_no || '—') : <>{it.station_branch_code ? `${it.station_branch_code} · ` : ''}{it.station_name ?? '—'}</>}
                               {isCleaning && (
                                 <span className="mt-0.5 block">
                                   <ActionBtn tip="Free the bed now, before the cleanup buffer ends." variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => doReleaseBed(it.id)} disabled={pending}>Ready now</ActionBtn>
@@ -925,11 +934,12 @@ export function OrderWorkspace({
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
                       <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
                         <ServiceLineEditor
-                          draft={{ groupSel, svcId, start: addStart, therapistId, resourceId, discountId, discountOverride }}
+                          draft={{ groupSel, svcId, start: addStart, therapistId, resourceId, roomNo: addRoomNo, discountId, discountOverride }}
                           onChange={(patch) => {
                             if (patch.groupSel !== undefined) setGroupSel(patch.groupSel);
                             if (patch.svcId !== undefined) setSvcId(patch.svcId);
                             if (patch.start !== undefined) setAddStart(patch.start);
+                            if (patch.roomNo !== undefined) setAddRoomNo(patch.roomNo);
                             if (patch.therapistId !== undefined) setTherapistId(patch.therapistId);
                             if (patch.resourceId !== undefined) setResourceId(patch.resourceId);
                             if (patch.discountId !== undefined) setDiscountId(patch.discountId);
@@ -946,6 +956,7 @@ export function OrderWorkspace({
                           guestGender={guestGenderOf(c)}
                           sourceDiscountLocked={sourceDiscountLocked}
                           defaultDiscountId={defaultDiscountId}
+                          dispatch={dispatch}
                           disabled={pending}
                         />
                         <span />

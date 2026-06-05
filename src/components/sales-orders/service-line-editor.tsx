@@ -25,6 +25,7 @@ export interface LineDraft {
   start: string; // HH:mm booked start, '' = none
   therapistId: string; // NONE = unassigned
   resourceId: string; // NONE = none
+  roomNo: string; // dispatch room no
   discountId: string;
   discountOverride: string;
 }
@@ -55,6 +56,7 @@ export function ServiceLineEditor({
   sourceDiscountLocked,
   defaultDiscountId,
   disabled,
+  dispatch,
 }: {
   draft: LineDraft;
   onChange: (patch: Partial<LineDraft>) => void;
@@ -70,6 +72,7 @@ export function ServiceLineEditor({
   sourceDiscountLocked: boolean;
   defaultDiscountId: string;
   disabled?: boolean;
+  dispatch?: boolean;
 }) {
   const groupOptions = [...new Set(serviceItems.map((s) => s.group))].sort().map((g) => ({ value: g, label: g }));
   const variantOptions = serviceItems
@@ -174,6 +177,9 @@ export function ServiceLineEditor({
         </Select>
       </div>
       <div className="min-w-0">
+        {dispatch ? (
+          <Input type="text" className="h-8 w-full" value={draft.roomNo} onChange={(e) => onChange({ roomNo: e.target.value })} placeholder="Room no" disabled={disabled} />
+        ) : (
         <Select items={resItems} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -190,6 +196,7 @@ export function ServiceLineEditor({
             )}
           </SelectContent>
         </Select>
+        )}
       </div>
       <div className="min-w-0">
         <Select items={discOptions} value={sourceDiscountLocked ? defaultDiscountId : draft.discountId} onValueChange={(v) => v && onChange({ discountId: v })} disabled={disabled || sourceDiscountLocked}>

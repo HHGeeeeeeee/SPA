@@ -49,7 +49,7 @@ async function fetchData(id: string) {
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
         service_item_id, discount_class_id,
-        therapist_id, resource_id, duration_minutes, scheduled_start, actual_start, actual_end, bed_released_at, interruption_reason,
+        therapist_id, resource_id, external_room_no, duration_minutes, scheduled_start, actual_start, actual_end, bed_released_at, interruption_reason,
         service:service_items ( name, prep_before_minutes, cleanup_after_minutes ),
         therapist:employees ( name, home_branch:branches!employees_home_branch_id_fkey ( code ) ),
         resource:resources ( resource_name, branch:branches!resources_branch_id_fkey ( code ) )
@@ -279,6 +279,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       station_name: resource?.resource_name ?? null,
       station_branch_code: resource ? one(resource.branch)?.code ?? null : null,
       scheduled_start: it.scheduled_start ?? null,
+      external_room_no: it.external_room_no ?? null,
       duration_minutes: it.duration_minutes,
       prep_minutes: svc?.prep_before_minutes ?? 0,
       cleanup_minutes: svc?.cleanup_after_minutes ?? 0,
@@ -469,6 +470,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           paid_cents: order.paid_cents,
           editable,
           service_date: order.service_date,
+          service_location_type: order.service_location_type,
         }}
         customers={customers}
         items={items}

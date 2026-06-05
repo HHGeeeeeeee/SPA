@@ -187,11 +187,24 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
   const isServicePosition = (code: string | null): boolean =>
     !!code && (code.startsWith('MASSAGE_') || code.startsWith('HAIR_') || code.startsWith('NAIL_'));
 
+  // Multi-branch: the selected branch + its therapist-sharing group (∩ access),
+  // so the group's therapists show on one board, grouped by Branch.
+  const { data: brRow } = await supabase.from('branches').select('therapist_share_group').eq('id', branchId).maybeSingle();
+  const grp = brRow?.therapist_share_group ?? null;
+  const { data: grpBranches } = grp
+    ? await supabase.from('branches').select('id, code').eq('therapist_share_group', grp).eq('active', true).order('code')
+    : await supabase.from('branches').select('id, code').eq('id', branchId);
+  const allowedBr = await getAllowedBranchIds();
+  const brList = (grpBranches ?? []).filter((b) => allowedBr.has(b.id));
+  if (brList.length === 0) brList.push({ id: branchId, code: '—' });
+  const branchIds = new Set(brList.map((b) => b.id));
+  const branchCodeById = new Map(brList.map((b) => [b.id, b.code]));
+
   const [shiftRes, itemsRes] = await Promise.all([
     supabase
       .from('employee_shifts')
-      .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
-      .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
+      .select('employee_id, branch_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
+      .in('branch_id', [...branchIds]).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
       .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type )')
@@ -209,7 +222,7 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
     const ss = timeToMin(s.shift_start); const se = timeToMin(s.shift_end);
     const startMin = ss == null ? null : place(ss);
     const endMin = se == null ? null : place(se);
-    rowsById.set(s.employee_id, { id: s.employee_id, name: e?.name ?? '—', type: positionCode ?? '_other', shiftStartMin: startMin, shiftEndMin: endMin });
+    rowsById.set(s.employee_id, { id: s.employee_id, name: e?.name ?? '—', type: positionCode ?? '_other', shiftStartMin: startMin, shiftEndMin: endMin, branch: branchCodeById.get(s.branch_id) ?? '—', zone: '' });
     if (startMin != null && endMin != null) {
       staffShifts.push({ id: s.employee_id, name: e?.name ?? '—', code: e?.employee_code ?? '', positionCode, startMin, endMin });
     }
@@ -218,7 +231,7 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
   const blocks: BoardBlock[] = [];
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
-    if (!ord || ord.branch_id !== branchId || ord.service_date !== day || ord.status === 'void') continue;
+    if (!ord || !branchIds.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
     const dur = it.duration_minutes ?? 60;
     let startMin: number;
     let endMin: number;
@@ -238,7 +251,7 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
     const therapistId = it.therapist_id ?? null;
     // A booking whose therapist isn't on shift today still needs a row to show on.
     if (therapistId && !rowsById.has(therapistId)) {
-      rowsById.set(therapistId, { id: therapistId, name: one(it.therapist)?.name ?? 'Therapist', type: '_other' });
+      rowsById.set(therapistId, { id: therapistId, name: one(it.therapist)?.name ?? 'Therapist', type: '_other', branch: '—', zone: '' });
     }
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: therapistId,

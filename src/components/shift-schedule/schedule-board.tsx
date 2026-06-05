@@ -528,49 +528,36 @@ export function ScheduleBoard({
     axis === 'person' ? (POSITION_LABEL[t] ?? t.replace(/_/g, ' ')) : (STATION_GROUP_LABEL[t] ?? t.replace(/_/g, ' '));
   const groupIcon = (t: string): React.ComponentType<{ className?: string }> =>
     axis === 'person' ? Users : (STATION_GROUP_ICON[t] ?? BedDouble);
-  const bedsByType = (() => {
-    const groups = new Map<string, BoardBed[]>();
-    for (const b of beds) {
-      const arr = groups.get(b.type) ?? [];
-      arr.push(b);
-      groups.set(b.type, arr);
-    }
-    const ordered: { type: string; label: string; Icon: React.ComponentType<{ className?: string }>; rows: BoardBed[] }[] = [];
-    for (const t of groupOrder) {
-      const rows = groups.get(t);
-      if (rows && rows.length) { ordered.push({ type: t, label: groupLabel(t), Icon: groupIcon(t), rows }); groups.delete(t); }
-    }
-    for (const [type, rows] of groups) {
-      ordered.push({ type, label: groupLabel(type), Icon: groupIcon(type), rows });
-    }
-    return ordered;
-  })();
 
   // Bed board nesting: Branch > Type > Zone > Station. STATION_ORDER orders the
   // types; branches + zones sort alphabetically. (The person board keeps the flat
   // position grouping above.)
-  const bedTree = axis === 'bed' ? (() => {
+  const groupTree = (() => {
     const byBranch = new Map<string, BoardBed[]>();
     for (const b of beds) { const k = b.branch ?? '—'; if (!byBranch.has(k)) byBranch.set(k, []); byBranch.get(k)!.push(b); }
     return [...byBranch.keys()].sort().map((branch) => {
       const rows = byBranch.get(branch)!;
       const byType = new Map<string, BoardBed[]>();
       for (const b of rows) { if (!byType.has(b.type)) byType.set(b.type, []); byType.get(b.type)!.push(b); }
-      const typeKeys = [...STATION_ORDER.filter((t) => byType.has(t)), ...[...byType.keys()].filter((t) => !(STATION_ORDER as readonly string[]).includes(t))];
+      const typeKeys = [...groupOrder.filter((t) => byType.has(t)), ...[...byType.keys()].filter((t) => !(groupOrder as readonly string[]).includes(t))];
       return {
         branch, count: rows.length,
         types: typeKeys.map((type) => {
           const trows = byType.get(type)!;
-          const byZone = new Map<string, BoardBed[]>();
-          for (const b of trows) { const z = b.zone ?? ''; if (!byZone.has(z)) byZone.set(z, []); byZone.get(z)!.push(b); }
-          return {
-            type, label: groupLabel(type), Icon: groupIcon(type), count: trows.length,
-            zones: [...byZone.keys()].sort().map((zone) => ({ zone, count: byZone.get(zone)!.length, rows: byZone.get(zone)! })),
-          };
+          // Bed axis nests a Zone level; person axis has no zones (people are the leaves).
+          let zones: { zone: string; count: number; rows: BoardBed[] }[];
+          if (axis === 'bed') {
+            const byZone = new Map<string, BoardBed[]>();
+            for (const b of trows) { const z = b.zone ?? ''; if (!byZone.has(z)) byZone.set(z, []); byZone.get(z)!.push(b); }
+            zones = [...byZone.keys()].sort().map((zone) => ({ zone, count: byZone.get(zone)!.length, rows: byZone.get(zone)! }));
+          } else {
+            zones = [{ zone: '', count: trows.length, rows: trows }];
+          }
+          return { type, label: groupLabel(type), Icon: groupIcon(type), count: trows.length, zones };
         }),
       };
     });
-  })() : null;
+  })();
 
   // Per-type station free-now @ hoverMin. A station is "busy" if any block on
   // it overlaps [start − prep, end + cleanup]; everything else is free.
@@ -811,8 +798,8 @@ export function ScheduleBoard({
 
           {beds.length === 0 ? (
             <div className="p-8 text-center text-sm font-semibold text-muted-foreground">{axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}</div>
-          ) : axis === 'bed' && bedTree ? (
-            bedTree.map((bg) => {
+          ) : (
+            groupTree.map((bg) => {
               const bKey = `b:${bg.branch}`;
               const bCol = collapsedTypes.has(bKey);
               return (
@@ -839,49 +826,6 @@ export function ScheduleBoard({
                       </Fragment>
                     );
                   })}
-                </Fragment>
-              );
-            })
-          ) : (
-            bedsByType.map((group) => {
-              const isCollapsed = collapsedTypes.has(group.type);
-              const Icon = group.Icon;
-              return (
-                <Fragment key={group.type}>
-                  {/* Type-group header — chevron toggles collapse for this
-                      group only. Spans the full row so it stays aligned with
-                      the timeline; sticky-left on the label keeps it visible
-                      while scrubbing horizontally. */}
-                  <div className="flex border-b border-border bg-muted/40">
-                    <button
-                      type="button"
-                      onClick={() => toggleType(group.type)}
-                      className="w-40 shrink-0 p-2 flex items-center gap-1.5 sticky left-0 z-20 bg-muted/40 text-left hover:bg-muted/60 transition-colors"
-                    >
-                      {isCollapsed
-                        ? <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                        : <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />}
-                      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground truncate">
-                        {group.label}
-                      </span>
-                      <span className="ml-auto pr-1 font-extrabold tabular text-xs text-foreground/80">{group.rows.length}</span>
-                    </button>
-                    <div className="flex-1" style={{ minWidth: trackWidth }} />
-                  </div>
-                  {!isCollapsed && group.rows.map((bed) => (
-                    <BedRow
-                      key={bed.id}
-                      bed={bed}
-                      blocks={blocksByBed.get(bed.id) ?? []}
-                      windowStartMin={windowStartMin}
-                      trackWidth={trackWidth}
-                      hours={hours}
-                      nowMin={nowMin}
-                      onOpen={openBlock}
-                      onEmptyClick={onEmptyClick}
-                    />
-                  ))}
                 </Fragment>
               );
             })

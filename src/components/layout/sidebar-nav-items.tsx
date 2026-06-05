@@ -81,6 +81,7 @@ export const mainNavItems: NavItem[] = [
       // close steps; staff only owns the Cash Count.
       { label: 'End of Day', href: '/reconciliation/end-of-day', section: 'Daily Close', managerOnly: true },
       { label: 'Shift Cash Count', href: '/reconciliation/cash', section: 'Daily Close' },
+      { label: 'Shift Remittance', href: '/reconciliation/shift-remittance', section: 'Daily Close' },
       { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm', section: 'Daily Close', managerOnly: true },
       // Periodic trio — scheduled rhythm rather than daily must-do: Tip and
       // Commission settle semi-monthly, AR cadence depends on each billing

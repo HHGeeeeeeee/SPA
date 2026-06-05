@@ -8,6 +8,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
 import { getBranchShiftConfig } from '../cash/actions';
 import { isBusinessDayClosed } from '../end-of-day/actions';
+import { windowsFromConfig, formatWindow } from '../cash/shifts';
 
 export type ActionResult<T = unknown> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -66,6 +67,75 @@ export async function listShiftsForDay(branchId: string, date: string): Promise<
     varianceCents: s.variance_cents,
     varianceReason: s.variance_reason,
   }));
+}
+
+export interface ShiftRemittance {
+  label: string;
+  windowLabel: string;
+  firstOfDay: boolean;
+  shift: ShiftRow | null;     // the shifts row once opened, else null
+  revenueCents: number;       // folio revenue posted into this shift
+  cashCents: number;          // cash payments posted into this shift
+  nonCashCents: number;       // card / other payments
+  expectedCashCents: number;  // opening float + cash
+}
+
+/** Every configured shift for the branch/day (opened or not) with its folio
+ *  totals — the data the Shift Remittance page lists. Folio totals are 0 until
+ *  the posting paths land; the structure is ready for them. */
+export async function loadShiftRemittance(branchId: string, date: string): Promise<ShiftRemittance[]> {
+  const supabase = await createAuditedClient();
+  const cfg = await getBranchShiftConfig(branchId);
+  const windows = windowsFromConfig(cfg);
+
+  const { data: rows } = await supabase
+    .from('shifts')
+    .select('id, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason')
+    .eq('branch_id', branchId)
+    .eq('business_date', date);
+  const byLabel = new Map((rows ?? []).map((r) => [r.label, r]));
+
+  // Folio aggregates per opened shift (revenue + cash/non-cash payments).
+  const agg = new Map<string, { revenue: number; cash: number; nonCash: number }>();
+  const shiftIds = (rows ?? []).map((r) => r.id);
+  if (shiftIds.length > 0) {
+    const { data: lines } = await supabase
+      .from('folio_lines')
+      .select('shift_id, kind, amount_cents, method:payment_methods!folio_lines_payment_method_id_fkey ( code )')
+      .in('shift_id', shiftIds);
+    for (const l of lines ?? []) {
+      const a = agg.get(l.shift_id) ?? { revenue: 0, cash: 0, nonCash: 0 };
+      if (l.kind === 'revenue') a.revenue += l.amount_cents;
+      else if (l.kind === 'payment') {
+        if ((one(l.method)?.code ?? '').toLowerCase() === 'cash') a.cash += l.amount_cents;
+        else a.nonCash += l.amount_cents;
+      }
+      agg.set(l.shift_id, a);
+    }
+  }
+
+  return windows.map((w, i) => {
+    const row = byLabel.get(w.name) ?? null;
+    const a = (row && agg.get(row.id)) || { revenue: 0, cash: 0, nonCash: 0 };
+    const shift: ShiftRow | null = row
+      ? {
+          id: row.id, label: row.label, status: row.status as 'open' | 'closed',
+          openedAt: row.opened_at, closedAt: row.closed_at,
+          openingFloatCents: row.opening_float_cents, closingCountCents: row.closing_count_cents,
+          varianceCents: row.variance_cents, varianceReason: row.variance_reason,
+        }
+      : null;
+    return {
+      label: w.name,
+      windowLabel: formatWindow(w.start, w.end),
+      firstOfDay: i === 0,
+      shift,
+      revenueCents: a.revenue,
+      cashCents: a.cash,
+      nonCashCents: a.nonCash,
+      expectedCashCents: (shift?.openingFloatCents ?? 0) + a.cash,
+    };
+  });
 }
 
 /** The branch's currently-open shift, or null. This is the "home" a posting

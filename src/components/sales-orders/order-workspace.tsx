@@ -61,7 +61,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_9.5rem_9.5rem_9rem_5.5rem_5.5rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_5rem_9.5rem_9.5rem_9rem_5.5rem_5.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -75,6 +75,7 @@ interface OrderItem {
   resource_id: string | null;
   station_name: string | null;
   station_branch_code: string | null;
+  scheduled_start: string | null;
   duration_minutes: number | null;
   prep_minutes: number;
   cleanup_minutes: number;
@@ -123,6 +124,7 @@ interface Props {
     total_cents: number;
     paid_cents: number;
     editable: boolean;
+    service_date: string;
   };
   customers: OrderCustomer[];
   items: OrderItem[];
@@ -163,6 +165,10 @@ const GENDER_OPTS = [
 
 function hm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
+}
+// ISO → 24h HH:mm in Manila time (for the <input type="time"> + the Start cell).
+function toHHmm(ts: string | null): string {
+  return ts ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts)) : '';
 }
 
 // Time window for a service line: actual once finished, else the projected end
@@ -245,6 +251,7 @@ export function OrderWorkspace({
   const defaultDiscountId = (sourceDefaultValid ? sourceDefaultDiscountId! : null) ?? noDiscount?.id ?? discountClasses[0]?.id ?? '';
   const [discountId, setDiscountId] = useState(defaultDiscountId);
   const [discountOverride, setDiscountOverride] = useState('');
+  const [addStart, setAddStart] = useState('');
   const selectedDiscountCode = discountClasses.find((d) => d.id === discountId)?.code ?? '';
   const needsDiscountAmount = ['DIS-91', 'DIS-99'].includes(selectedDiscountCode);
 
@@ -256,6 +263,7 @@ export function OrderWorkspace({
   const draftFromItem = (it: OrderItem): LineDraft => ({
     groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group ?? '',
     svcId: it.service_item_id ?? '',
+    start: toHHmm(it.scheduled_start),
     therapistId: it.therapist_id ?? NONE,
     resourceId: it.resource_id ?? NONE,
     discountId: it.discount_class_id ?? defaultDiscountId,
@@ -269,7 +277,7 @@ export function OrderWorkspace({
     if (!d) return false;
     const b = draftFromItem(it);
     return d.svcId !== b.svcId || d.therapistId !== b.therapistId || d.resourceId !== b.resourceId
-      || d.discountId !== b.discountId || d.discountOverride !== b.discountOverride;
+      || d.discountId !== b.discountId || d.discountOverride !== b.discountOverride || d.start !== b.start;
   };
   const guestGenderOf = (c: OrderCustomer): string => (c.gender === 'M' || c.gender === 'F' ? c.gender : ANY_GENDER);
   const isLineEditable = (it: OrderItem): boolean => order.editable && ['unassigned', 'scheduled'].includes(it.status);
@@ -346,6 +354,7 @@ export function OrderWorkspace({
 
   function closeItemForm() {
     setActiveCustomer(null);
+    setAddStart('');
     setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
     setTherapistId(NONE); setResourceId(NONE);
   }
@@ -361,6 +370,7 @@ export function OrderWorkspace({
         resource_id: resourceId === NONE ? null : resourceId,
         discount_class_id: sourceDiscountLocked ? defaultDiscountId : discountId,
         discount_override: needsDiscountAmount ? Number(discountOverride || 0) : null,
+        scheduled_start: addStart ? `${order.service_date}T${addStart}:00+08:00` : null,
       });
       if (r.ok) { closeItemForm(); toast.success('Service added'); router.refresh(); }
       else toast.error(r.error);
@@ -388,6 +398,7 @@ export function OrderWorkspace({
           resource_id: d.resourceId === NONE ? null : d.resourceId,
           discount_class_id: sourceDiscountLocked ? defaultDiscountId : d.discountId,
           discount_override: ['DIS-91', 'DIS-99'].includes(code) ? Number(d.discountOverride || 0) : null,
+          scheduled_start: d.start ? `${order.service_date}T${d.start}:00+08:00` : null,
         });
         if (!r.ok) { toast.error(r.error); return; }
       }
@@ -781,6 +792,7 @@ export function OrderWorkspace({
                     <div className={`${SERVICE_GRID} border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground`}>
                       <span>Service</span>
                       <span>Duration</span>
+                      <span>Start</span>
                       <span>Therapist</span>
                       <span>Station</span>
                       <span>Discount</span>
@@ -857,6 +869,7 @@ export function OrderWorkspace({
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
                               {tw && <span className="block tabular opacity-80">{tw}</span>}
                             </span>
+                            <span className="text-xs font-medium text-muted-foreground tabular truncate">{toHHmm(it.actual_start ?? it.scheduled_start) || '—'}</span>
                             <span className="font-medium text-muted-foreground truncate">
                               {it.therapist_name ?? 'Unassigned'}
                             </span>
@@ -912,10 +925,11 @@ export function OrderWorkspace({
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
                       <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
                         <ServiceLineEditor
-                          draft={{ groupSel, svcId, therapistId, resourceId, discountId, discountOverride }}
+                          draft={{ groupSel, svcId, start: addStart, therapistId, resourceId, discountId, discountOverride }}
                           onChange={(patch) => {
                             if (patch.groupSel !== undefined) setGroupSel(patch.groupSel);
                             if (patch.svcId !== undefined) setSvcId(patch.svcId);
+                            if (patch.start !== undefined) setAddStart(patch.start);
                             if (patch.therapistId !== undefined) setTherapistId(patch.therapistId);
                             if (patch.resourceId !== undefined) setResourceId(patch.resourceId);
                             if (patch.discountId !== undefined) setDiscountId(patch.discountId);

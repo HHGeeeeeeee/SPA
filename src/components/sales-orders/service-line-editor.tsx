@@ -22,6 +22,7 @@ const money0 = (cents: number | null) => (cents == null ? '—' : (cents / 100).
 export interface LineDraft {
   groupSel: string;
   svcId: string;
+  start: string; // HH:mm booked start, '' = none
   therapistId: string; // NONE = unassigned
   resourceId: string; // NONE = none
   discountId: string;
@@ -143,6 +144,9 @@ export function ServiceLineEditor({
           <SelectTrigger className="h-8 w-full"><SelectValue placeholder={draft.groupSel ? 'Duration' : '—'} /></SelectTrigger>
           <SelectContent>{variantOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
+      </div>
+      <div className="min-w-0">
+        <Input type="time" className="h-8 w-full" value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
       </div>
       <div className="min-w-0">
         <Select items={empItems} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>

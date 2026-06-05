@@ -855,6 +855,9 @@ const updateItemSchema = z.object({
   resource_id: z.string().uuid().optional().nullable(),
   discount_class_id: z.string().uuid(),
   discount_override: z.coerce.number().min(0).optional().nullable(),
+  // Booked start time (ISO). Edited inline on the order's service table; null
+  // clears it (a timed booking drops back to "no time yet").
+  scheduled_start: z.string().optional().nullable(),
 }).refine((d) => d.service_item_id || d.service_category_id, {
   message: 'Pick a service or at least a service category',
 });
@@ -877,7 +880,10 @@ export async function updateOrderItem(input: unknown): Promise<ActionResult> {
   const r = await buildLineWrite(supabase, d);
   if ('error' in r) return { ok: false, error: r.error };
 
-  const { error } = await supabase.from('order_items').update(r.patch).eq('id', d.id);
+  // The inline table edits the booked start time too; the rest of the patch
+  // (service/therapist/station/discount/price) comes from buildLineWrite.
+  const patch = { ...r.patch, scheduled_start: d.scheduled_start ?? null };
+  const { error } = await supabase.from('order_items').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);
   revalidatePath(`/sales-orders/${d.order_id}`);

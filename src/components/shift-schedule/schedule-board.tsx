@@ -15,6 +15,14 @@ import {
 } from '@dnd-kit/core';
 
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
@@ -249,16 +257,11 @@ function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windo
       className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
       title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}`}
     >
-      {block.guest && (
-        <span className="truncate font-bold">
-          {block.pax && block.pax > 1 ? <Users className="mr-0.5 -mt-0.5 inline size-3" /> : null}
-          {block.guest}
-          {block.pax && block.pax > 1 ? <span className="ml-1 font-extrabold">· {block.pax}p</span> : null}
-        </span>
-      )}
-      <span className={`truncate ${block.guest ? 'font-semibold opacity-90' : 'font-bold'}`}>{block.line1}</span>
-      {block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>}
-      <span className="truncate font-semibold tabular-nums opacity-70">{hhmm(block.startMin)}–{hhmm(block.endMin)}</span>
+      {/* One line: guest · service · therapist. Full detail (pax / time / status)
+          lives in the title tooltip and the click popover. */}
+      <span className="truncate font-semibold">
+        {block.guest ? `${block.guest} · ` : ''}{block.line1}{block.line2 ? ` · ${block.line2}` : ''}
+      </span>
     </div>
   );
 }
@@ -415,6 +418,8 @@ export function ScheduleBoard({
   // (confirmed, so it holds the clicked bed/time). Walk-ins use the same flow.
   const [addKey, setAddKey] = useState(0);
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
+  // Block-detail popover (opened by clicking a booking; "Open order" navigates).
+  const [detail, setDetail] = useState<BoardBlock | null>(null);
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -558,8 +563,10 @@ export function ScheduleBoard({
   // works when the new popup is hidden.
   void bedCount;
 
+  // Click a block → a small detail popover (Cloudbeds-style). It carries an
+  // "Open order" button; we no longer jump straight to the order on click.
   function openBlock(b: BoardBlock) {
-    if (b.orderId) router.push(`/sales-orders/${b.orderId}`);
+    setDetail(b);
   }
 
   function onEmptyClick(bedId: string, min: number) {
@@ -822,6 +829,43 @@ export function ScheduleBoard({
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
         />
       )}
+
+      {/* Click-a-block detail popover — summary first, "Open order" to act. */}
+      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) setDetail(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-bold">{detail?.guest || detail?.line1 || 'Booking'}</DialogTitle>
+          </DialogHeader>
+          {detail && (
+            <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-sm">
+              {detail.guest && (
+                <>
+                  <dt className="font-medium text-muted-foreground">Guest</dt>
+                  <dd className="font-semibold">{detail.guest}{detail.pax && detail.pax > 1 ? ` · ${detail.pax} pax` : ''}</dd>
+                </>
+              )}
+              <dt className="font-medium text-muted-foreground">Service</dt>
+              <dd className="font-semibold">{detail.line1}</dd>
+              {detail.line2 && (
+                <>
+                  <dt className="font-medium text-muted-foreground">{axis === 'person' ? 'Detail' : 'Therapist'}</dt>
+                  <dd className="font-semibold">{detail.line2}</dd>
+                </>
+              )}
+              <dt className="font-medium text-muted-foreground">Time</dt>
+              <dd className="font-semibold tabular-nums">{detail.untimed ? 'No time yet' : `${hhmm(detail.startMin)}–${hhmm(detail.endMin)}`}</dd>
+              <dt className="font-medium text-muted-foreground">Status</dt>
+              <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[detail.variant] ?? detail.variant}</dd>
+            </dl>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDetail(null)}>Close</Button>
+            {detail?.orderId && (
+              <Button onClick={() => router.push(`/sales-orders/${detail.orderId}`)}>Open order</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </DndContext>
   );

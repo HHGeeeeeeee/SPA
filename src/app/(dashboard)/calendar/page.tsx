@@ -34,6 +34,9 @@ function tsToMin(iso: string): number {
 // Interactive Station board (15-min): beds as rows, with every scheduled /
 // in-service / done order item on its bed, pinned reservations as bed blocks,
 // and unplaced reservations in the "To place" lane (drag onto a bed).
+// Service names bake the duration in as "… 90min"; show it compactly as "(90)".
+const fmtSvc = (name: string | null | undefined): string => (name ?? 'Service').replace(/s*(d+)s*min/i, ' ($1)');
+
 async function fetchStationBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
   const supabase = createServiceClient();
   const branchId = branchIds[0];
@@ -107,7 +110,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: it.resource_id,
       guest: one(it.guest)?.customer_name ?? undefined, pax,
-      line1: one(it.service)?.name ?? 'Service', line2: one(it.therapist)?.name ?? undefined,
+      line1: fmtSvc(one(it.service)?.name), line2: one(it.therapist)?.name ?? undefined,
       startMin, endMin, durationMin: dur,
       prepMin: one(it.service)?.prep_before_minutes ?? 0,
       cleanupMin: one(it.service)?.cleanup_after_minutes ?? 0,
@@ -130,7 +133,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: null,
       guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
-      line1: one(it.service)?.name ?? one(it.category)?.name ?? 'Service',
+      line1: fmtSvc(one(it.service)?.name ?? one(it.category)?.name),
       line2: one(it.therapist)?.name ?? undefined,
       startMin, endMin, durationMin: dur,
       prepMin: one(it.service)?.prep_before_minutes ?? 0,
@@ -244,7 +247,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: therapistId,
       guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
-      line1: one(it.service)?.name ?? one(it.category)?.name ?? 'Service',
+      line1: fmtSvc(one(it.service)?.name ?? one(it.category)?.name),
       // Dispatch (external hotel) booking — no in-house station; flag it + show
       // the room so the People board reads it as off-site, not a bedless gap.
       line2: ord.service_location_type === 'external_hotel'

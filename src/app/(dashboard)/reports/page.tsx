@@ -52,10 +52,11 @@ async function fetchData() {
       .not('status', 'in', '("void")')
       .is('deleted_at', null),
     supabase
-      .from('payments')
-      .select(`amount_cents, paid_at, method:payment_methods ( code, display_name )`)
-      .gte('paid_at', `${from}T00:00:00`)
-      .lte('paid_at', `${to}T23:59:59`),
+      .from('folio_lines')
+      .select('amount_cents, kind, posted_at, method:payment_methods!folio_lines_payment_method_id_fkey ( code, display_name )')
+      .in('kind', ['payment', 'refund'])
+      .gte('posted_at', from + 'T00:00:00')
+      .lte('posted_at', to + 'T23:59:59'),
   ]);
   if (ordRes.error) throw new Error(ordRes.error.message);
   if (payRes.error) throw new Error(payRes.error.message);
@@ -86,7 +87,7 @@ export default async function ReportsPage() {
     const key = m?.code ?? 'unknown';
     if (!byMethod.has(key)) byMethod.set(key, { name: m?.display_name ?? key, total: 0, count: 0 });
     const e = byMethod.get(key)!;
-    e.total += p.amount_cents;
+    e.total += (p.kind === 'refund' ? -p.amount_cents : p.amount_cents);
     e.count += 1;
   }
   const methodList = [...byMethod.values()].sort((a, b) => b.total - a.total);

@@ -55,7 +55,7 @@ async function loadForPdf(batchNbr: string): Promise<PdfData | null> {
       branch:branches!orders_branch_id_fkey ( code, name ),
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, default_payment_method_id ),
       order_customers ( id ),
-      payments ( amount_cents, method:payment_methods ( code ) ),
+      folio_lines ( amount_cents, kind, method:payment_methods ( code ) ),
       tips ( amount_cents ),
       total_cents
     `)
@@ -65,7 +65,7 @@ async function loadForPdf(batchNbr: string): Promise<PdfData | null> {
       branch: { code: string; name: string } | { code: string; name: string }[] | null;
       billing: { code: string; name: string; default_payment_method_id: string | null } | { code: string; name: string; default_payment_method_id: string | null }[] | null;
       order_customers: { id: string }[] | null;
-      payments: { amount_cents: number; method: { code: string } | { code: string }[] | null }[] | null;
+      folio_lines: { amount_cents: number; kind: string; method: { code: string } | { code: string }[] | null }[] | null;
       tips: { amount_cents: number }[] | null;
       total_cents: number;
     }> | null };
@@ -77,9 +77,9 @@ async function loadForPdf(batchNbr: string): Promise<PdfData | null> {
     const b = one<{ code: string; name: string; default_payment_method_id: string | null }>(o.billing);
     const isAR = !!arId && b?.default_payment_method_id === arId;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pays = (o.payments ?? []) as any[];
+    const pays = ((o.folio_lines ?? []) as any[]).filter((p) => ['payment', 'refund'].includes(p.kind));
     const sumByCode = (code: string) =>
-      pays.filter((p) => one<{ code: string }>(p.method)?.code === code).reduce((s, p) => s + p.amount_cents, 0);
+      pays.filter((p) => one<{ code: string }>(p.method)?.code === code).reduce((s, p) => s + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents), 0);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tip = ((o.tips ?? []) as any[]).reduce((s, t) => s + (t.amount_cents ?? 0), 0);
     return {

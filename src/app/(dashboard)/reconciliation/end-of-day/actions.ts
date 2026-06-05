@@ -69,7 +69,7 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
 
   const { data: orders } = await supabase
     .from('orders')
-    .select('order_no, status, total_cents, paid_cents, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id ), order_items ( final_amount_cents, status, service:service_items!order_items_service_item_id_fkey ( service_category_id ) ), payments ( amount_cents, method:payment_methods ( code, display_name ) )')
+    .select('order_no, status, total_cents, paid_cents, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id ), order_items ( final_amount_cents, status, service:service_items!order_items_service_item_id_fkey ( service_category_id ) ), folio_lines ( amount_cents, kind, method:payment_methods ( code, display_name ) )')
     .eq('branch_id', branchId).eq('service_date', date).is('deleted_at', null).neq('status', 'void');
 
   const isAR = (o: { billing: unknown }) => !!arId && one<{ default_payment_method_id: string | null }>(o.billing as never)?.default_payment_method_id === arId;
@@ -109,9 +109,10 @@ export async function loadEod(branchId: string, date: string): Promise<EodView> 
       const name = (cid && catName.get(cid)) || 'Service';
       revenueByCat.set(name, (revenueByCat.get(name) ?? 0) + (it.final_amount_cents ?? 0));
     }
-    for (const p of o.payments ?? []) {
+    for (const p of o.folio_lines ?? []) {
+      if (!['payment', 'refund'].includes(p.kind)) continue;
       const label = one<{ display_name: string }>(p.method)?.display_name ?? 'Payment';
-      payByMethod.set(label, (payByMethod.get(label) ?? 0) + p.amount_cents);
+      payByMethod.set(label, (payByMethod.get(label) ?? 0) + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents));
     }
     if (isAR(o)) arPaymentCents += o.total_cents;
   }

@@ -1527,6 +1527,7 @@ export type Database = {
           id: string
           kind: string
           note: string | null
+          order_customer_id: string | null
           order_id: string
           order_item_id: string | null
           payment_method_id: string | null
@@ -1546,6 +1547,7 @@ export type Database = {
           id?: string
           kind: string
           note?: string | null
+          order_customer_id?: string | null
           order_id: string
           order_item_id?: string | null
           payment_method_id?: string | null
@@ -1565,6 +1567,7 @@ export type Database = {
           id?: string
           kind?: string
           note?: string | null
+          order_customer_id?: string | null
           order_id?: string
           order_item_id?: string | null
           payment_method_id?: string | null
@@ -1582,6 +1585,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_order_customer_id_fkey"
+            columns: ["order_customer_id"]
+            isOneToOne: false
+            referencedRelation: "order_customers"
             referencedColumns: ["id"]
           },
           {
@@ -2426,86 +2436,6 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: []
-      }
-      payments: {
-        Row: {
-          amount_cents: number
-          auth_code: string | null
-          card_last4: string | null
-          created_at: string
-          created_by: string | null
-          id: string
-          order_customer_id: string | null
-          order_id: string | null
-          paid_at: string
-          payment_method_id: string
-          payment_ref: string | null
-          stored_value_card_id: string | null
-          updated_at: string
-          updated_by: string | null
-        }
-        Insert: {
-          amount_cents: number
-          auth_code?: string | null
-          card_last4?: string | null
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          order_customer_id?: string | null
-          order_id?: string | null
-          paid_at: string
-          payment_method_id: string
-          payment_ref?: string | null
-          stored_value_card_id?: string | null
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Update: {
-          amount_cents?: number
-          auth_code?: string | null
-          card_last4?: string | null
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          order_customer_id?: string | null
-          order_id?: string | null
-          paid_at?: string
-          payment_method_id?: string
-          payment_ref?: string | null
-          stored_value_card_id?: string | null
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "fk_payments_svc"
-            columns: ["stored_value_card_id"]
-            isOneToOne: false
-            referencedRelation: "stored_value_cards"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_order_customer_id_fkey"
-            columns: ["order_customer_id"]
-            isOneToOne: false
-            referencedRelation: "order_customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_order_id_fkey"
-            columns: ["order_id"]
-            isOneToOne: false
-            referencedRelation: "orders"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_payment_method_id_fkey"
-            columns: ["payment_method_id"]
-            isOneToOne: false
-            referencedRelation: "payment_methods"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       position_business_units: {
         Row: {
@@ -3633,7 +3563,7 @@ export type Database = {
           id: string
           note: string | null
           related_order_id: string | null
-          related_payment_id: string | null
+          related_folio_line_id: string | null
           type: string
         }
         Insert: {
@@ -3646,7 +3576,7 @@ export type Database = {
           id?: string
           note?: string | null
           related_order_id?: string | null
-          related_payment_id?: string | null
+          related_folio_line_id?: string | null
           type: string
         }
         Update: {
@@ -3659,7 +3589,7 @@ export type Database = {
           id?: string
           note?: string | null
           related_order_id?: string | null
-          related_payment_id?: string | null
+          related_folio_line_id?: string | null
           type?: string
         }
         Relationships: [
@@ -3692,10 +3622,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "stored_value_transactions_related_payment_id_fkey"
-            columns: ["related_payment_id"]
+            foreignKeyName: "stored_value_transactions_related_folio_line_id_fkey"
+            columns: ["related_folio_line_id"]
             isOneToOne: false
-            referencedRelation: "payments"
+            referencedRelation: "folio_lines"
             referencedColumns: ["id"]
           },
         ]
@@ -3769,7 +3699,7 @@ export type Database = {
           id: string
           order_id: string
           order_item_id: string
-          payment_id: string
+          folio_line_id: string
           settlement_id: string | null
           status: string
           therapist_id: string
@@ -3781,7 +3711,7 @@ export type Database = {
           id?: string
           order_id: string
           order_item_id: string
-          payment_id: string
+          folio_line_id: string
           settlement_id?: string | null
           status?: string
           therapist_id: string
@@ -3793,7 +3723,7 @@ export type Database = {
           id?: string
           order_id?: string
           order_item_id?: string
-          payment_id?: string
+          folio_line_id?: string
           settlement_id?: string | null
           status?: string
           therapist_id?: string
@@ -3822,10 +3752,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "tips_payment_id_fkey"
-            columns: ["payment_id"]
+            foreignKeyName: "tips_folio_line_id_fkey"
+            columns: ["folio_line_id"]
             isOneToOne: false
-            referencedRelation: "payments"
+            referencedRelation: "folio_lines"
             referencedColumns: ["id"]
           },
           {

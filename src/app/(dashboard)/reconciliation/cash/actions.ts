@@ -95,16 +95,17 @@ async function cashSourcesCents(branchId: string, date: string, win: [number, nu
 
   // Counter cash on orders for this branch.
   const { data: counter } = await supabase
-    .from('payments')
-    .select('amount_cents, paid_at, method:payment_methods!payments_payment_method_id_fkey ( code ), order:orders!payments_order_id_fkey ( branch_id, status )')
-    .gte('paid_at', from)
-    .lt('paid_at', to);
+    .from('folio_lines')
+    .select('amount_cents, kind, posted_at, method:payment_methods!folio_lines_payment_method_id_fkey ( code ), order:orders!folio_lines_order_id_fkey ( branch_id, status )')
+    .in('kind', ['payment', 'refund'])
+    .gte('posted_at', from)
+    .lt('posted_at', to);
   const counterCashCents = (counter ?? [])
     .filter((p) => {
       const ord = one(p.order); const m = one(p.method);
-      return !!ord && ord.branch_id === branchId && ord.status !== 'void' && (m?.code ?? '').toLowerCase() === 'cash' && inWindow(p.paid_at);
+      return !!ord && ord.branch_id === branchId && ord.status !== 'void' && (m?.code ?? '').toLowerCase() === 'cash' && inWindow(p.posted_at);
     })
-    .reduce((s, p) => s + p.amount_cents, 0);
+    .reduce((s, p) => s + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents), 0);
 
   // AR (third-party) cash collected against this branch's statements.
   const { data: arPays } = await supabase
@@ -196,17 +197,11 @@ export async function loadCashDetail(branchId: string, date: string): Promise<Ca
   // Counter cash (order payments). Pull order_no + first guest name so the
   // detail row labels read like "#SO-… · Maria Santos" with no extra lookup.
   const counterP = supabase
-    .from('payments')
-    .select(`
-      id, amount_cents, paid_at,
-      method:payment_methods!payments_payment_method_id_fkey ( code ),
-      order:orders!payments_order_id_fkey (
-        id, order_no, branch_id, status,
-        customers:order_customers ( customer_name, seq_no )
-      )
-    `)
-    .gte('paid_at', from)
-    .lt('paid_at', to);
+    .from('folio_lines')
+    .select('id, amount_cents, kind, posted_at, method:payment_methods!folio_lines_payment_method_id_fkey ( code ), order:orders!folio_lines_order_id_fkey ( id, order_no, branch_id, status, customers:order_customers ( customer_name, seq_no ) )')
+    .in('kind', ['payment', 'refund'])
+    .gte('posted_at', from)
+    .lt('posted_at', to);
 
   // AR settle cash (SOA payments). Pull SOA no + billing destination code.
   const arP = supabase
@@ -232,9 +227,9 @@ export async function loadCashDetail(branchId: string, date: string): Promise<Ca
     const firstGuest = (ord.customers ?? []).slice().sort((a, b) => (a.seq_no ?? 0) - (b.seq_no ?? 0))[0];
     rows.push({
       kind: 'order',
-      paidAt: p.paid_at,
-      amountCents: p.amount_cents,
-      shiftLabel: shiftLabelFor(p.paid_at),
+      paidAt: p.posted_at,
+      amountCents: p.kind === 'refund' ? -p.amount_cents : p.amount_cents,
+      shiftLabel: shiftLabelFor(p.posted_at),
       refNo: ord.order_no,
       refLabel: firstGuest?.customer_name ?? '—',
       refId: ord.id,

@@ -40,10 +40,9 @@ async function fetchData(id: string) {
       source:customer_sources ( code, name, default_discount_class_id, discount_locked ),
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
       order_customers ( id, customer_name, customer_phone, seq_no, gender ),
-      payments (
-        id, order_customer_id, amount_cents, payment_ref, paid_at,
-        method:payment_methods ( display_name ),
-        tips ( amount_cents )
+      folio_lines (
+        id, order_customer_id, kind, amount_cents, payment_ref, posted_at,
+        method:payment_methods ( display_name )
       ),
       feedback ( order_item_id, score ),
       order_items (
@@ -231,14 +230,17 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   };
 
   const orderItemsRaw = order.order_items ?? [];
-  const orderPayments = order.payments ?? [];
+  const orderLines = order.folio_lines ?? [];
+  const signedAmt = (l: { kind: string; amount_cents: number }) => (l.kind === 'refund' ? -l.amount_cents : l.amount_cents);
+  const payLines = orderLines.filter((l) => l.kind === 'payment' || l.kind === 'refund');
+  const tipTotal = orderLines.filter((l) => l.kind === 'tip').reduce((s, l) => s + l.amount_cents, 0);
   const customers = (order.order_customers ?? []).map((c) => {
     const subtotal = orderItemsRaw
       .filter((it) => it.order_customer_id === c.id && it.status !== 'cancelled')
       .reduce((s, it) => s + (it.final_amount_cents ?? 0), 0);
-    const paid = orderPayments
-      .filter((p) => p.order_customer_id === c.id)
-      .reduce((s, p) => s + p.amount_cents, 0);
+    const paid = payLines
+      .filter((l) => l.order_customer_id === c.id)
+      .reduce((s, l) => s + signedAmt(l), 0);
     return {
       id: c.id,
       customer_name: c.customer_name,
@@ -252,14 +254,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const customerLabel = new Map(
     (order.order_customers ?? []).map((c) => [c.id, `#${c.seq_no} · ${c.customer_name}`]),
   );
-  const payments = orderPayments.map((p) => ({
-    id: p.id,
-    amount_cents: p.amount_cents,
-    method_name: one(p.method)?.display_name ?? 'Payment',
-    payment_ref: p.payment_ref,
-    customer_label: p.order_customer_id ? customerLabel.get(p.order_customer_id) ?? null : null,
-    tip_cents: (p.tips ?? []).reduce((s, t) => s + t.amount_cents, 0),
-    paid_at: p.paid_at,
+  const payments = payLines.map((l, i) => ({
+    id: l.id,
+    amount_cents: signedAmt(l),
+    method_name: one(l.method)?.display_name ?? 'Payment',
+    payment_ref: l.payment_ref,
+    customer_label: l.order_customer_id ? customerLabel.get(l.order_customer_id) ?? null : null,
+    tip_cents: i === 0 ? tipTotal : 0,
+    paid_at: l.posted_at,
   }));
   const feedbackByItem = new Map((order.feedback ?? []).map((f) => [f.order_item_id, f.score]));
   const items = (order.order_items ?? []).map((it) => {

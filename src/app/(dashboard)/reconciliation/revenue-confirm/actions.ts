@@ -72,7 +72,7 @@ async function buildOrderRevenueLines(
       id, order_no, status, service_date, total_cents, branch_id,
       branch:branches!orders_branch_id_fkey ( code ),
       billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id ),
-      payments ( amount_cents, payment_method_id ),
+      folio_lines ( amount_cents, kind, payment_method_id ),
       tips ( amount_cents )
     `)
     .eq('id', orderId)
@@ -85,9 +85,9 @@ async function buildOrderRevenueLines(
 
   // Aggregate the order's bill side by payment method (in cents).
   const billByMethod = new Map<string, number>();
-  for (const p of o.payments ?? []) {
-    if (!p.payment_method_id) continue;
-    billByMethod.set(p.payment_method_id, (billByMethod.get(p.payment_method_id) ?? 0) + p.amount_cents);
+  for (const p of o.folio_lines ?? []) {
+    if (!p.payment_method_id || !['payment', 'refund'].includes(p.kind)) continue;
+    billByMethod.set(p.payment_method_id, (billByMethod.get(p.payment_method_id) ?? 0) + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents));
   }
   const tipsTotal = (o.tips ?? []).reduce((s, t) => s + t.amount_cents, 0);
 
@@ -176,16 +176,16 @@ const ORDER_SELECT = `
   id, order_no, status, order_type, service_date, total_cents, gl_batch_nbr,
   billing:billing_destinations!orders_billing_to_id_fkey ( code, name, default_payment_method_id ),
   order_customers ( id ),
-  payments ( amount_cents, method:payment_methods ( code ) ),
+  folio_lines ( amount_cents, kind, method:payment_methods ( code ) ),
   tips ( amount_cents )
 `;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapOrderRow(o: any, arMethodId: string | null): ConfirmableOrder {
   const b = one<{ code: string; name: string; default_payment_method_id: string | null }>(o.billing);
   const isAR = !!arMethodId && b?.default_payment_method_id === arMethodId;
-  const pays = o.payments ?? [];
+  const pays = (o.folio_lines ?? []).filter((p: any) => ['payment', 'refund'].includes(p.kind));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sumByCode = (code: string) => pays.filter((p: any) => one<{ code: string }>(p.method)?.code === code).reduce((s: number, p: any) => s + p.amount_cents, 0);
+  const sumByCode = (code: string) => pays.filter((p: any) => one<{ code: string }>(p.method)?.code === code).reduce((s: number, p: any) => s + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents), 0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tipsTotal = (o.tips ?? []).reduce((s: number, t: any) => s + (t.amount_cents ?? 0), 0);
   return {

@@ -188,47 +188,6 @@ export async function createQuickDraft(): Promise<ActionResult<{ id: string }>> 
   });
 }
 
-// Normalize a possibly-array Supabase to-one join down to the method code.
-function methodCode(method: unknown): string | null {
-  const m = Array.isArray(method) ? method[0] : method;
-  return (m as { code?: string } | null)?.code ?? null;
-}
-
-// Refund a stored-value redemption back onto its card before its payment row is
-// deleted: clear the consume row's link to the payment (that FK is NO ACTION, so
-// it would otherwise block the delete), restore the balance, and write a reversal
-// ledger row. No-op for any non-stored-value payment.
-async function refundStoredValuePayment(
-  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
-  payment: { id: string; amount_cents: number; stored_value_card_id: string | null; code: string | null },
-  orderId: string,
-  staffId: string | null,
-  note: string,
-): Promise<void> {
-  if (payment.code !== 'stored_value_card' || !payment.stored_value_card_id) return;
-  await supabase.from('stored_value_transactions').update({ related_payment_id: null }).eq('related_payment_id', payment.id);
-  const { data: card } = await supabase
-    .from('stored_value_cards')
-    .select('current_balance_cents, branch_id')
-    .eq('id', payment.stored_value_card_id)
-    .single();
-  if (!card) return;
-  const balanceAfter = card.current_balance_cents + payment.amount_cents;
-  await supabase.from('stored_value_cards')
-    .update({ current_balance_cents: balanceAfter, status: 'active' })
-    .eq('id', payment.stored_value_card_id);
-  await supabase.from('stored_value_transactions').insert({
-    card_id: payment.stored_value_card_id,
-    branch_id: card.branch_id,
-    type: 'refund',
-    amount_cents: payment.amount_cents,
-    balance_after_cents: balanceAfter,
-    related_order_id: orderId,
-    approved_by_user_id: staffId,
-    note,
-  });
-}
-
 export async function voidOrder(id: string, reason: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required to void' };
@@ -240,39 +199,9 @@ export async function voidOrder(id: string, reason: string): Promise<ActionResul
     return { ok: false, error: 'A closed or already-void order cannot be voided' };
   }
 
-  // Voiding cancels the order's payments + tips. A tip already on a settlement
-  // payout can't be unwound here — reverse that settlement first.
-  const { data: settledTips } = await supabase
-    .from('tips')
-    .select('id')
-    .eq('order_id', id)
-    .not('settlement_id', 'is', null)
-    .limit(1);
-  if (settledTips && settledTips.length > 0) {
-    return { ok: false, error: 'A tip on this order is already settled — reverse the settlement before voiding.' };
-  }
-
-  // Stored-value redemptions are refunded back onto their cards before the
-  // payments are removed (see refundStoredValuePayment).
-  const { data: pays } = await supabase
-    .from('payments')
-    .select('id, amount_cents, stored_value_card_id, method:payment_methods ( code )')
-    .eq('order_id', id);
-  for (const p of pays ?? []) {
-    await refundStoredValuePayment(
-      supabase,
-      { id: p.id, amount_cents: p.amount_cents, stored_value_card_id: p.stored_value_card_id, code: methodCode(p.method) },
-      id,
-      session!.staffUserId,
-      'Order voided',
-    );
-  }
-
-  await supabase.from('tips').delete().eq('order_id', id);
-  const { error: pe } = await supabase.from('payments').delete().eq('order_id', id);
-  if (pe) return { ok: false, error: pe.message };
-
-  const { error } = await supabase.from('orders').update({ status: 'void', paid_cents: 0 }).eq('id', id);
+  // Voiding is a pure status flag - it does not touch the folio ledger. Any
+  // money owed back is a separate refund (an append-only kind=refund line).
+  const { error } = await supabase.from('orders').update({ status: 'void' }).eq('id', id);
   if (error) return { ok: false, error: error.message };
   await logStatus(id, order.status, 'void', reason.trim(), session!.staffUserId);
   revalidatePath('/sales-orders');
@@ -582,7 +511,7 @@ export async function removeOrderCustomer(customerId: string, orderId: string): 
   if ((custItems ?? []).some((i) => !['draft', 'cancelled'].includes(i.status))) {
     return { ok: false, error: 'This guest has a started or finished service and can\'t be removed.' };
   }
-  const { data: custPays } = await supabase.from('payments').select('id').eq('order_customer_id', customerId).limit(1);
+  const { data: custPays } = await supabase.from('folio_lines').select('id').eq('order_customer_id', customerId).in('kind', ['payment', 'refund']).limit(1);
   if (custPays && custPays.length > 0) {
     return { ok: false, error: 'This guest has a recorded payment — remove the payment first.' };
   }
@@ -1637,11 +1566,12 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       .neq('status', 'cancelled');
     const custSubtotal = (custItems ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
     const { data: custPays } = await supabase
-      .from('payments')
-      .select('amount_cents')
+      .from('folio_lines')
+      .select('amount_cents, kind')
       .eq('order_id', d.order_id)
-      .eq('order_customer_id', d.order_customer_id);
-    const custPaid = (custPays ?? []).reduce((s, p) => s + p.amount_cents, 0);
+      .eq('order_customer_id', d.order_customer_id)
+      .in('kind', ['payment', 'refund']);
+    const custPaid = (custPays ?? []).reduce((s, p) => s + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents), 0);
     const custDue = Math.max(0, custSubtotal - custPaid);
     if (amountCents > custDue) {
       return { ok: false, error: `Amount exceeds this guest's balance due (${(custDue / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
@@ -1676,34 +1606,24 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     svcCard = card;
   }
 
-  const { data: payment, error: pe } = await supabase
-    .from('payments')
+  // The payment is a folio line bound to the open shift (folio_lines is the
+  // single ledger now - there is no separate payments table).
+  const { data: paymentLine, error: pe } = await supabase
+    .from('folio_lines')
     .insert({
       order_id: d.order_id,
       order_customer_id: d.order_customer_id || null,
-      payment_method_id: d.payment_method_id,
+      shift_id: openShift.id,
+      kind: 'payment',
       amount_cents: amountCents,
+      posted_by: session.staffUserId,
+      payment_method_id: d.payment_method_id,
       payment_ref: d.payment_ref || null,
       stored_value_card_id: svcCard?.id ?? null,
-      paid_at: new Date().toISOString(),
     })
     .select('id')
     .single();
-  if (pe || !payment) return { ok: false, error: pe?.message ?? 'Payment insert failed' };
-
-  // Mirror the payment as a folio line bound to the open shift (the ledger
-  // Shift Remittance + the revenue paths read). Dual-written alongside the
-  // payments row until reads repoint and the payments table retires.
-  await supabase.from('folio_lines').insert({
-    order_id: d.order_id,
-    shift_id: openShift.id,
-    kind: 'payment',
-    amount_cents: amountCents,
-    posted_by: session.staffUserId,
-    payment_method_id: d.payment_method_id,
-    payment_ref: d.payment_ref || null,
-    stored_value_card_id: svcCard?.id ?? null,
-  });
+  if (pe || !paymentLine) return { ok: false, error: pe?.message ?? 'Payment posting failed' };
 
   if (svcCard) {
     const balanceAfter = svcCard.current_balance_cents - amountCents;
@@ -1718,22 +1638,37 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       amount_cents: -amountCents,
       balance_after_cents: balanceAfter,
       related_order_id: d.order_id,
-      related_payment_id: payment.id,
+      related_folio_line_id: paymentLine.id,
       approved_by_user_id: session?.staffUserId ?? null,
     });
   }
 
-  if (tips.length > 0) {
-    const { error: te } = await supabase.from('tips').insert(
-      tips.map((t) => ({
+  // Each tip posts its own kind=tip folio line; the tips row (per-therapist,
+  // for commission) links to it via folio_line_id.
+  for (const t of tips) {
+    const tipCents = Math.round(t.amount * 100);
+    const { data: tipLine, error: tle } = await supabase
+      .from('folio_lines')
+      .insert({
         order_id: d.order_id,
-        order_item_id: t.order_item_id,
-        therapist_id: t.therapist_id,
-        payment_id: payment.id,
-        amount_cents: Math.round(t.amount * 100),
-        status: 'open',
-      })),
-    );
+        order_customer_id: d.order_customer_id || null,
+        shift_id: openShift.id,
+        kind: 'tip',
+        amount_cents: tipCents,
+        posted_by: session.staffUserId,
+        payment_method_id: d.payment_method_id,
+      })
+      .select('id')
+      .single();
+    if (tle || !tipLine) return { ok: false, error: tle?.message ?? 'Tip posting failed' };
+    const { error: te } = await supabase.from('tips').insert({
+      order_id: d.order_id,
+      order_item_id: t.order_item_id,
+      therapist_id: t.therapist_id,
+      folio_line_id: tipLine.id,
+      amount_cents: tipCents,
+      status: 'open',
+    });
     if (te) return { ok: false, error: te.message };
   }
 
@@ -1752,80 +1687,6 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   // cash and then opened /reconciliation/cash in the same session would see
   // stale "Cash received this shift" until manual F5. Same story for the
   // daily-close hub, Revenue Confirm, and the dashboard count widgets.
-  revalidatePath('/reconciliation/cash');
-  revalidatePath('/reconciliation');
-  return { ok: true };
-}
-
-// Reverse a recorded payment: drop it (and its open tips), refund a stored-value
-// redemption back onto its card, refund the order's paid total, and step a
-// fully-paid order back to completed if it no longer is.
-export async function voidPayment(paymentId: string, orderId: string): Promise<ActionResult> {
-  // Voiding a payment row deletes it outright — that's a reversal, not a routine
-  // cashier action, so it's manager-only. Routine refunds use `recordRefund`.
-  const session = await currentSession();
-  if (!isManager(session)) return { ok: false, error: 'Manager permission required to void a payment' };
-  const supabase = await createAuditedClient();
-  const { data: order, error: oe } = await supabase
-    .from('orders')
-    .select('status, total_cents, branch_id')
-    .eq('id', orderId)
-    .single();
-  if (oe || !order) return { ok: false, error: 'Order not found' };
-  if (order.branch_id && !(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (['closed', 'void'].includes(order.status)) {
-    return { ok: false, error: 'Order is locked — reopen is not possible' };
-  }
-  // A fully-paid order is settled — its payments can't be deleted (by anyone).
-  // Adjust the money with the header Collect / Refund actions instead.
-  if (order.status === 'paid') {
-    return { ok: false, error: 'Order is fully paid — use Collect / Refund to adjust, not delete.' };
-  }
-
-  const { data: settled } = await supabase
-    .from('tips')
-    .select('id')
-    .eq('payment_id', paymentId)
-    .not('settlement_id', 'is', null);
-  if (settled && settled.length > 0) {
-    return { ok: false, error: 'A tip on this payment is already settled; cannot void it' };
-  }
-
-  // Stored-value redemption → refund the card before its payment row is removed.
-  const { data: pay } = await supabase
-    .from('payments')
-    .select('amount_cents, stored_value_card_id, method:payment_methods ( code )')
-    .eq('id', paymentId)
-    .single();
-  if (pay) {
-    const session = await currentSession();
-    await refundStoredValuePayment(
-      supabase,
-      { id: paymentId, amount_cents: pay.amount_cents, stored_value_card_id: pay.stored_value_card_id, code: methodCode(pay.method) },
-      orderId,
-      session?.staffUserId ?? null,
-      'Payment reversed',
-    );
-  }
-
-  await supabase.from('tips').delete().eq('payment_id', paymentId);
-  const { error: de } = await supabase.from('payments').delete().eq('id', paymentId);
-  if (de) return { ok: false, error: de.message };
-
-  const { data: remaining } = await supabase
-    .from('payments')
-    .select('amount_cents')
-    .eq('order_id', orderId);
-  const paid = (remaining ?? []).reduce((s, p) => s + p.amount_cents, 0);
-  const patch: { paid_cents: number; status?: string } = { paid_cents: paid };
-  if (order.status === 'paid' && paid < order.total_cents) patch.status = 'completed';
-  const { error: ue } = await supabase.from('orders').update(patch).eq('id', orderId);
-  if (ue) return { ok: false, error: ue.message };
-
-  revalidatePath('/sales-orders');
-  revalidatePath(`/sales-orders/${orderId}`);
-  // Mirror the recordPayment revalidation — a voided cash payment changes
-  // the drawer's expected total too.
   revalidatePath('/reconciliation/cash');
   revalidatePath('/reconciliation');
   return { ok: true };
@@ -1870,6 +1731,11 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
     return { ok: false, error: `Refund exceeds the amount collected (${(order.paid_cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
   }
 
+  const openShift = order.branch_id ? await getCurrentOpenShift(order.branch_id) : null;
+  if (!openShift) {
+    return { ok: false, error: 'No cash shift is open for this branch - open one on the Shift Remittance page before refunding.' };
+  }
+
   const { data: method } = await supabase.from('payment_methods').select('code').eq('id', d.payment_method_id).single();
 
   // Stored-value refund → load the amount back onto the card.
@@ -1885,20 +1751,24 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
     card = c;
   }
 
-  const { data: payment, error: pe } = await supabase
-    .from('payments')
+  // Refund = an append-only folio line (kind=refund). Amount is stored positive;
+  // the kind carries the direction. paid = sum(payment) - sum(refund).
+  const { data: refundLine, error: pe } = await supabase
+    .from('folio_lines')
     .insert({
       order_id: d.order_id,
       order_customer_id: d.order_customer_id || null,
+      shift_id: openShift.id,
+      kind: 'refund',
+      amount_cents: amountCents,
+      posted_by: session!.staffUserId,
       payment_method_id: d.payment_method_id,
-      amount_cents: -amountCents,
       payment_ref: d.payment_ref || null,
       stored_value_card_id: d.stored_value_card_id || null,
-      paid_at: new Date().toISOString(),
     })
     .select('id')
     .single();
-  if (pe || !payment) return { ok: false, error: pe?.message ?? 'Refund insert failed' };
+  if (pe || !refundLine) return { ok: false, error: pe?.message ?? 'Refund posting failed' };
 
   if (card && d.stored_value_card_id) {
     const balanceAfter = card.current_balance_cents + amountCents;
@@ -1912,7 +1782,7 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
       amount_cents: amountCents,
       balance_after_cents: balanceAfter,
       related_order_id: d.order_id,
-      related_payment_id: payment.id,
+      related_folio_line_id: refundLine.id,
       approved_by_user_id: session!.staffUserId,
       note: 'Order refund',
     });

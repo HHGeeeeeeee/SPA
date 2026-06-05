@@ -31,7 +31,7 @@ export async function loadOrderAuditTrail(orderId: string): Promise<AuditEntry[]
   const [items, customers, payments, tips] = await Promise.all([
     sb.from('order_items').select('id').eq('order_id', orderId),
     sb.from('order_customers').select('id').eq('order_id', orderId),
-    sb.from('payments').select('id').eq('order_id', orderId),
+    sb.from('folio_lines').select('id').eq('order_id', orderId).in('kind', ['payment', 'refund']),
     sb.from('tips').select('id').eq('order_id', orderId),
   ]);
   const itemIds = (items.data ?? []).map((r) => r.id as string);

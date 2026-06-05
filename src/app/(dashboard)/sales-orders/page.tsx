@@ -16,7 +16,7 @@ async function fetchData() {
         billing:billing_destinations!orders_billing_to_id_fkey ( code, default_payment_method_id ),
         source:customer_sources ( name ),
         order_customers ( customer_name, seq_no ),
-        payments ( tips ( amount_cents ) )
+        tips ( amount_cents )
       `)
       .is('deleted_at', null)
       .order('service_date', { ascending: false })
@@ -77,7 +77,7 @@ async function fetchData() {
       source_name: one(o.source)?.name ?? null,
       guest_name: mainGuest,
       pax: custs.length,
-      tip_cents: (o.payments ?? []).reduce((s, p) => s + (p.tips ?? []).reduce((a, t) => a + t.amount_cents, 0), 0),
+      tip_cents: (o.tips ?? []).reduce((s, t) => s + t.amount_cents, 0),
     };
   });
 

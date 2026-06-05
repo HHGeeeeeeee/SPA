@@ -25,10 +25,7 @@ import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -55,7 +52,6 @@ import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { AuditTrail } from '@/components/sales-orders/audit-trail';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
 import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
-import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
 function peso(cents: number): string {
   return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
@@ -163,10 +159,6 @@ const GENDER_OPTS = [
   { value: 'F', label: 'Female only' },
   { value: 'M', label: 'Male only' },
 ];
-
-function peso0(cents: number | null): string {
-  return cents == null ? '—' : `${(cents / 100).toLocaleString('en-PH')}`;
-}
 
 function hm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
@@ -605,84 +597,6 @@ export function OrderWorkspace({
     });
   }
 
-  const groupOptions = [...new Set(serviceItems.map((s) => s.group))]
-    .sort()
-    .map((g) => ({ value: g, label: g }));
-  const variantOptions = serviceItems
-    .filter((s) => s.group === groupSel)
-    .map((s) => ({ value: s.id, label: `${s.duration_minutes} min · ${peso0(s.price_cents)}` }));
-  const busy = new Set(busyTherapistIds);
-  // A therapist is offered only if they can perform the chosen service group.
-  // No group picked yet → show everyone (the picker is disabled until a group exists anyway).
-  const canDoGroup = (id: string) => canPerformGroup(capabilityByEmployee[id] ?? [], groupSel || null);
-  // Gender preference comes from the active guest: only offer matching therapists.
-  const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
-  const matchGender = (id: string) => matchesGender(genderOf.get(id), activeGuestGender);
-  // A therapist mid-service elsewhere can't take a new one — show them but
-  // disable so they can't be picked (auto-assign already skips them too).
-  const thisBranchOptions = employees
-    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.code} — ${e.name}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
-  const borrowOptions = borrowableEmployees
-    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({
-      value: e.id,
-      label: `${e.code} — ${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`,
-      disabled: busy.has(e.id),
-    }));
-  // Combined list drives the trigger's value→label lookup; the dropdown groups them.
-  const empOptions = [{ value: NONE, label: 'Unassigned' }, ...thisBranchOptions, ...borrowOptions];
-  // A station occupied by an in-service order can't take another — disable it.
-  const busyRes = new Set(busyResourceIds);
-  // Filter the station picker by the service's required resource_type so the
-  // dropdown only shows stations that can actually do the service (no more
-  // "Gel Polish on Massage Bed" because the picker listed every station at
-  // the branch). When the service declares no required type (REST or a
-  // misc service), fall back to showing every station, grouped by type.
-  //
-  // We also accept the service GROUP as a fallback: when the user has picked
-  // a service group (e.g. Pedicure) but hasn't picked a specific duration
-  // variant yet, svcId is still empty — but every variant in the group
-  // shares the same required_resource_type, so any representative variant
-  // tells us what the picker should filter to.
-  const svcSelected = serviceItems.find((s) => s.id === svcId);
-  const groupRep = !svcSelected && groupSel
-    ? serviceItems.find((s) => s.group === groupSel)
-    : null;
-  const neededType = (svcSelected ?? groupRep)?.required_resource_type ?? null;
-  const eligibleResources = neededType
-    ? resources.filter((r) => r.resource_type === neededType)
-    : resources;
-  // Bucket by type so the dropdown can render one labelled group per type
-  // (Massage Beds / Hair Chairs / Nail Stations). Insertion order preserved
-  // — the consumer iterates resources as they came in, so the grouping order
-  // matches the data's existing sort (resource_type then resource_name).
-  const resGroups = new Map<string, ResourceOpt[]>();
-  for (const r of eligibleResources) {
-    const k = r.resource_type ?? '__untyped__';
-    if (!resGroups.has(k)) resGroups.set(k, []);
-    resGroups.get(k)!.push(r);
-  }
-  const resLabel = (r: ResourceOpt) => `${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`;
-  // The Select primitive uses `items` for its trigger's value→label lookup —
-  // every selectable option must appear in this flat list, even though the
-  // SelectContent below groups them visually. Order matches the groups so
-  // there are no orphans.
-  const resOptions = [
-    { value: NONE, label: 'None', disabled: false },
-    ...eligibleResources.map((r) => ({ value: r.id, label: resLabel(r), disabled: busyRes.has(r.id) })),
-  ];
-  const discRate = (d: DiscountOpt): string | null =>
-    d.discount_percent > 0
-      ? `${d.discount_percent}%`
-      : d.discount_amount_cents > 0
-        ? `${(d.discount_amount_cents / 100).toLocaleString()}`
-        : null;
-  const discOptions = discountClasses.map((d) => {
-    const rate = discRate(d);
-    return { value: d.id, label: rate ? `${d.code} — ${rate} — ${d.description}` : `${d.code} — ${d.description}` };
-  });
-
   const itemsByCustomer = (cid: string) => items.filter((i) => i.order_customer_id === cid);
 
   // Auto-open the Add Service picker only for the first guest who has no services
@@ -995,146 +909,43 @@ export function OrderWorkspace({
 
               {order.editable && (
                 activeCustomer === c.id ? (
-                  <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-border p-3">
-                    <p className="col-span-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                      Add service
-                    </p>
-                    <div className="max-w-[15rem]">
-                      <Label className="text-xs font-semibold">Service</Label>
-                      <Select
-                        items={groupOptions}
-                        value={groupSel}
-                        onValueChange={(v) => {
-                          if (!v) return;
-                          setGroupSel(v);
-                          setSvcId('');
-                          setTherapistId(NONE);
-                          // Switching groups can change the required station
-                          // type (Massage → Nail). Drop a station that no
-                          // longer fits so the user picks one that does.
-                          if (resourceId !== NONE) {
-                            const newGroupType = serviceItems.find((s) => s.group === v)?.required_resource_type ?? null;
-                            const cur = resources.find((r) => r.id === resourceId);
-                            if (newGroupType && cur && cur.resource_type !== newGroupType) setResourceId(NONE);
-                          }
-                        }}
-                      >
-                        <SelectTrigger><SelectValue placeholder="Pick a service" /></SelectTrigger>
-                        <SelectContent>
-                          {groupOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="max-w-[15rem]">
-                      <Label className="text-xs font-semibold">Duration</Label>
-                      <Select
-                        items={variantOptions}
-                        value={svcId}
-                        onValueChange={(v) => {
-                          if (!v) return;
-                          setSvcId(v);
-                          // Drop a now-mismatched station so the user can't carry
-                          // (say) a massage Bed over to a freshly picked Gel Polish
-                          // — the picker would filter it out anyway, so silently
-                          // clearing is less confusing than showing a stale value.
-                          if (resourceId !== NONE) {
-                            const need = serviceItems.find((s) => s.id === v)?.required_resource_type ?? null;
-                            const cur = resources.find((r) => r.id === resourceId);
-                            if (need && cur && cur.resource_type !== need) setResourceId(NONE);
-                          }
-                        }}
-                        disabled={!groupSel}
-                      >
-                        <SelectTrigger><SelectValue placeholder={groupSel ? 'Pick duration' : 'Pick service first'} /></SelectTrigger>
-                        <SelectContent>
-                          {variantOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="max-w-[15rem]">
-                      <Label className="text-xs font-semibold">Discount</Label>
-                      <Select items={discOptions} value={sourceDiscountLocked ? defaultDiscountId : discountId} onValueChange={(v) => v && setDiscountId(v)} disabled={sourceDiscountLocked}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      {sourceDiscountLocked && (
-                        <p className="text-[11px] font-medium text-muted-foreground mt-1">Set by customer source (group rate)</p>
-                      )}
-                    </div>
-                    {needsDiscountAmount && (
-                      <div>
-                        <Label className="text-xs font-semibold">{selectedDiscountCode} amount *</Label>
-                        <Input type="number" min="0" step="0.01" value={discountOverride} onChange={(e) => setDiscountOverride(e.target.value)} placeholder="manager-set" />
-                      </div>
-                    )}
-                    <div className="col-span-3 -mx-3 px-3 py-3 bg-muted/40 border-y border-border flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <Label className="text-xs font-semibold text-muted-foreground">Therapist &amp; Station</Label>
-                        <Button type="button" size="sm" variant="outline" onClick={autoAssign} disabled={pending}>
-                          <Wand2 className="size-3.5" /> Auto-assign
-                        </Button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="max-w-[15rem]">
-                          <Label className="text-xs font-semibold">Therapist</Label>
-                          <Select items={empOptions} value={therapistId} onValueChange={(v) => setTherapistId(v ?? NONE)}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NONE}>Unassigned</SelectItem>
-                              <SelectGroup>
-                                <SelectLabel>At this branch</SelectLabel>
-                                {thisBranchOptions.length === 0 ? (
-                                  <SelectItem value="__nobody__" disabled>{groupSel ? `No therapist here can do ${groupSel}` : 'No therapist rostered here'}</SelectItem>
-                                ) : (
-                                  thisBranchOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)
-                                )}
-                              </SelectGroup>
-                              {borrowOptions.length > 0 && (
-                                <>
-                                  <SelectSeparator />
-                                  <SelectGroup>
-                                    <SelectLabel>Borrow from other branch</SelectLabel>
-                                    {borrowOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)}
-                                  </SelectGroup>
-                                </>
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="max-w-[15rem]">
-                          <Label className="text-xs font-semibold">Station</Label>
-                          <Select items={resOptions} value={resourceId} onValueChange={(v) => setResourceId(v ?? NONE)}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NONE}>None</SelectItem>
-                              {eligibleResources.length === 0 ? (
-                                <SelectItem value="__nomatch__" disabled>
-                                  {neededType
-                                    ? `No ${RESOURCE_TYPE_LABEL[neededType] ?? neededType} at this branch`
-                                    : 'No stations'}
-                                </SelectItem>
-                              ) : (
-                                [...resGroups.entries()].map(([type, list]) => (
-                                  <SelectGroup key={type}>
-                                    <SelectLabel>{RESOURCE_TYPE_LABEL[type] ?? type}</SelectLabel>
-                                    {list.map((r) => (
-                                      <SelectItem key={r.id} value={r.id} disabled={busyRes.has(r.id)}>
-                                        {resLabel(r)}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectGroup>
-                                ))
-                              )}
-                            </SelectContent>
-                          </Select>
+                  <div className="mt-3 overflow-x-auto">
+                    <div className="min-w-[58rem]">
+                      <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
+                      <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
+                        <ServiceLineEditor
+                          draft={{ groupSel, svcId, therapistId, resourceId, discountId, discountOverride }}
+                          onChange={(patch) => {
+                            if (patch.groupSel !== undefined) setGroupSel(patch.groupSel);
+                            if (patch.svcId !== undefined) setSvcId(patch.svcId);
+                            if (patch.therapistId !== undefined) setTherapistId(patch.therapistId);
+                            if (patch.resourceId !== undefined) setResourceId(patch.resourceId);
+                            if (patch.discountId !== undefined) setDiscountId(patch.discountId);
+                            if (patch.discountOverride !== undefined) setDiscountOverride(patch.discountOverride);
+                          }}
+                          serviceItems={serviceItems}
+                          employees={employees}
+                          borrowableEmployees={borrowableEmployees}
+                          resources={resources}
+                          discountClasses={discountClasses}
+                          capabilityByEmployee={capabilityByEmployee}
+                          busyTherapistIds={busyTherapistIds}
+                          busyResourceIds={busyResourceIds}
+                          guestGender={guestGenderOf(c)}
+                          sourceDiscountLocked={sourceDiscountLocked}
+                          defaultDiscountId={defaultDiscountId}
+                          disabled={pending}
+                        />
+                        <span />
+                        <span />
+                        <div className="flex flex-wrap items-center gap-1 justify-end">
+                          <Button type="button" size="sm" variant="outline" onClick={autoAssign} disabled={pending} title="Fill any empty therapist / station">
+                            <Wand2 className="size-3.5" /> Auto
+                          </Button>
+                          <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
+                          <Button size="sm" variant="ghost" onClick={closeItemForm} disabled={pending}>Cancel</Button>
                         </div>
                       </div>
-                    </div>
-                    <div className="col-span-3 flex gap-2 justify-end">
-                      <Button size="sm" variant="ghost" onClick={closeItemForm} disabled={pending}>Cancel</Button>
-                      <Button size="sm" onClick={() => doAddItem(c.id)} disabled={pending || !svcId}>Add</Button>
                     </div>
                   </div>
                 ) : (

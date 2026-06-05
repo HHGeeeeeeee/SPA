@@ -101,12 +101,7 @@ export function ServiceLineEditor({
   const resLabel = (r: ResourceOpt) => `${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`;
   const resItems = [{ value: NONE, label: 'None' }, ...eligibleResources.map((r) => ({ value: r.id, label: resLabel(r) }))];
 
-  const discRate = (d: DiscountOpt): string | null =>
-    d.discount_percent > 0 ? `${d.discount_percent}%` : d.discount_amount_cents > 0 ? `${(d.discount_amount_cents / 100).toLocaleString()}` : null;
-  const discOptions = discountClasses.map((d) => {
-    const rate = discRate(d);
-    return { value: d.id, label: rate ? `${d.code} — ${rate} — ${d.description}` : `${d.code} — ${d.description}` };
-  });
+  const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
   const selectedDiscountCode = discountClasses.find((d) => d.id === draft.discountId)?.code ?? '';
   const needsDiscountAmount = ['DIS-91', 'DIS-99'].includes(selectedDiscountCode);
 

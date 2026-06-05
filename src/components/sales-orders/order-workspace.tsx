@@ -61,7 +61,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[minmax(8rem,1.4fr)_6rem_minmax(8.5rem,1.3fr)_minmax(7.5rem,1fr)_minmax(7rem,1fr)_5.5rem_6rem_minmax(7rem,auto)] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_9.5rem_9.5rem_9rem_5.5rem_5.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -777,7 +777,7 @@ export function OrderWorkspace({
             <CardContent>
               {itemsByCustomer(c.id).length > 0 && (
                 <div className="overflow-x-auto">
-                  <div className="min-w-[58rem]">
+                  <div className="min-w-max">
                     <div className={`${SERVICE_GRID} border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground`}>
                       <span>Service</span>
                       <span>Duration</span>
@@ -849,7 +849,7 @@ export function OrderWorkspace({
                           : it.status === 'no_show' ? { t: 'No-show', c: 'text-muted-foreground' }
                           : null;
                         const tw = timeWindow(it.actual_start, it.actual_end, it.duration_minutes, it.prep_minutes);
-                        const discCode = discountClasses.find((dd) => dd.id === it.discount_class_id)?.code ?? '—';
+                        const discCode = discountClasses.find((dd) => dd.id === it.discount_class_id)?.description ?? '—';
                         return (
                           <li key={it.id} className={`${SERVICE_GRID} py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
                             <span className="font-semibold truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.group ?? it.service_name}</span>
@@ -908,7 +908,7 @@ export function OrderWorkspace({
               {order.editable && (
                 activeCustomer === c.id ? (
                   <div className="mt-3 overflow-x-auto">
-                    <div className="min-w-[58rem]">
+                    <div className="min-w-max">
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
                       <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
                         <ServiceLineEditor

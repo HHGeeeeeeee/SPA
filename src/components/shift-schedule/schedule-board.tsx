@@ -255,7 +255,9 @@ function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windo
       <span className="truncate font-semibold">
         {block.guest ? `${block.guest} · ` : ''}{block.line1}
       </span>
-      {block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>}
+      {block.therapistId
+        ? (block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>)
+        : <span className="truncate font-extrabold text-red-600 dark:text-red-400">Not assigned</span>}
     </div>
   );
 }

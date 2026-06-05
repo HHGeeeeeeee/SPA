@@ -7,6 +7,9 @@ import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand } from 'luc
 import {
   DndContext,
   type DragEndEvent,
+  type DragStartEvent,
+  type CollisionDetection,
+  rectIntersection,
   PointerSensor,
   useSensor,
   useSensors,
@@ -226,12 +229,16 @@ const VARIANT_CLASS: Record<BlockVariant, string> = {
   completed: 'bg-zinc-400/70 text-white line-through dark:bg-zinc-500/70',
 };
 
-function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock, e: React.MouseEvent) => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock, e: React.MouseEvent) => void; assignMode?: boolean }) {
+  const { attributes, listeners, setNodeRef: dragRef, transform, isDragging } = useDraggable({
     id: block.key,
     data: { block },
     disabled: !block.draggable,
   });
+  // Not-yet-started bookings with no therapist accept a dragged staff card.
+  const canAssign = block.draggable && !block.therapistId;
+  const { setNodeRef: dropRef, isOver } = useDroppable({ id: `assign:${block.refId}`, disabled: !canAssign });
+  const setNodeRef = (node: HTMLElement | null) => { dragRef(node); dropRef(node); };
   const left = (block.startMin - windowStartMin) * PX_PER_MIN;
   const width = Math.max(28, (block.endMin - block.startMin) * PX_PER_MIN);
   const style: React.CSSProperties = {
@@ -251,7 +258,7 @@ function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windo
       {...attributes}
       onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
-      className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
+      className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]} ${assignMode && canAssign ? (isOver ? 'ring-2 ring-primary ring-offset-1' : 'ring-2 ring-primary/40') : ''}`}
       title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}`}
     >
       {/* Two lines: guest · service on top, therapist below. Pax / time / status
@@ -267,7 +274,7 @@ function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windo
 }
 
 function BedRow({
-  bed, blocks, windowStartMin, trackWidth, hours, nowMin, onOpen, onEmptyClick,
+  bed, blocks, windowStartMin, trackWidth, hours, nowMin, onOpen, onEmptyClick, assignMode,
 }: {
   bed: BoardBed;
   blocks: BoardBlock[];
@@ -277,6 +284,7 @@ function BedRow({
   nowMin: number | null;
   onOpen: (b: BoardBlock, e: React.MouseEvent) => void;
   onEmptyClick: (bedId: string, min: number) => void;
+  assignMode?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bed:${bed.id}` });
   // Pack lanes by the bed-occupied span (service + cleanup tail) so a block's
@@ -335,7 +343,7 @@ function BedRow({
                 title={`Cleanup ${b.cleanupMin}m`}
               />
             )}
-            <BlockView block={b} windowStartMin={windowStartMin} onOpen={onOpen} />
+            <BlockView block={b} windowStartMin={windowStartMin} onOpen={onOpen} assignMode={assignMode} />
           </div>
         ))}
         {nowMin != null && nowMin >= windowStartMin && (
@@ -381,6 +389,34 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
       <span className={`truncate ${block.guest ? 'font-semibold opacity-90' : 'font-bold'}`}>{block.line1}</span>
       {block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>}
       {!block.untimed && <span className="truncate font-semibold tabular-nums opacity-70">{hhmm(block.startMin)}</span>}
+    </div>
+  );
+}
+
+// A draggable on-shift therapist (Station rail, Staff mode). Drag onto an
+// unassigned service block to set its therapist; the badge is today's booking load.
+function StaffCard({ id, name, load }: { id: string; name: string; load: number }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `staff:${id}`,
+    data: { staff: { id, name } },
+  });
+  const style: React.CSSProperties = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+    touchAction: 'none',
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      style={style}
+      className="flex items-center gap-2 rounded border border-border bg-card px-2 py-1.5 text-[11px] cursor-grab active:cursor-grabbing hover:bg-accent"
+      title={`${name} · ${load} booking${load === 1 ? '' : 's'} today`}
+    >
+      <span className="flex-1 truncate font-bold">{name}</span>
+      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-extrabold tabular-nums text-muted-foreground">{load}</span>
     </div>
   );
 }
@@ -451,6 +487,11 @@ export function ScheduleBoard({
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
   // Block-detail popover (opened by clicking a booking; "Open order" navigates).
   const [detail, setDetail] = useState<{ block: BoardBlock; x: number; y: number } | null>(null);
+  // Station rail: 'bookings' (unallocated) vs 'staff' (on-shift therapists to
+  // drag onto unassigned services). staffDragId is set while a staff card drags,
+  // to light up the droppable (unassigned) blocks.
+  const [railMode, setRailMode] = useState<'bookings' | 'staff'>('bookings');
+  const [staffDragId, setStaffDragId] = useState<string | null>(null);
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -521,6 +562,23 @@ export function ScheduleBoard({
   const POSITION_LABEL: Record<string, string> = {
     MASSAGE_THERAPIST: 'Massage', MASSAGE_NEWBI: 'Newbi', HAIR_STYLIST: 'Hair', NAIL_TECHNICIAN: 'Nail',
   };
+  // Staff-mode rail (bed axis): today's booking load per therapist + the on-shift
+  // therapists grouped by position, ordered by shift start then name.
+  const loadByTherapist = (() => {
+    const m = new Map<string, number>();
+    for (const b of blocks) if (b.therapistId) m.set(b.therapistId, (m.get(b.therapistId) ?? 0) + 1);
+    return m;
+  })();
+  const staffGroups = (() => {
+    const byPos = new Map<string, BoardStaffShift[]>();
+    for (const s of staffShifts) { const k = s.positionCode ?? '_other'; if (!byPos.has(k)) byPos.set(k, []); byPos.get(k)!.push(s); }
+    const order = [...POSITION_ORDER.filter((p) => byPos.has(p)), ...[...byPos.keys()].filter((p) => !POSITION_ORDER.includes(p))];
+    return order.map((pos) => ({
+      pos,
+      label: POSITION_LABEL[pos] ?? pos.replace(/_/g, ' '),
+      staff: byPos.get(pos)!.slice().sort((a, b) => a.startMin - b.startMin || a.name.localeCompare(b.name)),
+    }));
+  })();
   // Group headers: stations by resource_type (bed axis) or therapists by
   // position (person axis), in a stable display order; unknown groups append.
   const groupOrder = axis === 'person' ? POSITION_ORDER : [...STATION_ORDER];
@@ -628,10 +686,40 @@ export function ScheduleBoard({
     setAddKey((k) => k + 1);
   }
 
+  function doAssign(refId: string, therapistId: string, startMin: number, name?: string) {
+    startTransition(async () => {
+      const r = await assignTherapistToOrderItem({ item_id: refId, therapist_id: therapistId, start_min: startMin, day });
+      if (r.ok) { toast.success(name ? `Assigned ${name}` : 'Therapist assigned'); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+  // Staff drags only target `assign:` blocks; booking/bed drags only `bed:` rows.
+  const collisionDetection: CollisionDetection = (args) => {
+    const isStaff = !!args.active.data.current?.staff;
+    const droppableContainers = args.droppableContainers.filter((c) => {
+      const id = String(c.id);
+      return isStaff ? id.startsWith('assign:') : id.startsWith('bed:');
+    });
+    return rectIntersection({ ...args, droppableContainers });
+  };
+  function onDragStart(e: DragStartEvent) {
+    const staff = e.active.data.current?.staff as { id: string } | undefined;
+    if (staff) setStaffDragId(staff.id);
+  }
   function onDragEnd(e: DragEndEvent) {
     suppressClick.current = Date.now();
-    const block = e.active.data.current?.block as BoardBlock | undefined;
+    setStaffDragId(null);
     const overId = e.over?.id as string | undefined;
+    // Staff card dropped on an unassigned service block → set its therapist.
+    const staff = e.active.data.current?.staff as { id: string; name: string } | undefined;
+    if (staff) {
+      if (!overId || !overId.startsWith('assign:')) return;
+      const refId = overId.slice('assign:'.length);
+      const target = blocks.find((b) => b.refId === refId);
+      if (target) doAssign(refId, staff.id, target.startMin, staff.name);
+      return;
+    }
+    const block = e.active.data.current?.block as BoardBlock | undefined;
     if (!block || !overId || !overId.startsWith('bed:')) return;
     const bedId = overId.slice(4);
     // Where it lands on the time axis:
@@ -678,16 +766,46 @@ export function ScheduleBoard({
     : undefined;
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setStaffDragId(null)}>
       <div className="flex items-start gap-3">
       {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
       <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
         <div className="sticky top-0 z-10 border-b border-border bg-muted px-3 py-2">
-          <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Unallocated</div>
-          <div className="text-[11px] font-semibold text-muted-foreground">{floating.length} to assign · drag onto a {axis === 'person' ? 'person' : 'bed'}</div>
+          {axis === 'bed' ? (
+            <div className="mb-1 flex rounded-md border border-border p-0.5 text-[11px] font-bold">
+              {(['bookings', 'staff'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setRailMode(m)}
+                  className={`flex-1 rounded px-2 py-1 capitalize transition-colors ${railMode === m ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-muted-foreground hover:bg-accent'}`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Unallocated</div>
+          )}
+          <div className="text-[11px] font-semibold text-muted-foreground">
+            {axis === 'bed' && railMode === 'staff'
+              ? `${staffShifts.length} on shift · drag onto an unassigned service`
+              : `${floating.length} to assign · drag onto a ${axis === 'person' ? 'person' : 'bed'}`}
+          </div>
         </div>
         <div className="flex flex-col gap-3 p-2">
-          {floating.length === 0 ? (
+          {axis === 'bed' && railMode === 'staff' ? (
+            staffShifts.length === 0 ? (
+              <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No staff on shift</p>
+            ) : (
+              staffGroups.map((g) => (
+                <div key={g.pos} className="flex flex-col gap-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">{g.label} · {g.staff.length}</div>
+                  {g.staff.map((s) => <StaffCard key={s.id} id={s.id} name={s.name} load={loadByTherapist.get(s.id) ?? 0} />)}
+                </div>
+              ))
+            )
+          ) : floating.length === 0 ? (
             <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">Nothing to assign</p>
           ) : (
             <>
@@ -818,7 +936,7 @@ export function ScheduleBoard({
                             <Fragment key={zKey}>
                               {zg.zone && <GroupHeader label={zg.zone} count={zg.count} collapsed={zCol} onToggle={() => toggleType(zKey)} trackWidth={trackWidth} indent={2} tone="bg-muted/20" />}
                               {(!zg.zone || !zCol) && zg.rows.map((bed) => (
-                                <BedRow key={bed.id} bed={bed} blocks={blocksByBed.get(bed.id) ?? []} windowStartMin={windowStartMin} trackWidth={trackWidth} hours={hours} nowMin={nowMin} onOpen={openBlock} onEmptyClick={onEmptyClick} />
+                                <BedRow key={bed.id} bed={bed} blocks={blocksByBed.get(bed.id) ?? []} windowStartMin={windowStartMin} trackWidth={trackWidth} hours={hours} nowMin={nowMin} onOpen={openBlock} onEmptyClick={onEmptyClick} assignMode={staffDragId != null} />
                               ))}
                             </Fragment>
                           );
@@ -908,6 +1026,22 @@ export function ScheduleBoard({
                 <dt className="font-medium text-muted-foreground">Status</dt>
                 <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[b.variant] ?? b.variant}</dd>
               </dl>
+              {axis === 'bed' && b.draggable && !b.therapistId && staffShifts.length > 0 && (
+                <div className="mt-3 border-t border-border pt-2">
+                  <label className="text-[11px] font-semibold text-muted-foreground">Assign therapist</label>
+                  <select
+                    className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5 text-sm"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const t = staffShifts.find((s) => s.id === e.target.value);
+                      if (t) { doAssign(b.refId, t.id, b.startMin, t.name); setDetail(null); }
+                    }}
+                  >
+                    <option value="" disabled>Pick a therapist…</option>
+                    {staffShifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="mt-3 flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
                 {b.orderId && <Button size="sm" onClick={() => router.push(`/sales-orders/${b.orderId}`)}>Open order</Button>}

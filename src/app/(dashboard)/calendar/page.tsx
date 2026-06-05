@@ -34,8 +34,10 @@ function tsToMin(iso: string): number {
 // Interactive Station board (15-min): beds as rows, with every scheduled /
 // in-service / done order item on its bed, pinned reservations as bed blocks,
 // and unplaced reservations in the "To place" lane (drag onto a bed).
-async function fetchStationBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
+async function fetchStationBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
   const supabase = createServiceClient();
+  const branchId = branchIds[0];
+  const brSet = new Set(branchIds);
   // Board window = this branch's business hours. A close at/before open means it
   // trades past midnight, so the window extends past 1440 and the bookings in
   // 00:00..close (next clock day, same business day) are shifted by +1440.
@@ -53,18 +55,10 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
   // Multi-branch: show the selected branch + the rest of its therapist-sharing
   // group, so cross-branch stations + bookings sit on one board (grouped by
   // Branch). Falls back to just the selected branch when it isn't in a group.
-  const { data: brRow } = await supabase.from('branches').select('therapist_share_group').eq('id', branchId).maybeSingle();
-  const group = brRow?.therapist_share_group ?? null;
-  const { data: grpBranches } = group
-    ? await supabase.from('branches').select('id, code, name').eq('therapist_share_group', group).eq('active', true).order('code')
-    : await supabase.from('branches').select('id, code, name').eq('id', branchId);
-  const allowedBranches = await getAllowedBranchIds();
-  const branchList = (grpBranches ?? []).filter((b) => allowedBranches.has(b.id));
-  if (branchList.length === 0) branchList.push({ id: branchId, code: '—', name: '' });
-  const branchIds = new Set(branchList.map((b) => b.id));
-  const branchCodeById = new Map(branchList.map((b) => [b.id, b.code]));
+  const { data: brCodes } = await supabase.from('branches').select('id, code').in('id', branchIds);
+  const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
   const [bedsRes, itemsRes, shiftRes, unassignedRes] = await Promise.all([
-    supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', [...branchIds]).eq('status', 'active').order('resource_name'),
+    supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
       .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, order_customers ( id ) )')
@@ -76,7 +70,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
     supabase
       .from('employee_shifts')
       .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
-      .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
+      .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     // Unassigned lines (a booking with no bed yet) — they ride the unallocated
     // rail. No resource filter (they have none); branch/day filtered in the loop.
     supabase
@@ -91,7 +85,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
 
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
-    if (!ord || !branchIds.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void' || !it.resource_id) continue;
+    if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void' || !it.resource_id) continue;
     const dur = it.duration_minutes ?? 60;
     let startMin: number;
     let endMin: number;
@@ -128,7 +122,7 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
   // untimed ones sit in the rail's "no time yet" section.
   for (const it of unassignedRes.data ?? []) {
     const ord = one(it.order);
-    if (!ord || !branchIds.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
+    if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
     const dur = it.duration_minutes ?? 60;
     const timed = !!it.scheduled_start;
     const startMin = timed ? place(tsToMin(it.scheduled_start!)) : windowStartMin;
@@ -175,8 +169,10 @@ async function fetchStationBoard(branchId: string, day: string): Promise<{ beds:
 // while bookings with no therapist yet ride the left "Unallocated" rail. Drag a
 // rail card onto a person to pre-assign them. Mirrors fetchStationBoard but keyed
 // on therapist_id instead of resource_id.
-async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
+async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
   const supabase = createServiceClient();
+  const branchId = branchIds[0];
+  const brSet = new Set(branchIds);
   const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
   const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
   const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
@@ -189,22 +185,14 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
 
   // Multi-branch: the selected branch + its therapist-sharing group (∩ access),
   // so the group's therapists show on one board, grouped by Branch.
-  const { data: brRow } = await supabase.from('branches').select('therapist_share_group').eq('id', branchId).maybeSingle();
-  const grp = brRow?.therapist_share_group ?? null;
-  const { data: grpBranches } = grp
-    ? await supabase.from('branches').select('id, code').eq('therapist_share_group', grp).eq('active', true).order('code')
-    : await supabase.from('branches').select('id, code').eq('id', branchId);
-  const allowedBr = await getAllowedBranchIds();
-  const brList = (grpBranches ?? []).filter((b) => allowedBr.has(b.id));
-  if (brList.length === 0) brList.push({ id: branchId, code: '—' });
-  const branchIds = new Set(brList.map((b) => b.id));
-  const branchCodeById = new Map(brList.map((b) => [b.id, b.code]));
+  const { data: brCodes } = await supabase.from('branches').select('id, code').in('id', branchIds);
+  const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
 
   const [shiftRes, itemsRes] = await Promise.all([
     supabase
       .from('employee_shifts')
       .select('employee_id, branch_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
-      .in('branch_id', [...branchIds]).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
+      .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
       .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type )')
@@ -231,7 +219,7 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
   const blocks: BoardBlock[] = [];
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
-    if (!ord || !branchIds.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
+    if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
     const dur = it.duration_minutes ?? 60;
     let startMin: number;
     let endMin: number;
@@ -299,14 +287,16 @@ function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
-async function fetchBranches(branchParam?: string): Promise<{ branches: { id: string; code: string; name: string }[]; branchId: string | undefined }> {
+async function fetchBranches(branchParam?: string): Promise<{ branches: { id: string; code: string; name: string }[]; branchIds: string[] }> {
   const supabase = createServiceClient();
   const allowed = await getAllowedBranchIds();
   const { data } = await supabase
     .from('branches').select('id, code, name').eq('active', true).order('code');
   const list = (data ?? []).filter((b) => allowed.has(b.id));
-  const branchId = branchParam && list.some((b) => b.id === branchParam) ? branchParam : list[0]?.id;
-  return { branches: list, branchId };
+  const requested = (branchParam ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const valid = requested.filter((id) => list.some((b) => b.id === id));
+  const branchIds = valid.length ? valid : (list[0] ? [list[0].id] : []);
+  return { branches: list, branchIds };
 }
 
 export default async function CalendarPage({
@@ -319,10 +309,11 @@ export default async function CalendarPage({
   // therapists (rows = staff, shift hours as a faint band).
   const view: CalendarView = sp.view === 'people' ? 'people' : 'station';
   const day = sp.day || todayISO();
-  const { branches, branchId } = await fetchBranches(sp.branch);
+  const { branches, branchIds } = await fetchBranches(sp.branch);
+  const branchId = branchIds[0];
 
-  const stationBoard = view === 'station' && branchId ? await fetchStationBoard(branchId, day) : null;
-  const peopleBoard = view === 'people' && branchId ? await fetchPeopleBoard(branchId, day) : null;
+  const stationBoard = view === 'station' && branchId ? await fetchStationBoard(branchIds, day) : null;
+  const peopleBoard = view === 'people' && branchId ? await fetchPeopleBoard(branchIds, day) : null;
   // The click-to-add dialog data is shared by both boards (People's click-to-add
   // is gated off for now, but the prop is required).
   const boardDialog = (stationBoard || peopleBoard) ? await fetchBoardDialogData() : null;
@@ -338,7 +329,7 @@ export default async function CalendarPage({
               : 'by therapist · drag a booking onto a person to assign'}
           </p>
         </div>
-        {branchId && <ShiftControls branches={branches} branchId={branchId} day={day} view={view} />}
+        {branchId && <ShiftControls branches={branches} branchId={branchId} selected={branchIds} day={day} view={view} />}
       </div>
 
       {!branchId ? (

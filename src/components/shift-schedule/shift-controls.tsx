@@ -1,24 +1,19 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Users, BedDouble } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { TopBarPortal } from '@/components/layout/topbar-portal';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 type CalendarView = 'station' | 'people';
 
 interface Props {
   branches: { id: string; code: string; name: string }[];
   branchId: string;
+  selected: string[]; // branch ids currently shown on the board (multi-select)
   day: string; // YYYY-MM-DD (selected day)
   view: CalendarView;
 }
@@ -34,12 +29,21 @@ function today(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-export function ShiftControls({ branches, branchId, day, view }: Props) {
+export function ShiftControls({ branches, branchId, selected, day, view }: Props) {
   const router = useRouter();
-  const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
+  const [branchOpen, setBranchOpen] = useState(false);
+  const selSet = new Set(selected);
+  const branchLabel = selected.length >= branches.length ? 'All branches'
+    : selected.length === 1 ? (branches.find((b) => b.id === selected[0])?.code ?? '1 branch')
+    : `${branches.find((b) => b.id === selected[0])?.code ?? ''} +${selected.length - 1}`;
+  function toggleBranch(id: string) {
+    const next = new Set(selSet);
+    if (next.has(id)) { if (next.size > 1) next.delete(id); } else next.add(id);
+    go({ branch: branches.filter((b) => next.has(b.id)).map((b) => b.id).join(',') });
+  }
 
   function go(opts: { branch?: string; day?: string; view?: CalendarView }) {
-    const branch = opts.branch ?? branchId;
+    const branch = opts.branch ?? (selected.join(',') || branchId);
     const v = opts.view ?? view;
     const dy = opts.day ?? day;
     router.push(`/calendar?branch=${branch}&view=${v}&day=${dy}`);
@@ -64,12 +68,43 @@ export function ShiftControls({ branches, branchId, day, view }: Props) {
       {/* Branch switcher lives in the global top bar (top-right), hoisted there
           via the topbar portal slot. */}
       <TopBarPortal>
-        <Select items={branchOptions} value={branchId} onValueChange={(v) => v && go({ branch: v })}>
-          <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {branchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        {/* Multi-select branch picker — tick which branches the board shows.
+            Defaults to just the selected branch; add more to see them together
+            (grouped by Branch). At least one stays selected. */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setBranchOpen((o) => !o)}
+            className="flex w-56 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-3 py-1.5 text-sm font-semibold"
+          >
+            <span className="truncate">{branchLabel}</span>
+            <ChevronDown className="size-4 shrink-0 opacity-60" />
+          </button>
+          {branchOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setBranchOpen(false)} />
+              <div className="absolute right-0 z-50 mt-1 max-h-80 w-60 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg">
+                {branches.map((b) => {
+                  const on = selSet.has(b.id);
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => toggleBranch(b.id)}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    >
+                      <span className={cn('flex size-4 shrink-0 items-center justify-center rounded border', on ? 'border-primary bg-primary text-primary-foreground' : 'border-input')}>
+                        {on && <Check className="size-3" />}
+                      </span>
+                      <span className="font-semibold">{b.code}</span>
+                      <span className="truncate text-muted-foreground">{b.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
       </TopBarPortal>
 
       <div className="flex items-center gap-1">

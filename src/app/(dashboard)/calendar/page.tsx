@@ -181,7 +181,7 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
       .eq('branch_id', branchId).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
+      .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type )')
       .in('status', ['scheduled', 'in_service', 'service_completed', 'interrupted', 'unassigned']),
   ]);
 
@@ -231,6 +231,11 @@ async function fetchPeopleBoard(branchId: string, day: string): Promise<{ beds: 
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: therapistId,
       guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
       line1: one(it.service)?.name ?? one(it.category)?.name ?? 'Service',
+      // Dispatch (external hotel) booking — no in-house station; flag it + show
+      // the room so the People board reads it as off-site, not a bedless gap.
+      line2: ord.service_location_type === 'external_hotel'
+        ? `Dispatch${it.external_room_no ? ` · Rm ${it.external_room_no}` : ''}`
+        : undefined,
       startMin, endMin, durationMin: dur, prepMin: 0, cleanupMin: 0,
       variant, draggable: it.status === 'unassigned' || it.status === 'scheduled',
       orderId: ord.id, therapistId, untimed,

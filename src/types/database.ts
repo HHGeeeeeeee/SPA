@@ -1518,6 +1518,109 @@ export type Database = {
           },
         ]
       }
+      folio_lines: {
+        Row: {
+          amount_cents: number
+          auth_code: string | null
+          card_last4: string | null
+          created_at: string
+          id: string
+          kind: string
+          note: string | null
+          order_id: string
+          order_item_id: string | null
+          payment_method_id: string | null
+          payment_ref: string | null
+          posted_at: string
+          posted_by: string | null
+          shift_id: string
+          stored_value_card_id: string | null
+          tip_cents: number | null
+          updated_at: string
+        }
+        Insert: {
+          amount_cents: number
+          auth_code?: string | null
+          card_last4?: string | null
+          created_at?: string
+          id?: string
+          kind: string
+          note?: string | null
+          order_id: string
+          order_item_id?: string | null
+          payment_method_id?: string | null
+          payment_ref?: string | null
+          posted_at?: string
+          posted_by?: string | null
+          shift_id: string
+          stored_value_card_id?: string | null
+          tip_cents?: number | null
+          updated_at?: string
+        }
+        Update: {
+          amount_cents?: number
+          auth_code?: string | null
+          card_last4?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          note?: string | null
+          order_id?: string
+          order_item_id?: string | null
+          payment_method_id?: string | null
+          payment_ref?: string | null
+          posted_at?: string
+          posted_by?: string | null
+          shift_id?: string
+          stored_value_card_id?: string | null
+          tip_cents?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "folio_lines_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_shift_id_fkey"
+            columns: ["shift_id"]
+            isOneToOne: false
+            referencedRelation: "shifts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_payment_method_id_fkey"
+            columns: ["payment_method_id"]
+            isOneToOne: false
+            referencedRelation: "payment_methods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_stored_value_card_id_fkey"
+            columns: ["stored_value_card_id"]
+            isOneToOne: false
+            referencedRelation: "stored_value_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_posted_by_fkey"
+            columns: ["posted_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       help_article_versions: {
         Row: {
           article_id: string
@@ -3230,6 +3333,85 @@ export type Database = {
           {
             foreignKeyName: "staff_user_business_units_staff_user_id_fkey"
             columns: ["staff_user_id"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shifts: {
+        Row: {
+          branch_id: string
+          business_date: string
+          closed_at: string | null
+          closed_by: string | null
+          closing_count_cents: number | null
+          created_at: string
+          id: string
+          label: string
+          note: string | null
+          opened_at: string
+          opened_by: string | null
+          opening_float_cents: number
+          status: string
+          updated_at: string
+          variance_cents: number | null
+          variance_reason: string | null
+        }
+        Insert: {
+          branch_id: string
+          business_date: string
+          closed_at?: string | null
+          closed_by?: string | null
+          closing_count_cents?: number | null
+          created_at?: string
+          id?: string
+          label: string
+          note?: string | null
+          opened_at?: string
+          opened_by?: string | null
+          opening_float_cents?: number
+          status?: string
+          updated_at?: string
+          variance_cents?: number | null
+          variance_reason?: string | null
+        }
+        Update: {
+          branch_id?: string
+          business_date?: string
+          closed_at?: string | null
+          closed_by?: string | null
+          closing_count_cents?: number | null
+          created_at?: string
+          id?: string
+          label?: string
+          note?: string | null
+          opened_at?: string
+          opened_by?: string | null
+          opening_float_cents?: number
+          status?: string
+          updated_at?: string
+          variance_cents?: number | null
+          variance_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shifts_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shifts_opened_by_fkey"
+            columns: ["opened_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shifts_closed_by_fkey"
+            columns: ["closed_by"]
             isOneToOne: false
             referencedRelation: "staff_users"
             referencedColumns: ["id"]

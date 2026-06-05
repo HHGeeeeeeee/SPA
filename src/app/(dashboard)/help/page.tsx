@@ -5,6 +5,7 @@ import { currentSession, isAdmin } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { NewArticleDialog } from '@/components/help/new-article-dialog';
+import { Markdown } from '@/components/help/markdown';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,7 +66,7 @@ export default async function HelpPage() {
                   <Badge variant="secondary" className="font-bold capitalize">{CATEGORY_LABEL[a.category] ?? a.category}</Badge>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-sm font-medium text-muted-foreground whitespace-pre-wrap">{a.content_markdown}</div>
+                  <Markdown>{a.content_markdown}</Markdown>
                 </CardContent>
               </Card>
             ))}

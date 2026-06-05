@@ -44,13 +44,16 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
   // Board window = this branch's business hours. A close at/before open means it
   // trades past midnight, so the window extends past 1440 and the bookings in
   // 00:00..close (next clock day, same business day) are shifted by +1440.
-  const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
-  const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
+  const { data: brHoursAll } = await supabase.from('branches').select('id, open_time, close_time').in('id', branchIds);
+  const brHours = (brHoursAll ?? []).find((b) => b.id === branchId) ?? null;
+  // Window spans ALL selected branches' hours (union): earliest open to latest
+  // close, so an earlier-opening branch's morning shifts don't wrap to next day.
+  const openMin = Math.min(...((brHoursAll ?? []).map((b) => timeToMin(b.open_time ?? '10:00') ?? 600).concat(600)));
   const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
   const crossesMidnight = closeMin <= openMin;
   const windowStartMin = openMin;
-  const windowEndMin = crossesMidnight ? closeMin + 1440 : closeMin;
   const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
+  const windowEndMin = Math.max(...((brHoursAll ?? []).map((b) => place(timeToMin(b.close_time ?? '02:00') ?? 120)).concat(120)));
   const openHH = (brHours?.open_time ?? '10:00').slice(0, 5);
   const closeHH = (brHours?.close_time ?? '02:00').slice(0, 5);
   const rangeStart = `${day}T${openHH}:00+08:00`;
@@ -176,13 +179,13 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
-  const { data: brHours } = await supabase.from('branches').select('open_time, close_time').eq('id', branchId).maybeSingle();
-  const openMin = timeToMin(brHours?.open_time ?? '10:00') ?? 600;
-  const closeMin = timeToMin(brHours?.close_time ?? '02:00') ?? 120;
-  const crossesMidnight = closeMin <= openMin;
+  // Window spans ALL selected branches' hours (union) so an earlier-opening
+  // branch's morning shifts don't wrap past midnight (and lose their band).
+  const { data: brHoursAll } = await supabase.from('branches').select('open_time, close_time').in('id', branchIds);
+  const openMin = Math.min(...((brHoursAll ?? []).map((b) => timeToMin(b.open_time ?? '10:00') ?? 600).concat(600)));
   const windowStartMin = openMin;
-  const windowEndMin = crossesMidnight ? closeMin + 1440 : closeMin;
   const place = (clockMin: number) => (clockMin < openMin ? clockMin + 1440 : clockMin);
+  const windowEndMin = Math.max(...((brHoursAll ?? []).map((b) => place(timeToMin(b.close_time ?? '02:00') ?? 120)).concat(120)));
   const isServicePosition = (code: string | null): boolean =>
     !!code && (code.startsWith('MASSAGE_') || code.startsWith('HAIR_') || code.startsWith('NAIL_'));
 

@@ -19,8 +19,18 @@ export interface CashShiftConfig {
   shifts: CashShift[];
 }
 
-// Default when a branch has no config of its own: a single whole-day shift.
-export const DEFAULT_CONFIG: CashShiftConfig = { open: 0, shifts: [{ name: 'Full day', end: DAY_END }] };
+// The fixed shift set for every branch: AM / PM / GY (graveyard). There is no
+// per-branch configuration. The `end` values are nominal placeholders only — a
+// posting binds to whichever shift the cashier has OPEN (shift_id), not to a
+// clock window, so these boundaries are never shown or used to bucket payments.
+export const DEFAULT_CONFIG: CashShiftConfig = {
+  open: 0,
+  shifts: [
+    { name: 'AM Shift', end: 480 },
+    { name: 'PM Shift', end: 960 },
+    { name: 'GY Shift', end: DAY_END },
+  ],
+};
 
 export function hhmmToMin(s: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());

@@ -2,14 +2,13 @@ import Link from 'next/link';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { getAllowedBranches } from '@/lib/branch-access';
-import { currentSession, isAdmin, isManager } from '@/lib/auth';
+import { currentSession, isManager } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { CashReconForm } from '@/components/reconciliation/cash-recon-form';
 import { CashDetailCard } from '@/components/reconciliation/cash-detail-card';
-import { CashShiftConfig } from '@/components/reconciliation/cash-shift-config';
 import { ReconDatePicker } from '@/components/reconciliation/recon-date-picker';
-import { loadDayShifts, getBranchShifts, getBranchShiftConfig, loadCashDetail } from './actions';
+import { loadDayShifts, getBranchShifts, loadCashDetail } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +24,6 @@ export default async function CashReconciliationPage({
   const sp = await searchParams;
   const supabase = createServiceClient();
   const session = await currentSession();
-  const admin = isAdmin(session);
   const canReopen = isManager(session);
   const branches = await getAllowedBranches();
   const list = branches ?? [];
@@ -34,7 +32,6 @@ export default async function CashReconciliationPage({
 
   const shifts = branchId ? await loadDayShifts(branchId, date) : [];
   const configured = branchId ? await getBranchShifts(branchId) : [];
-  const shiftConfig = branchId ? await getBranchShiftConfig(branchId) : null;
   const cashDetail = branchId ? await loadCashDetail(branchId, date) : [];
   const allClosed = shifts.length > 0 && shifts.every((s) => s.closed);
 
@@ -60,7 +57,6 @@ export default async function CashReconciliationPage({
         <div className="ml-auto">
           <ReconDatePicker basePath="/reconciliation/cash" branchId={branchId} date={date} />
         </div>
-        {branchId && admin && shiftConfig && <CashShiftConfig branchId={branchId} config={shiftConfig} />}
       </div>
 
       {!branchId ? (

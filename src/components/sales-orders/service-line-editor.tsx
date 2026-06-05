@@ -1,7 +1,6 @@
 'use client';
 
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -134,26 +133,25 @@ export function ServiceLineEditor({
     onChange(patch);
   };
 
+  // Bare cells (no per-field labels) so the row aligns under the shared column
+  // headers — each is a grid item placed by the parent's SERVICE_GRID template.
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="w-40">
-        <Label className="text-[10px] font-semibold text-muted-foreground">Service</Label>
+    <>
+      <div className="min-w-0">
         <Select items={groupOptions} value={draft.groupSel} onValueChange={changeGroup} disabled={disabled}>
-          <SelectTrigger className="h-8"><SelectValue placeholder="Pick a service" /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full"><SelectValue placeholder="Service" /></SelectTrigger>
           <SelectContent>{groupOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <div className="w-36">
-        <Label className="text-[10px] font-semibold text-muted-foreground">Duration</Label>
+      <div className="min-w-0">
         <Select items={variantOptions} value={draft.svcId} onValueChange={changeSvc} disabled={disabled || !draft.groupSel}>
-          <SelectTrigger className="h-8"><SelectValue placeholder={draft.groupSel ? 'Pick duration' : 'Service first'} /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full"><SelectValue placeholder={draft.groupSel ? 'Duration' : '—'} /></SelectTrigger>
           <SelectContent>{variantOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <div className="w-44">
-        <Label className="text-[10px] font-semibold text-muted-foreground">Therapist</Label>
+      <div className="min-w-0">
         <Select items={empItems} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
-          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>Unassigned</SelectItem>
             <SelectGroup>
@@ -176,10 +174,9 @@ export function ServiceLineEditor({
           </SelectContent>
         </Select>
       </div>
-      <div className="w-44">
-        <Label className="text-[10px] font-semibold text-muted-foreground">Station</Label>
+      <div className="min-w-0">
         <Select items={resItems} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
-          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>None</SelectItem>
             {eligibleResources.length === 0 ? (
@@ -195,19 +192,15 @@ export function ServiceLineEditor({
           </SelectContent>
         </Select>
       </div>
-      <div className="w-40">
-        <Label className="text-[10px] font-semibold text-muted-foreground">Discount</Label>
+      <div className="min-w-0">
         <Select items={discOptions} value={sourceDiscountLocked ? defaultDiscountId : draft.discountId} onValueChange={(v) => v && onChange({ discountId: v })} disabled={disabled || sourceDiscountLocked}>
-          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>{discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
+        {needsDiscountAmount && (
+          <Input className="h-7 mt-1" type="number" min="0" step="0.01" value={draft.discountOverride} onChange={(e) => onChange({ discountOverride: e.target.value })} placeholder={`${selectedDiscountCode} amt`} disabled={disabled} />
+        )}
       </div>
-      {needsDiscountAmount && (
-        <div className="w-28">
-          <Label className="text-[10px] font-semibold text-muted-foreground">{selectedDiscountCode} amt *</Label>
-          <Input className="h-8" type="number" min="0" step="0.01" value={draft.discountOverride} onChange={(e) => onChange({ discountOverride: e.target.value })} placeholder="manager-set" disabled={disabled} />
-        </div>
-      )}
-    </div>
+    </>
   );
 }

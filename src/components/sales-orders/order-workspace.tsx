@@ -61,6 +61,12 @@ function peso(cents: number): string {
   return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
 }
 
+// Shared column template for a guest's service table so the header row, the
+// inline-editable rows, and the read-only rows all line up. The table scrolls
+// horizontally inside its card. Add a column here (+ its header + cell) when
+// surfacing more per-line fields.
+const SERVICE_GRID = 'grid grid-cols-[minmax(8rem,1.4fr)_6rem_minmax(8.5rem,1.3fr)_minmax(7.5rem,1fr)_minmax(7rem,1fr)_5.5rem_6rem_minmax(7rem,auto)] items-center gap-x-2';
+
 interface OrderItem {
   id: string;
   order_customer_id: string;
@@ -854,245 +860,138 @@ export function OrderWorkspace({
               </div>
             </CardHeader>
             <CardContent>
-              {itemsByCustomer(c.id).some((it) => !isLineEditable(it)) && (
-                <div className="grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-center gap-x-3 border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                  <span>Service</span>
-                  <span>Therapist</span>
-                  <span>Status</span>
-                  <span>Duration · Station</span>
-                  <span>Action</span>
-                  <span className="justify-self-end">Amount</span>
+              {itemsByCustomer(c.id).length > 0 && (
+                <div className="overflow-x-auto">
+                  <div className="min-w-[58rem]">
+                    <div className={`${SERVICE_GRID} border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground`}>
+                      <span>Service</span>
+                      <span>Duration</span>
+                      <span>Therapist</span>
+                      <span>Station</span>
+                      <span>Discount</span>
+                      <span>Status</span>
+                      <span className="text-right">Amount</span>
+                      <span />
+                    </div>
+                    <ul className="flex flex-col divide-y divide-border">
+                      {itemsByCustomer(c.id).map((it) => {
+                        const cleaningUntil =
+                          ['service_completed', 'interrupted'].includes(it.status)
+                          && it.actual_end && it.resource_id && it.cleanup_minutes > 0 && !it.bed_released_at
+                            ? new Date(new Date(it.actual_end).getTime() + it.cleanup_minutes * 60000)
+                            : null;
+                        const isCleaning = cleaningUntil != null && cleaningUntil.getTime() > Date.now();
+                        const guestHasLiveService = items.some((x) => x.id !== it.id && x.order_customer_id === it.order_customer_id && x.status === 'in_service');
+
+                        // Not-yet-started lines edit inline — bare selects in the
+                        // same columns as the read-only rows so everything aligns.
+                        if (isLineEditable(it)) {
+                          const d = effectiveDraft(it);
+                          return (
+                            <li key={it.id} className={`${SERVICE_GRID} py-1.5`}>
+                              <ServiceLineEditor
+                                draft={d}
+                                onChange={(patch) => setDraft(it, patch)}
+                                serviceItems={serviceItems}
+                                employees={employees}
+                                borrowableEmployees={borrowableEmployees}
+                                resources={resources}
+                                discountClasses={discountClasses}
+                                capabilityByEmployee={capabilityByEmployee}
+                                busyTherapistIds={busyTherapistIds}
+                                busyResourceIds={busyResourceIds}
+                                guestGender={guestGenderOf(c)}
+                                sourceDiscountLocked={sourceDiscountLocked}
+                                defaultDiscountId={defaultDiscountId}
+                                disabled={pending}
+                              />
+                              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
+                              <span className="text-right font-bold tabular text-sm">{peso(it.final_amount_cents)}</span>
+                              <div className="flex flex-wrap items-center gap-1 justify-end">
+                                {canRunService && it.status === 'scheduled' && (
+                                  <ActionBtn tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'} className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={() => doStartItem(it)} disabled={pending || guestHasLiveService}>Start</ActionBtn>
+                                )}
+                                {canRunService && it.status === 'scheduled' && (
+                                  <ActionBtn tip="Cancel this service — drops it from the bill but keeps it in the record." variant="outline" className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => setCancelItem(it)} disabled={pending}>Cancel</ActionBtn>
+                                )}
+                                {!['paid', 'closed', 'void'].includes(order.status) && (
+                                  <ActionBtn tip="Guest didn't show — mark no-show (zero charge, leaves the schedule)." variant="outline" className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => doNoShow(it.id)} disabled={pending}>No-show</ActionBtn>
+                                )}
+                                {order.status === 'draft' && (
+                                  <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending} title="Remove service"><Trash2 className="size-3.5 text-destructive" /></Button>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        }
+
+                        const statusTag =
+                          it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
+                          : isCleaning ? { t: 'Cleaning', c: 'text-amber-600 dark:text-amber-400' }
+                          : (it.status === 'service_completed') ? { t: 'Done', c: 'text-primary' }
+                          : it.status === 'interrupted' ? (it.switched ? { t: 'Switched', c: 'text-amber-600 dark:text-amber-400' } : { t: 'Interrupted', c: 'text-destructive' })
+                          : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
+                          : it.status === 'no_show' ? { t: 'No-show', c: 'text-muted-foreground' }
+                          : null;
+                        const tw = timeWindow(it.actual_start, it.actual_end, it.duration_minutes, it.prep_minutes);
+                        const discCode = discountClasses.find((dd) => dd.id === it.discount_class_id)?.code ?? '—';
+                        return (
+                          <li key={it.id} className={`${SERVICE_GRID} py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                            <span className="font-semibold truncate">{it.service_name}</span>
+                            <span className="text-xs font-medium text-muted-foreground truncate">
+                              {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
+                              {tw && <span className="block tabular opacity-80">{tw}</span>}
+                            </span>
+                            <span className="font-medium text-muted-foreground truncate">
+                              {it.therapist_name ?? 'Unassigned'}{it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
+                            </span>
+                            <span className="text-xs font-medium text-muted-foreground truncate">
+                              {it.station_name ?? '—'}
+                              {isCleaning && (
+                                <span className="mt-0.5 block">
+                                  <ActionBtn tip="Free the bed now, before the cleanup buffer ends." variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => doReleaseBed(it.id)} disabled={pending}>Ready now</ActionBtn>
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
+                            <span className="text-[10px] font-bold uppercase tracking-wide truncate">
+                              {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
+                            </span>
+                            <span className="text-right tabular text-sm">
+                              {['cancelled', 'no_show'].includes(it.status) ? (
+                                <span className="font-medium line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>
+                              ) : (
+                                <span className="font-bold">
+                                  {it.discount_amount_cents > 0 && <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>}
+                                  {peso(it.final_amount_cents)}
+                                </span>
+                              )}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1 justify-end">
+                              {canRunService && it.status === 'in_service' && (
+                                <>
+                                  <ActionBtn tip="Mark this service finished — stamps the end time." className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700" onClick={() => doFinishItem(it)} disabled={pending}>Finish</ActionBtn>
+                                  <ActionBtn tip="Stop this service with no charge and pick a different one." variant="outline" className="border-amber-500/60 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-500/10" onClick={() => doSwitchItem(it)} disabled={pending}>Switch</ActionBtn>
+                                  <ActionBtn tip="Stop mid-service and decide the charge (none / partial / full / reschedule)." variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</ActionBtn>
+                                </>
+                              )}
+                              {it.status === 'service_completed' && it.feedback_score == null && (
+                                <ActionBtn tip="Record the guest's feedback — a score is required." variant="outline" className="border-violet-500/60 text-violet-700 hover:bg-violet-50 hover:text-violet-800 dark:text-violet-400 dark:hover:bg-violet-500/10" onClick={() => setFeedbackItem(it)} disabled={pending}><Star className="size-3.5" /> Feedback</ActionBtn>
+                              )}
+                              {['interrupted', 'cancelled'].includes(it.status) && !it.switched && !['paid', 'closed', 'void'].includes(order.status) && (
+                                <ActionBtn tip="Re-add this service as a fresh line to do again." variant="outline" className="border-indigo-500/60 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-500/10" onClick={() => doRedoItem(it.id)} disabled={pending}>Redo</ActionBtn>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 </div>
               )}
-              <ul className="flex flex-col divide-y divide-border">
-                {itemsByCustomer(c.id).map((it) => {
-                  // A finished line keeps its bed for the cleanup buffer, unless
-                  // released early. While cleaning, surface "free ~HH:MM" + Ready now.
-                  const cleaningUntil =
-                    ['service_completed', 'interrupted'].includes(it.status)
-                    && it.actual_end && it.resource_id && it.cleanup_minutes > 0 && !it.bed_released_at
-                      ? new Date(new Date(it.actual_end).getTime() + it.cleanup_minutes * 60000)
-                      : null;
-                  const isCleaning = cleaningUntil != null && cleaningUntil.getTime() > Date.now();
-                  // This guest already has a live service → can't start another yet.
-                  const guestHasLiveService = items.some((x) => x.id !== it.id && x.order_customer_id === it.order_customer_id && x.status === 'in_service');
-                  // Not-yet-started lines edit inline (no pencil) — the row IS the
-                  // editor; the guest header's Save commits. Started / done lines
-                  // fall through to the read-only grid row below.
-                  if (isLineEditable(it)) {
-                    const d = effectiveDraft(it);
-                    return (
-                      <li key={it.id} className="flex flex-wrap items-end gap-x-3 gap-y-2 border-b border-border py-2 last:border-0">
-                        <ServiceLineEditor
-                          draft={d}
-                          onChange={(patch) => setDraft(it, patch)}
-                          serviceItems={serviceItems}
-                          employees={employees}
-                          borrowableEmployees={borrowableEmployees}
-                          resources={resources}
-                          discountClasses={discountClasses}
-                          capabilityByEmployee={capabilityByEmployee}
-                          busyTherapistIds={busyTherapistIds}
-                          busyResourceIds={busyResourceIds}
-                          guestGender={guestGenderOf(c)}
-                          sourceDiscountLocked={sourceDiscountLocked}
-                          defaultDiscountId={defaultDiscountId}
-                          disabled={pending}
-                        />
-                        <div className="ml-auto flex items-center gap-2 pb-0.5">
-                          {canRunService && it.status === 'scheduled' && (
-                            <ActionBtn
-                              tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'}
-                              className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                              onClick={() => doStartItem(it)}
-                              disabled={pending || guestHasLiveService}
-                            >
-                              Start
-                            </ActionBtn>
-                          )}
-                          {canRunService && it.status === 'scheduled' && (
-                            <ActionBtn
-                              tip="Cancel this service — drops it from the bill but keeps it in the record."
-                              variant="outline"
-                              className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
-                              onClick={() => setCancelItem(it)}
-                              disabled={pending}
-                            >
-                              Cancel
-                            </ActionBtn>
-                          )}
-                          {!['paid', 'closed', 'void'].includes(order.status) && (
-                            <ActionBtn
-                              tip="Guest didn't show — mark no-show (zero charge, leaves the schedule)."
-                              variant="outline"
-                              className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
-                              onClick={() => doNoShow(it.id)}
-                              disabled={pending}
-                            >
-                              No-show
-                            </ActionBtn>
-                          )}
-                          <span className="font-bold tabular w-24 text-right">
-                            {it.discount_amount_cents > 0 && (
-                              <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>
-                            )}
-                            {peso(it.final_amount_cents)}
-                          </span>
-                          {order.status === 'draft' && (
-                            <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending} title="Remove service">
-                              <Trash2 className="size-3.5 text-destructive" />
-                            </Button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  }
-                  const detailParts = [
-                    it.duration_minutes ? `${it.duration_minutes} min` : null,
-                    it.station_name,
-                    timeWindow(it.actual_start, it.actual_end, it.duration_minutes, it.prep_minutes),
-                    isCleaning ? `cleaning · free ~${hm(cleaningUntil!.toISOString())}` : null,
-                  ].filter(Boolean) as string[];
-                  const statusTag =
-                    it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
-                    : isCleaning ? { t: 'Cleaning', c: 'text-amber-600 dark:text-amber-400' }
-                    : (it.status === 'service_completed') ? { t: 'Done', c: 'text-primary' }
-                    : it.status === 'interrupted' ? (it.switched ? { t: 'Switched', c: 'text-amber-600 dark:text-amber-400' } : { t: 'Interrupted', c: 'text-destructive' })
-                    : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
-                    : it.status === 'no_show' ? { t: 'No-show', c: 'text-muted-foreground' }
-                    : null;
-                  return (
-                  <li key={it.id} className={`grid grid-cols-[11rem_10rem_11rem_18rem_10rem_1fr] items-center gap-x-3 py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
-                    <span className="font-semibold truncate">{it.service_name}</span>
-                    <span className="font-medium text-muted-foreground truncate">
-                      {it.therapist_name ?? 'Unassigned'}
-                      {it.therapist_home_branch_code && ` · ${it.therapist_home_branch_code}`}
-                    </span>
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[10px] font-bold uppercase tracking-wide truncate">
-                        {statusTag && <span className={statusTag.c}>{statusTag.t}</span>}
-                      </span>
-                      {isCleaning && (
-                        <ActionBtn
-                          tip="Free the bed now, before the cleanup buffer ends."
-                          variant="outline"
-                          className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary"
-                          onClick={() => doReleaseBed(it.id)}
-                          disabled={pending}
-                        >
-                          Ready now
-                        </ActionBtn>
-                      )}
-                    </div>
-                    <span className="text-xs font-medium text-muted-foreground tabular truncate">
-                      {detailParts.join(' · ')}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {canRunService && it.status === 'scheduled' && (
-                        <>
-                          <ActionBtn
-                            tip={guestHasLiveService ? 'Finish this guest’s current service before starting the next.' : 'Begin this service now — stamps the start time.'}
-                            className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                            onClick={() => doStartItem(it)}
-                            disabled={pending || guestHasLiveService}
-                          >
-                            Start
-                          </ActionBtn>
-                          <ActionBtn
-                            tip="Cancel this service — drops it from the bill but keeps it in the record."
-                            variant="outline"
-                            className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
-                            onClick={() => setCancelItem(it)}
-                            disabled={pending}
-                          >
-                            Cancel
-                          </ActionBtn>
-                        </>
-                      )}
-                      {['unassigned', 'scheduled'].includes(it.status) && !['paid', 'closed', 'void'].includes(order.status) && (
-                        <ActionBtn
-                          tip="Guest didn't show — mark this booking no-show (zero charge, leaves the schedule)."
-                          variant="outline"
-                          className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          onClick={() => doNoShow(it.id)}
-                          disabled={pending}
-                        >
-                          No-show
-                        </ActionBtn>
-                      )}
-                      {canRunService && it.status === 'in_service' && (
-                        <>
-                          <ActionBtn
-                            tip="Mark this service finished — stamps the end time."
-                            className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700"
-                            onClick={() => doFinishItem(it)}
-                            disabled={pending}
-                          >
-                            Finish
-                          </ActionBtn>
-                          <ActionBtn
-                            tip="Stop this service with no charge and pick a different one."
-                            variant="outline"
-                            className="border-amber-500/60 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-500/10"
-                            onClick={() => doSwitchItem(it)}
-                            disabled={pending}
-                          >
-                            Switch
-                          </ActionBtn>
-                          <ActionBtn
-                            tip="Stop mid-service and decide the charge (none / partial / full / reschedule)."
-                            variant="outline"
-                            className="border-destructive/50 text-destructive hover:bg-destructive/10"
-                            onClick={() => setInterruptItem(it)}
-                            disabled={pending}
-                          >
-                            Interrupt
-                          </ActionBtn>
-                        </>
-                      )}
-                      {/* "Ready now" lives next to the Cleaning status, not here. */}
-                      {it.status === 'service_completed' && it.feedback_score == null && (
-                        <ActionBtn
-                          tip="Record the guest's feedback — a score is required."
-                          variant="outline"
-                          className="border-violet-500/60 text-violet-700 hover:bg-violet-50 hover:text-violet-800 dark:text-violet-400 dark:hover:bg-violet-500/10"
-                          onClick={() => setFeedbackItem(it)}
-                          disabled={pending}
-                        >
-                          <Star className="size-3.5" /> Feedback
-                        </ActionBtn>
-                      )}
-                      {['interrupted', 'cancelled'].includes(it.status) && !it.switched && !['paid', 'closed', 'void'].includes(order.status) && (
-                        <ActionBtn
-                          tip="Re-add this service as a fresh line to do again."
-                          variant="outline"
-                          className="border-indigo-500/60 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-500/10"
-                          onClick={() => doRedoItem(it.id)}
-                          disabled={pending}
-                        >
-                          Redo
-                        </ActionBtn>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 justify-self-end">
-                      {['cancelled', 'no_show'].includes(it.status) ? (
-                        <span className="font-medium tabular line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>
-                      ) : (
-                        <span className="font-bold tabular">
-                          {it.discount_amount_cents > 0 && (
-                            <span className="line-through text-muted-foreground font-medium mr-1">{peso(it.list_price_cents)}</span>
-                          )}
-                          {peso(it.final_amount_cents)}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                  );
-                })}
-                {itemsByCustomer(c.id).length === 0 && (
-                  <li className="py-2 text-sm font-medium text-muted-foreground">No services yet</li>
-                )}
-              </ul>
+              {itemsByCustomer(c.id).length === 0 && (
+                <p className="py-2 text-sm font-medium text-muted-foreground">No services yet</p>
+              )}
 
               {order.editable && (
                 activeCustomer === c.id ? (

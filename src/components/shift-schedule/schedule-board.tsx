@@ -15,6 +15,7 @@ import {
   useSensors,
   useDraggable,
   useDroppable,
+  DragOverlay,
 } from '@dnd-kit/core';
 
 import { Card } from '@/components/ui/card';
@@ -398,29 +399,28 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
 
 // A draggable on-shift therapist (Station rail, Staff mode). Drag onto an
 // unassigned service block to set its therapist; the badge is today's booking load.
-function StaffCard({ id, name, load, branch }: { id: string; name: string; load: number; branch?: string }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+function StaffCard({ id, name, load, branch, shift }: { id: string; name: string; load: number; branch?: string; shift?: string }) {
+  // No transform here — a DragOverlay renders the moving copy so it isn't clipped
+  // by the rail's overflow. The source just dims while dragging.
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `staff:${id}`,
     data: { staff: { id, name } },
   });
-  const style: React.CSSProperties = {
-    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
-    zIndex: isDragging ? 50 : undefined,
-    opacity: isDragging ? 0.85 : 1,
-    touchAction: 'none',
-  };
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      style={style}
-      className="flex items-center gap-2 rounded border border-border bg-card px-2 py-1.5 text-[11px] cursor-grab active:cursor-grabbing hover:bg-accent"
-      title={`${name}${branch ? ` · ${branch}` : ''} · ${load} booking${load === 1 ? '' : 's'} today`}
+      style={{ touchAction: 'none', opacity: isDragging ? 0.4 : 1 }}
+      className="flex flex-col gap-0.5 rounded border border-border bg-card px-2 py-1.5 text-[11px] cursor-grab active:cursor-grabbing hover:bg-accent"
+      title={`${name}${branch ? ` · ${branch}` : ''}${shift ? ` · ${shift}` : ''} · ${load} booking${load === 1 ? '' : 's'} today`}
     >
-      <span className="flex-1 truncate font-bold">{name}</span>
-      {branch && <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary">{branch}</span>}
-      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-extrabold tabular-nums text-muted-foreground">{load}</span>
+      <div className="flex items-center gap-2">
+        <span className="flex-1 truncate font-bold">{name}</span>
+        {branch && <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary">{branch}</span>}
+        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-extrabold tabular-nums text-muted-foreground">{load}</span>
+      </div>
+      {shift && <span className="tabular-nums text-[9px] font-semibold text-muted-foreground">{shift}</span>}
     </div>
   );
 }
@@ -496,6 +496,7 @@ export function ScheduleBoard({
   // to light up the droppable (unassigned) blocks.
   const [railMode, setRailMode] = useState<'bookings' | 'staff'>('bookings');
   const [staffDragId, setStaffDragId] = useState<string | null>(null);
+  const [activeStaffName, setActiveStaffName] = useState<string | null>(null);
   const [staffSearch, setStaffSearch] = useState('');
 
   const total = Math.max(60, windowEndMin - windowStartMin);
@@ -714,12 +715,13 @@ export function ScheduleBoard({
     return rectIntersection({ ...args, droppableContainers });
   };
   function onDragStart(e: DragStartEvent) {
-    const staff = e.active.data.current?.staff as { id: string } | undefined;
-    if (staff) setStaffDragId(staff.id);
+    const staff = e.active.data.current?.staff as { id: string; name: string } | undefined;
+    if (staff) { setStaffDragId(staff.id); setActiveStaffName(staff.name); }
   }
+  function clearStaffDrag() { setStaffDragId(null); setActiveStaffName(null); }
   function onDragEnd(e: DragEndEvent) {
     suppressClick.current = Date.now();
-    setStaffDragId(null);
+    clearStaffDrag();
     const overId = e.over?.id as string | undefined;
     // Staff card dropped on an unassigned service block → set its therapist.
     const staff = e.active.data.current?.staff as { id: string; name: string } | undefined;
@@ -777,7 +779,7 @@ export function ScheduleBoard({
     : undefined;
 
   return (
-    <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setStaffDragId(null)}>
+    <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={clearStaffDrag}>
       <div className="flex items-start gap-3">
       {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
       <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
@@ -823,7 +825,7 @@ export function ScheduleBoard({
               filteredStaffGroups.map((g) => (
                 <div key={g.pos} className="flex flex-col gap-1.5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">{g.label} · {g.staff.length}</div>
-                  {g.staff.map((s) => <StaffCard key={s.id} id={s.id} name={s.name} load={loadByTherapist.get(s.id) ?? 0} branch={staffMultiBranch ? s.branch : undefined} />)}
+                  {g.staff.map((s) => <StaffCard key={s.id} id={s.id} name={s.name} load={loadByTherapist.get(s.id) ?? 0} branch={staffMultiBranch ? s.branch : undefined} shift={`${hhmm(s.startMin)}–${hhmm(s.endMin)}`} />)}
                 </div>
               ))
             )
@@ -1072,6 +1074,16 @@ export function ScheduleBoard({
           </>
         );
       })()}
+
+      {/* Drag preview for staff cards — renders in a portal so it isn't clipped
+          by the rail's overflow while dragging onto a far block. */}
+      <DragOverlay dropAnimation={null}>
+        {activeStaffName ? (
+          <div className="flex cursor-grabbing items-center gap-2 rounded border border-primary bg-card px-2 py-1.5 text-[11px] font-bold shadow-lg">
+            {activeStaffName}
+          </div>
+        ) : null}
+      </DragOverlay>
 
     </DndContext>
   );

@@ -7,14 +7,13 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 
 // Service / fulfillment axis — the label for the lifecycle status. `completed`
-// and `paid` both read as "Service done"; the separate payment badge tells them
-// apart, so a green "Service done" can't be misread as "paid".
+// reads as "Service done" with the separate payment badge showing the balance;
+// `closed` means service done AND paid in full.
 export const SERVICE_LABEL: Record<string, string> = {
   draft: 'Draft',
   open: 'Open',
   in_service: 'In service',
   completed: 'Service done',
-  paid: 'Service done',
   closed: 'Closed',
   void: 'Void',
   posting: 'Posting',
@@ -23,17 +22,16 @@ export const SERVICE_LABEL: Record<string, string> = {
 
 const STAGE_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
   reserved: 'secondary', draft: 'secondary', open: 'default', in_service: 'default',
-  completed: 'default', posting: 'secondary', paid: 'default', closed: 'secondary', void: 'destructive',
+  completed: 'default', posting: 'secondary', closed: 'secondary', void: 'destructive',
 };
 
 // Plain-language note shown on hover so staff know exactly what a stage means.
 const STAGE_DESC: Record<string, string> = {
   draft: 'Counter draft — not confirmed; no resources held yet.',
   open: 'Confirmed and resources are held; service has not started.',
-  in_service: 'Service is in progress.',
-  completed: 'Service finished but the order is not closed yet — check the payment badge for any balance due.',
-  paid: 'Service finished and paid in full; not yet day-closed.',
-  closed: 'Day closed at Revenue Confirm — locked. Corrections need an adjustment.',
+  in_service: 'Service is in progress — revenue is booked.',
+  completed: 'Service finished but not yet paid in full — check the payment badge for the balance due.',
+  closed: 'Service finished and paid in full — the order is done.',
   void: 'Voided — cancelled and excluded from all totals.',
   posting: 'Posting to the ledger…',
   reserved: 'Reservation.',
@@ -117,7 +115,7 @@ export function PaymentBadge({
     label = <><Check className="size-3" /> Paid</>;
   } else if (status === 'completed') {
     // Service done but money not (fully) in — the trap. Full payment would have
-    // advanced it to Paid, so a completed counter order is by definition owing.
+    // advanced it to Closed, so a completed counter order is by definition owing.
     cls = `${BASE} bg-destructive/10 text-destructive`;
     label = <><TriangleAlert className="size-3" /> {state === 'partial' ? 'Partial' : 'Unpaid'} · {peso(due)} due</>;
   } else if (state === 'partial') {

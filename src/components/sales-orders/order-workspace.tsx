@@ -160,12 +160,6 @@ interface Props {
   storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   capabilityByEmployee: Record<string, string[]>;
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
-  /** Active managers with a PIN set — drives the inline approval picker
-   *  when staff picks No charge on the Interrupt dialog. */
-  pinManagers: { id: string; name: string }[];
-  /** Whether the caller is themselves manager+ — when true the PIN section
-   *  hides (server records them as approver automatically). */
-  viewerIsManager: boolean;
 }
 
 const NONE = '__none__';
@@ -283,8 +277,6 @@ export function OrderWorkspace({
   paymentMethods,
   storedValueCards,
   paymentPolicy,
-  pinManagers,
-  viewerIsManager,
   capabilityByEmployee,
 }: Props) {
   const [pending, startTransition] = useTransition();
@@ -844,7 +836,7 @@ export function OrderWorkspace({
                                 {canRunService && it.status === 'draft' && (
                                   <ActionBtn tip="Cancel this service — drops it from the bill but keeps it in the record." variant="outline" className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => setCancelItem(it)} disabled={pending}>Cancel</ActionBtn>
                                 )}
-                                {!['paid', 'closed', 'void'].includes(order.status) && (
+                                {!['closed', 'void'].includes(order.status) && (
                                   <ActionBtn tip="Guest didn't show — mark no-show (zero charge, leaves the schedule)." variant="outline" className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => doNoShow(it.id)} disabled={pending}>No-show</ActionBtn>
                                 )}
                               </div>
@@ -911,7 +903,7 @@ export function OrderWorkspace({
                                   <ActionBtn tip="Stop mid-service and decide the charge (none / partial / full / reschedule)." variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</ActionBtn>
                                 </>
                               )}
-                              {['interrupted', 'cancelled'].includes(it.status) && !it.switched && !['paid', 'closed', 'void'].includes(order.status) && (
+                              {['interrupted', 'cancelled'].includes(it.status) && !it.switched && !['closed', 'void'].includes(order.status) && (
                                 <ActionBtn tip="Re-add this service as a fresh line to do again." variant="outline" className="border-indigo-500/60 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-500/10" onClick={() => doRedoItem(it.id)} disabled={pending}>Redo</ActionBtn>
                               )}
                             </div>
@@ -1142,8 +1134,6 @@ export function OrderWorkspace({
           serviceName={interruptItem.service_name}
           open={!!interruptItem}
           onOpenChange={(o) => { if (!o) setInterruptItem(null); }}
-          pinManagers={pinManagers}
-          viewerIsManager={viewerIsManager}
         />
       )}
 

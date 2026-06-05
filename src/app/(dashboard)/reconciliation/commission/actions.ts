@@ -58,7 +58,7 @@ async function loadEligible(from: string, to: string, branchId: string) {
   return (data ?? [])
     .map((it) => ({ it, ord: one(it.order), svc: one(it.service), th: one(it.therapist) }))
     .filter((r) =>
-      r.ord && r.ord.branch_id === branchId && ['paid', 'closed'].includes(r.ord.status) &&
+      r.ord && r.ord.branch_id === branchId && r.ord.status === 'closed' &&
       r.it.status === 'service_completed' &&
       r.ord.service_date >= from && r.ord.service_date <= to &&
       r.svc?.commission_applicable && r.it.therapist_id,

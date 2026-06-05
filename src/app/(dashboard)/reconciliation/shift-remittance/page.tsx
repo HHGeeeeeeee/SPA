@@ -32,7 +32,7 @@ export default async function ShiftRemittancePage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Shift Remittance</h2>
+        <h2 className="text-3xl font-bold tracking-tight">Sales Remittance</h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">
           Open a shift before taking sales or payments — every posting lands in the open shift. Count and close it at the end.
         </p>

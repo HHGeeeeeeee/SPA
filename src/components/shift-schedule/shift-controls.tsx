@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble, Receipt } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble, Receipt, Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { TopBarPortal } from '@/components/layout/topbar-portal';
+import { NewReservationDialog } from '@/components/reservations/new-reservation-dialog';
+import type { BoardDialogData } from '@/components/shift-schedule/schedule-board';
 
 type CalendarView = 'station' | 'people';
 
@@ -16,6 +18,9 @@ interface Props {
   selected: string[]; // branch ids currently shown on the board (multi-select)
   day: string; // YYYY-MM-DD (selected day)
   view: CalendarView;
+  // Option lists for the toolbar's "Create Order" dialog (same data the board's
+  // click-to-add uses).
+  dialog: BoardDialogData;
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -29,7 +34,7 @@ function today(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-export function ShiftControls({ branches, branchId, selected, day, view }: Props) {
+export function ShiftControls({ branches, branchId, selected, day, view, dialog }: Props) {
   const router = useRouter();
   const [branchOpen, setBranchOpen] = useState(false);
   const selSet = new Set(selected);
@@ -54,6 +59,22 @@ export function ShiftControls({ branches, branchId, selected, day, view }: Props
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {/* Create Order — opens the booking dialog standalone (no pre-picked bed),
+          defaulting to the branch currently on the board. Leftmost so it reads as
+          the primary action on the calendar. */}
+      <NewReservationDialog
+        branches={dialog.branches}
+        sources={dialog.sources}
+        serviceCategories={dialog.serviceCategories}
+        serviceItems={dialog.serviceItems}
+        initial={{ branchId }}
+        trigger={
+          <Button size="sm" className="gap-1.5 font-bold">
+            <Plus className="size-4" /> Create Order
+          </Button>
+        }
+      />
+
       {/* subject axis: Station = the per-bed board, People = the same board
           keyed on therapists (each row a person, shift hours as a faint band). */}
       <div className="inline-flex rounded-lg border border-border p-0.5">

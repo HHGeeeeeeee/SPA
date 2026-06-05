@@ -459,10 +459,14 @@ async function maybeAutoComplete(orderId: string) {
   // unassigned/scheduled lines are still pending work — an order full of
   // not-yet-started bookings must not auto-complete.
   if (items.some((i) => ['draft', 'in_service'].includes(i.status))) return; // work still pending
-  const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single();
+  const { data: ord } = await supabase.from('orders').select('status, total_cents, paid_cents').eq('id', orderId).single();
   if (ord && ['in_service'].includes(ord.status)) {
-    await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
-    await logStatus(orderId, ord.status, 'completed', 'All services finished or skipped', null);
+    // Services are all done. If the bill is already paid in full, the order is
+    // finished outright (closed); otherwise it lands on completed with a balance
+    // still owing.
+    const next = ord.total_cents > 0 && ord.paid_cents >= ord.total_cents ? 'closed' : 'completed';
+    await supabase.from('orders').update({ status: next }).eq('id', orderId);
+    await logStatus(orderId, ord.status, next, 'All services finished or skipped', null);
   }
 }
 
@@ -946,7 +950,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   const { data: ordForShift } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
   const openShift = ordForShift?.branch_id ? await getCurrentOpenShift(ordForShift.branch_id) : null;
   if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this branch - open one on the Shift Remittance page before starting a service.' };
+    return { ok: false, error: 'No cash shift is open for this branch - open one on the Sales Remittance page before starting a service.' };
   }
 
   // Can't start a hands-on service with nobody to do it, or a service that needs
@@ -1329,8 +1333,8 @@ export async function redoOrderItem(itemId: string, orderId: string): Promise<Ac
   const order = Array.isArray(item.order) ? item.order[0] : item.order;
   if (!order) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (['paid', 'closed', 'void'].includes(order.status)) {
-    return { ok: false, error: 'Order is already paid/closed — a manager must reopen it first' };
+  if (['closed', 'void'].includes(order.status)) {
+    return { ok: false, error: 'Order is already closed — a manager must reopen it first' };
   }
   if (!item.service_item_id || !item.order_customer_id) {
     return { ok: false, error: 'This line has no service/guest to redo' };
@@ -1470,9 +1474,9 @@ export async function requestOrderAdjustment(orderId: string, reason: string): P
   return { ok: true };
 }
 
-// Forward-only moves a cashier drives. Paid is reached by takePayment; Closed is
-// reached only by Revenue Confirm (daily close); Void/Reopen are separate gated
-// actions.
+// Forward-only moves a cashier drives. Closed (services done + paid in full) is
+// reached automatically by takePayment / maybeAutoComplete, not by hand;
+// Void/Reopen are separate gated actions.
 const ALLOWED_NEXT: Record<string, string[]> = {
   draft: ['in_service'],
   in_service: ['completed'],
@@ -1507,9 +1511,16 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
     }
   }
 
-  const { error } = await supabase.from('orders').update({ status: next }).eq('id', orderId);
+  // Completing a bill that's already paid in full finishes it outright (closed);
+  // otherwise it sits on completed with the balance owing.
+  const effectiveNext =
+    next === 'completed' && order.total_cents > 0 && order.paid_cents >= order.total_cents
+      ? 'closed'
+      : next;
+
+  const { error } = await supabase.from('orders').update({ status: effectiveNext }).eq('id', orderId);
   if (error) return { ok: false, error: error.message };
-  await logStatus(orderId, order.status, next, null, session?.staffUserId ?? null);
+  await logStatus(orderId, order.status, effectiveNext, null, session?.staffUserId ?? null);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${orderId}`);
   return { ok: true };
@@ -1559,7 +1570,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   // none is open for the branch.
   const openShift = order.branch_id ? await getCurrentOpenShift(order.branch_id) : null;
   if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this branch - open one on the Shift Remittance page before taking payment.' };
+    return { ok: false, error: 'No cash shift is open for this branch - open one on the Sales Remittance page before taking payment.' };
   }
   // No overpayment: a collection can't push the paid total past the order total.
   if (order.paid_cents + amountCents > order.total_cents) {
@@ -1699,9 +1710,11 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   const freshTotal = fresh?.total_cents ?? order.total_cents;
   const newPaid = order.paid_cents + grossCents;
   const patch: { paid_cents: number; status?: string } = { paid_cents: newPaid };
-  // Auto-advance to paid when fully covered (from completed or earlier).
-  if (newPaid >= freshTotal && freshTotal > 0 && order.status !== 'paid') {
-    patch.status = 'paid';
+  // Auto-close once the bill is fully covered AND every service is done. Paying
+  // in full while still in service just sits as paid; the order closes when the
+  // last service finishes (maybeAutoComplete).
+  if (newPaid >= freshTotal && freshTotal > 0 && order.status === 'completed') {
+    patch.status = 'closed';
   }
   const { error: ue } = await supabase.from('orders').update(patch).eq('id', d.order_id);
   if (ue) return { ok: false, error: ue.message };
@@ -1726,11 +1739,12 @@ const refundSchema = z.object({
   stored_value_card_id: z.string().uuid().optional().nullable(),
 });
 
-// Record a refund against a completed/paid order — money going back out. Stored
-// as a negative payment so it flows through paid_cents AND the shift cash count
-// (a cash refund correctly reduces the drawer's expected cash). Manager-gated;
-// can't exceed what was collected; a stored-value refund loads back onto the
-// card. Closed orders are corrected via an OrderAdjustment instead.
+// Record a refund against an order with money collected — money going back out.
+// Stored as a negative payment so it flows through paid_cents AND the shift cash
+// count (a cash refund correctly reduces the drawer's expected cash). Manager-
+// gated; can't exceed what was collected; a stored-value refund loads back onto
+// the card. A refund on a closed (fully-paid) order reopens its balance →
+// completed. Void orders are corrected via an OrderAdjustment instead.
 export async function recordRefund(input: unknown): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required to refund' };
@@ -1746,8 +1760,8 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
     .eq('id', d.order_id)
     .single();
   if (oe || !order) return { ok: false, error: 'Order not found' };
-  if (['closed', 'void'].includes(order.status)) {
-    return { ok: false, error: 'A closed or void order is corrected via an adjustment, not a refund' };
+  if (order.status === 'void') {
+    return { ok: false, error: 'A void order is corrected via an adjustment, not a refund' };
   }
   if (await isBusinessDayClosed(order.branch_id, order.service_date)) {
     return { ok: false, error: 'The business day is closed — refunds can no longer post to this date.' };
@@ -1758,7 +1772,7 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
 
   const openShift = order.branch_id ? await getCurrentOpenShift(order.branch_id) : null;
   if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this branch - open one on the Shift Remittance page before refunding.' };
+    return { ok: false, error: 'No cash shift is open for this branch - open one on the Sales Remittance page before refunding.' };
   }
 
   const { data: method } = await supabase.from('payment_methods').select('code').eq('id', d.payment_method_id).single();
@@ -1815,7 +1829,9 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
 
   const newPaid = order.paid_cents - amountCents;
   const patch: { paid_cents: number; status?: string } = { paid_cents: newPaid };
-  if (order.status === 'paid' && newPaid < order.total_cents) patch.status = 'completed';
+  // A refund that drops a closed (fully-paid) order below its total reopens the
+  // balance, so it steps back to completed with the shortfall owing.
+  if (order.status === 'closed' && newPaid < order.total_cents) patch.status = 'completed';
   const { error: ue } = await supabase.from('orders').update(patch).eq('id', d.order_id);
   if (ue) return { ok: false, error: ue.message };
 

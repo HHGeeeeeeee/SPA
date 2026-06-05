@@ -67,7 +67,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
-      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, order_customers ( id ) )')
+      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
     // Pull the full roster (with employee identity + position) instead of bare
@@ -81,7 +81,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     // rail. No resource filter (they have none); branch/day filtered in the loop.
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status )')
+      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, total_cents, paid_cents )')
       .eq('status', 'draft').is('resource_id', null),
   ]);
 
@@ -118,6 +118,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       prepMin: one(it.service)?.prep_before_minutes ?? 0,
       cleanupMin: one(it.service)?.cleanup_after_minutes ?? 0,
       variant, draggable, orderId: ord.id,
+      owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       therapistId: it.therapist_id ?? null,
     });
     mins.push(startMin, endMin);
@@ -142,6 +143,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       prepMin: one(it.service)?.prep_before_minutes ?? 0,
       cleanupMin: one(it.service)?.cleanup_after_minutes ?? 0,
       variant: 'scheduled', draggable: true, orderId: ord.id,
+      owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       therapistId: it.therapist_id ?? null,
       untimed: !timed,
     });
@@ -211,7 +213,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type )')
+      .select('id, status, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
   ]);
 
@@ -287,6 +289,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       startMin, endMin, durationMin: dur, prepMin: 0, cleanupMin: 0,
       variant, draggable: it.status === 'draft',
       orderId: ord.id, therapistId, untimed,
+      owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
     });
   }
 
@@ -363,7 +366,7 @@ export default async function CalendarPage({
               : 'by therapist · drag a booking onto a person to assign'}
           </p>
         </div>
-        {branchId && <ShiftControls branches={branches} branchId={branchId} selected={branchIds} day={day} view={view} />}
+        {branchId && boardDialog && <ShiftControls branches={branches} branchId={branchId} selected={branchIds} day={day} view={view} dialog={boardDialog} />}
       </div>
 
       {!branchId ? (

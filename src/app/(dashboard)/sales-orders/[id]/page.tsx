@@ -17,7 +17,6 @@ import { ServiceBadge, PaymentBadge } from '@/components/sales-orders/order-badg
 import { RetryOrderPostingButton } from '@/components/sales-orders/retry-order-posting-button';
 import { ReportIncidentDialog } from '@/components/incidents/report-incident-dialog';
 import { loadOrderAuditTrail } from '@/lib/order-audit-trail';
-import { listPinCapableManagers } from '@/lib/manager-pin';
 
 export const dynamic = 'force-dynamic';
 
@@ -372,11 +371,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // rich timeline UI in the Change History tab.
   const auditTrail = await loadOrderAuditTrail(id);
 
-  // Managers with a PIN set — drives the inline approval picker on the
-  // Interrupt dialog when staff picks No charge.
-  const pinManagers = await listPinCapableManagers();
-  const viewerIsManager = isManager(await currentSession());
-
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -394,7 +388,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           )}
           <OrderStatusActions orderId={order.id} status={order.status} canManage={canManage} itemCount={items.length} hasPayments={payments.length > 0} />
           <div className="ml-auto flex items-center gap-3">
-            {canManage && !arBilled && ['completed', 'paid'].includes(order.status) && (
+            {canManage && !arBilled && ['completed', 'closed'].includes(order.status) && (
               <PaymentAdjust
                 orderId={order.id}
                 methods={paymentMethods.filter((m) => m.code !== 'ar')}
@@ -503,8 +497,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         folioLines={folioLines}
         history={history}
         auditTrail={auditTrail}
-        pinManagers={pinManagers}
-        viewerIsManager={viewerIsManager}
         serviceItems={serviceItems}
         employees={employees}
         borrowableEmployees={borrowableEmployees}

@@ -77,6 +77,9 @@ export interface BoardStaffShift {
    *  MASSAGE_NEWBI / receptionist / etc). Non-service positions are
    *  filtered out server-side so this should always be a service role. */
   positionCode: string | null;
+  /** Home-branch code — shown as a tag on the Staff rail when multiple branches
+   *  are on the board (so borrowed therapists are obvious). */
+  branch?: string;
   startMin: number;
   endMin: number;
 }
@@ -395,7 +398,7 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
 
 // A draggable on-shift therapist (Station rail, Staff mode). Drag onto an
 // unassigned service block to set its therapist; the badge is today's booking load.
-function StaffCard({ id, name, load }: { id: string; name: string; load: number }) {
+function StaffCard({ id, name, load, branch }: { id: string; name: string; load: number; branch?: string }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `staff:${id}`,
     data: { staff: { id, name } },
@@ -413,9 +416,10 @@ function StaffCard({ id, name, load }: { id: string; name: string; load: number 
       {...attributes}
       style={style}
       className="flex items-center gap-2 rounded border border-border bg-card px-2 py-1.5 text-[11px] cursor-grab active:cursor-grabbing hover:bg-accent"
-      title={`${name} · ${load} booking${load === 1 ? '' : 's'} today`}
+      title={`${name}${branch ? ` · ${branch}` : ''} · ${load} booking${load === 1 ? '' : 's'} today`}
     >
       <span className="flex-1 truncate font-bold">{name}</span>
+      {branch && <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary">{branch}</span>}
       <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-extrabold tabular-nums text-muted-foreground">{load}</span>
     </div>
   );
@@ -492,6 +496,7 @@ export function ScheduleBoard({
   // to light up the droppable (unassigned) blocks.
   const [railMode, setRailMode] = useState<'bookings' | 'staff'>('bookings');
   const [staffDragId, setStaffDragId] = useState<string | null>(null);
+  const [staffSearch, setStaffSearch] = useState('');
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -579,6 +584,12 @@ export function ScheduleBoard({
       staff: byPos.get(pos)!.slice().sort((a, b) => a.startMin - b.startMin || a.name.localeCompare(b.name)),
     }));
   })();
+  // Tag home branch only when the board spans >1 branch (borrowed staff stand out).
+  const staffMultiBranch = new Set(staffShifts.map((s) => s.branch).filter(Boolean)).size > 1;
+  const staffQuery = staffSearch.trim().toLowerCase();
+  const filteredStaffGroups = staffQuery
+    ? staffGroups.map((g) => ({ ...g, staff: g.staff.filter((s) => s.name.toLowerCase().includes(staffQuery)) })).filter((g) => g.staff.length)
+    : staffGroups;
   // Group headers: stations by resource_type (bed axis) or therapists by
   // position (person axis), in a stable display order; unknown groups append.
   const groupOrder = axis === 'person' ? POSITION_ORDER : [...STATION_ORDER];
@@ -792,16 +803,27 @@ export function ScheduleBoard({
               ? `${staffShifts.length} on shift · drag onto an unassigned service`
               : `${floating.length} to assign · drag onto a ${axis === 'person' ? 'person' : 'bed'}`}
           </div>
+          {axis === 'bed' && railMode === 'staff' && (
+            <input
+              type="search"
+              value={staffSearch}
+              onChange={(e) => setStaffSearch(e.target.value)}
+              placeholder="Search therapist…"
+              className="mt-1.5 w-full rounded border border-input bg-transparent px-2 py-1 text-[11px]"
+            />
+          )}
         </div>
         <div className="flex flex-col gap-3 p-2">
           {axis === 'bed' && railMode === 'staff' ? (
             staffShifts.length === 0 ? (
               <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No staff on shift</p>
+            ) : filteredStaffGroups.length === 0 ? (
+              <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No therapist matches “{staffSearch.trim()}”</p>
             ) : (
-              staffGroups.map((g) => (
+              filteredStaffGroups.map((g) => (
                 <div key={g.pos} className="flex flex-col gap-1.5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">{g.label} · {g.staff.length}</div>
-                  {g.staff.map((s) => <StaffCard key={s.id} id={s.id} name={s.name} load={loadByTherapist.get(s.id) ?? 0} />)}
+                  {g.staff.map((s) => <StaffCard key={s.id} id={s.id} name={s.name} load={loadByTherapist.get(s.id) ?? 0} branch={staffMultiBranch ? s.branch : undefined} />)}
                 </div>
               ))
             )

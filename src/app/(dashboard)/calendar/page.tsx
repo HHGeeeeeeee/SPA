@@ -75,7 +75,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     // hover popup ("who's free at 14:30?") on top of the original on-shift count.
     supabase
       .from('employee_shifts')
-      .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
+      .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ), home_branch:branches!employees_home_branch_id_fkey ( code ) )')
       .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     // Unassigned lines (a booking with no bed yet) — they ride the unallocated
     // rail. No resource filter (they have none); branch/day filtered in the loop.
@@ -153,10 +153,12 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
   // but never relevant for "who's free to take a booking".
   const isServicePosition = (code: string | null): boolean =>
     !!code && (code.startsWith('MASSAGE_') || code.startsWith('HAIR_') || code.startsWith('NAIL_'));
+  const staffSeen = new Set<string>();
   const staffShifts: BoardStaffShift[] = (shiftRes.data ?? [])
     .map((s) => {
       const e = one(s.employees);
       const positionCode = e ? one(e.position)?.code ?? null : null;
+      const homeBranch = e ? one(e.home_branch)?.code ?? undefined : undefined;
       return {
         id: s.employee_id,
         name: e?.name ?? '—',
@@ -164,9 +166,14 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
         positionCode,
         startMin: (() => { const m = timeToMin(s.shift_start); return m == null ? null : place(m); })(),
         endMin: (() => { const m = timeToMin(s.shift_end); return m == null ? null : place(m); })(),
+        ...(homeBranch ? { branch: homeBranch } : {}),
       };
     })
-    .filter((w): w is BoardStaffShift => w.startMin != null && w.endMin != null && isServicePosition(w.positionCode));
+    // A cross-branch therapist can carry two shift rows (home + loaned); the
+    // staffSeen guard keeps the first so each shows once.
+    .filter((w): w is BoardStaffShift =>
+      w.startMin != null && w.endMin != null && isServicePosition(w.positionCode)
+      && !staffSeen.has(w.id) && (staffSeen.add(w.id), true));
   return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts };
 }
 

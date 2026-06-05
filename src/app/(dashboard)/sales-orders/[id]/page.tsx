@@ -34,7 +34,7 @@ async function fetchData(id: string) {
   const { data: order, error } = await supabase
     .from('orders')
     .select(`
-      id, order_no, status, order_type, service_location_type, service_date, note, branch_id, business_unit_id, source_id, billing_to_id,
+      id, order_no, status, order_type, service_location_type, external_hotel_id, service_date, note, branch_id, business_unit_id, source_id, billing_to_id,
       subtotal_cents, discount_cents, total_cents, paid_cents,
       branch:branches!orders_branch_id_fkey ( code, name ),
       source:customer_sources ( code, name, default_discount_class_id, discount_locked ),
@@ -427,7 +427,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               {/* The "Type" slot now drives the service location (On-site vs
                   Dispatch / external hotel) — order_type (the booking origin)
                   stays in the DB + reports but isn't shown here. */}
-              <OrderLocationEditor orderId={order.id} current={order.service_location_type} editable={editable} />
+              <OrderLocationEditor orderId={order.id} current={order.service_location_type} currentHotelId={order.external_hotel_id} hotels={allBilling} editable={editable} />
               <div><dt className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Service Date</dt>
                 <dd className="font-semibold mt-0.5 tabular">{order.service_date}</dd></div>
               <OrderSourceBillingEditor

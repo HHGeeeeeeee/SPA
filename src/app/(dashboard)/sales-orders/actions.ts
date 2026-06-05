@@ -387,6 +387,7 @@ export async function updateOrderSourceBilling(input: unknown): Promise<ActionRe
 const locationSchema = z.object({
   order_id: z.string().uuid(),
   service_location_type: z.enum(['on_site', 'external_hotel']),
+  external_hotel_id: z.string().uuid().nullable().optional(),
 });
 
 // Set whether the whole order is served on-site or dispatched to a hotel
@@ -399,20 +400,24 @@ export async function updateOrderLocationType(input: unknown): Promise<ActionRes
   const session = await currentSession();
   const supabase = await createAuditedClient();
   const { data: order } = await supabase
-    .from('orders').select('status, branch_id, service_location_type').eq('id', d.order_id).single();
+    .from('orders').select('status, branch_id, service_location_type, external_hotel_id').eq('id', d.order_id).single();
   if (!order) return { ok: false, error: 'Order not found' };
   if (!(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (!['draft', 'open', 'in_service'].includes(order.status)) {
     return { ok: false, error: 'This order can no longer be edited' };
   }
-  if ((order.service_location_type ?? null) === d.service_location_type) return { ok: true }; // no-op
+  // Hotel only applies to a dispatched order; on-site clears it.
+  const hotelId = d.service_location_type === 'external_hotel' ? (d.external_hotel_id ?? null) : null;
+  if ((order.service_location_type ?? null) === d.service_location_type && (order.external_hotel_id ?? null) === hotelId) {
+    return { ok: true }; // no-op
+  }
   const { error } = await supabase
-    .from('orders').update({ service_location_type: d.service_location_type }).eq('id', d.order_id);
+    .from('orders').update({ service_location_type: d.service_location_type, external_hotel_id: hotelId }).eq('id', d.order_id);
   if (error) return { ok: false, error: error.message };
   await supabase.from('order_edit_log').insert({
     order_id: d.order_id,
-    before_snapshot: { service_location_type: order.service_location_type ?? null },
-    after_snapshot: { service_location_type: d.service_location_type },
+    before_snapshot: { service_location_type: order.service_location_type ?? null, external_hotel_id: order.external_hotel_id ?? null },
+    after_snapshot: { service_location_type: d.service_location_type, external_hotel_id: hotelId },
     edit_reason: 'Service location updated',
     edited_by_staff_id: session?.staffUserId ?? null,
   });

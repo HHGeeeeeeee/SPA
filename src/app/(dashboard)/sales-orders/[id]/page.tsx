@@ -42,7 +42,9 @@ async function fetchData(id: string) {
       order_customers ( id, customer_name, customer_phone, seq_no, gender ),
       folio_lines (
         id, order_customer_id, kind, amount_cents, payment_ref, posted_at,
-        method:payment_methods ( display_name )
+        method:payment_methods ( display_name ),
+        shift:shifts ( label, branch:branches!shifts_branch_id_fkey ( code ) ),
+        posted_by_staff:staff_users!folio_lines_posted_by_fkey ( display_name )
       ),
       feedback ( order_item_id, score ),
       order_items (
@@ -234,6 +236,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const signedAmt = (l: { kind: string; amount_cents: number }) => (l.kind === 'refund' ? -l.amount_cents : l.amount_cents);
   const payLines = orderLines.filter((l) => l.kind === 'payment' || l.kind === 'refund');
   const tipTotal = orderLines.filter((l) => l.kind === 'tip').reduce((s, l) => s + l.amount_cents, 0);
+  const folioLines = orderLines.map((l) => {
+    const sh = one(l.shift);
+    return {
+      id: l.id,
+      kind: l.kind,
+      amount_cents: l.amount_cents,
+      posted_at: l.posted_at,
+      method_name: one(l.method)?.display_name ?? null,
+      shift_label: sh?.label ?? null,
+      branch_code: one<{ code: string }>(sh?.branch ?? null)?.code ?? null,
+      created_by: one(l.posted_by_staff)?.display_name ?? null,
+      created_at: l.posted_at,
+    };
+  });
   const customers = (order.order_customers ?? []).map((c) => {
     const subtotal = orderItemsRaw
       .filter((it) => it.order_customer_id === c.id && it.status !== 'cancelled')
@@ -477,6 +493,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         customers={customers}
         items={items}
         payments={payments}
+        folioLines={folioLines}
         history={history}
         auditTrail={auditTrail}
         pinManagers={pinManagers}

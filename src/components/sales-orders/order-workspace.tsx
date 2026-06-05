@@ -41,7 +41,6 @@ import {
   finishOrderItem,
   skipOrderItem,
   redoOrderItem,
-  switchService,
   releaseBed,
 } from '@/app/(dashboard)/sales-orders/actions';
 import { ServiceLineEditor, type LineDraft } from '@/components/sales-orders/service-line-editor';
@@ -114,6 +113,17 @@ interface PaymentRecord {
   paid_at: string;
 }
 
+interface FolioLineRecord {
+  id: string;
+  kind: string;
+  amount_cents: number;
+  posted_at: string;
+  method_name: string | null;
+  shift_label: string | null;
+  branch_code: string | null;
+  created_by: string | null;
+  created_at: string;
+}
 interface Props {
   order: {
     id: string;
@@ -129,6 +139,7 @@ interface Props {
   customers: OrderCustomer[];
   items: OrderItem[];
   payments: PaymentRecord[];
+  folioLines: FolioLineRecord[];
   history: { at: string; label: string; reason: string | null; who: string | null }[];
   /** Rich per-row audit trail (orders + items + customers + payments + tips
    *  + feedback) — feeds the Change History tab's timeline + diff UI. The
@@ -165,6 +176,22 @@ const GENDER_OPTS = [
 
 function hm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
+}
+// ISO → short date + time in Manila (folio "created at").
+function dtm(ts: string | null): string {
+  return ts ? new Date(ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short' }) : '';
+}
+// One folio posting row: branch / shift / method, with created-by + created-at underneath.
+function FolioRow({ l }: { l: FolioLineRecord }) {
+  return (
+    <div className="flex items-start justify-between gap-2 py-2 text-sm">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name].filter(Boolean).join(' / ') || l.kind}</span>
+        <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at)].filter(Boolean).join(' - ') || '-'}</span>
+      </div>
+      <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
+    </div>
+  );
 }
 // ISO → 24h HH:mm in Manila time (for the <input type="time"> + the Start cell).
 function toHHmm(ts: string | null): string {
@@ -240,6 +267,7 @@ export function OrderWorkspace({
   customers,
   items,
   payments,
+  folioLines,
   history,
   auditTrail,
   serviceItems,
@@ -597,20 +625,6 @@ export function OrderWorkspace({
     });
   }
 
-  // Switch an in-service line to a different service: stop it (no charge) and
-  // open the add panel for that guest to pick the replacement.
-  function doSwitchItem(it: OrderItem) {
-    startTransition(async () => {
-      const r = await switchService(it.id, order.id);
-      if (r.ok) {
-        toast.success('Stopped (no charge) — pick the new service');
-        router.refresh();
-        setActiveCustomer(it.order_customer_id);
-        setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
-      } else toast.error(r.error);
-    });
-  }
-
   function doReleaseBed(id: string) {
     startTransition(async () => {
       const r = await releaseBed(id);
@@ -833,7 +847,7 @@ export function OrderWorkspace({
                                 disabled={pending}
                               />
                               <span className="text-right font-bold tabular text-sm">{peso(it.final_amount_cents)}</span>
-                              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">—</span>
+                              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Draft</span>
                               <span className="text-xs font-medium text-muted-foreground">—</span>
                               <div className="flex flex-wrap items-center gap-1 justify-end">
                                 {canRunService && it.status === 'draft' && (
@@ -851,14 +865,14 @@ export function OrderWorkspace({
                         }
 
                         const statusTag =
-                          it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
+                          it.status === 'draft' ? { t: 'Draft', c: 'text-muted-foreground' }
+                          : it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
                           : isCleaning ? { t: 'Cleaning', c: 'text-amber-600 dark:text-amber-400' }
                           : (it.status === 'service_completed') ? { t: 'Done', c: 'text-primary' }
                           : it.status === 'interrupted' ? (it.switched ? { t: 'Switched', c: 'text-amber-600 dark:text-amber-400' } : { t: 'Interrupted', c: 'text-destructive' })
                           : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
                           : it.status === 'no_show' ? { t: 'No-show', c: 'text-muted-foreground' }
                           : null;
-                        const tw = timeWindow(it.actual_start, it.actual_end, it.duration_minutes, it.prep_minutes);
                         const dc = discountClasses.find((dd) => dd.id === it.discount_class_id);
                         const discCode = dc?.description ?? '—';
                         // Discount value: percent classes show the rate, fixed/manual show the peso amount applied.
@@ -870,7 +884,6 @@ export function OrderWorkspace({
                             <span className="font-semibold truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.group ?? it.service_name}</span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
-                              {tw && <span className="block tabular opacity-80">{tw}</span>}
                             </span>
                             <span className="text-xs font-medium text-muted-foreground tabular truncate">{toHHmm(it.actual_start ?? it.scheduled_start) || '—'}</span>
                             <span className="font-medium text-muted-foreground truncate">
@@ -913,7 +926,6 @@ export function OrderWorkspace({
                               {canRunService && it.status === 'in_service' && (
                                 <>
                                   <ActionBtn tip="Mark this service finished — stamps the end time." className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700" onClick={() => doFinishItem(it)} disabled={pending}>Finish</ActionBtn>
-                                  <ActionBtn tip="Stop this service with no charge and pick a different one." variant="outline" className="border-amber-500/60 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-500/10" onClick={() => doSwitchItem(it)} disabled={pending}>Switch</ActionBtn>
                                   <ActionBtn tip="Stop mid-service and decide the charge (none / partial / full / reschedule)." variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</ActionBtn>
                                 </>
                               )}
@@ -993,6 +1005,25 @@ export function OrderWorkspace({
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Outstanding</p><p className="text-xl font-extrabold tabular mt-1">{peso(due)}</p></CardContent></Card>
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Tips (PAYMAYA)</p><p className="text-xl font-extrabold tabular mt-1 text-primary">{peso(totalTips)}</p></CardContent></Card>
           </div>
+
+          {folioLines.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Revenue</CardTitle></CardHeader>
+                <CardContent className="flex flex-col divide-y divide-border">
+                  {folioLines.filter((l) => l.kind === 'revenue').map((l) => <FolioRow key={l.id} l={l} />)}
+                  {folioLines.every((l) => l.kind !== 'revenue') && <p className="py-2 text-sm text-muted-foreground">No revenue posted yet.</p>}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Payments & refunds</CardTitle></CardHeader>
+                <CardContent className="flex flex-col divide-y divide-border">
+                  {folioLines.filter((l) => l.kind !== 'revenue').map((l) => <FolioRow key={l.id} l={l} />)}
+                  {folioLines.every((l) => l.kind === 'revenue') && <p className="py-2 text-sm text-muted-foreground">No payments yet.</p>}
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
       {/* AR-billed orders are invoiced, not collected at the counter */}
       {paymentPolicy.arBilled && ['completed', 'paid'].includes(order.status) && (

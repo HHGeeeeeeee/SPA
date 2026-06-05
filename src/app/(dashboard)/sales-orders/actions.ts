@@ -923,7 +923,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
     .eq('id', itemId)
     .single();
 
@@ -970,9 +970,11 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
       supabase.from('employee_service_groups').select('service_group').eq('employee_id', item.therapist_id),
       supabase.from('order_customers').select('gender').eq('id', item.order_customer_id ?? '').maybeSingle(),
     ]);
-    if (!canPerformGroup((caps ?? []).map((c) => c.service_group), group)) {
-      return { ok: false, error: 'This therapist is not trained for this service' };
-    }
+    // Temporarily disabled (too strict; the picker isn't always live-synced, so a
+    // still-valid therapist can get blocked at Start). Re-enable with live re-validation.
+    // if (!canPerformGroup((caps ?? []).map((c) => c.service_group), group)) {
+    //   return { ok: false, error: 'This therapist is not trained for this service' };
+    // }
     // Guest gender preference now lives on the order_customer (createBooking sets it).
     if (!matchesGender(emp?.gender, cust?.gender ?? null)) {
       return { ok: false, error: 'This therapist does not match the guest’s gender preference' };
@@ -1016,7 +1018,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
 
   const { error } = await supabase
     .from('order_items')
-    .update({ status: 'in_service', actual_start: now, service_start: now })
+    .update({ status: 'in_service', actual_start: item?.scheduled_start ?? now, service_start: item?.scheduled_start ?? now })
     .eq('id', itemId);
   if (error) return { ok: false, error: error.message };
 
@@ -1233,17 +1235,11 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
     ? Math.max(1, Math.round((Date.parse(now) - Date.parse(item.actual_start)) / 60000))
     : 0;
 
-  let discount = item.discount_amount_cents;
-  let final = item.final_amount_cents;
-  if (d.handling === 'no_charge' || d.handling === 'reschedule') {
-    discount = item.list_price_cents ?? 0;
-    final = 0;
-  } else if (d.handling === 'partial_charge') {
-    const planned = item.duration_minutes || 0;
-    const ratio = planned > 0 ? Math.min(1, actualMin / planned) : 1;
-    final = Math.round((item.final_amount_cents ?? 0) * ratio);
-    discount = (item.list_price_cents ?? 0) - final;
-  }
+  // Interrupt is "keep posted": the revenue folio_line stamped at Start stays
+  // at its full amount and the line's billed amount is NOT auto-reduced here.
+  // The handling mode is recorded as intent only; any actual waive/reduction is
+  // a deliberate discount edit by the desk afterwards, so folio revenue and the
+  // order total never silently diverge.
 
   // The legacy `interruption_reason` column keeps showing a human label so
   // existing Change History UI keeps working without a join. New rows fill
@@ -1263,8 +1259,6 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
       interruption_at: now,
       actual_end: now,
       actual_duration_minutes: actualMin,
-      discount_amount_cents: discount,
-      final_amount_cents: final,
       // Reschedule starts in the "pending follow-up" state. Manager clears it
       // from the Pending Reschedules list once the make-up service has been
       // rendered (or the customer abandoned the request).

@@ -18,7 +18,18 @@ export interface StaffWeekEmployee {
   employee_code: string;
   home_branch_id: string | null;
   position_code: string | null;
+  /** AM / Mid / PM band from the week's clock-in — drives the row order and the
+   *  little tag next to the name. null = no working shift this week. */
+  shiftBand?: 'am' | 'mid' | 'pm' | null;
 }
+
+// Shift-band tag style — lets the desk read who's early/mid/late at a glance
+// (the rows are already ordered AM -> Mid -> PM upstream).
+const BAND_TAG: Record<'am' | 'mid' | 'pm', { label: string; cls: string }> = {
+  am: { label: 'AM', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  mid: { label: 'Mid', cls: 'bg-sky-500/15 text-sky-700 dark:text-sky-400' },
+  pm: { label: 'PM', cls: 'bg-violet-500/15 text-violet-700 dark:text-violet-400' },
+};
 export interface StaffWeekBranch {
   id: string;
   code: string;
@@ -187,6 +198,14 @@ export function StaffWeekGrid({
                     <td className="p-3 sticky left-0 z-10 bg-card">
                       <div className="font-semibold text-sm">
                         {e.name}
+                        {e.shiftBand && (
+                          <span className={cn(
+                            'ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold',
+                            BAND_TAG[e.shiftBand].cls,
+                          )}>
+                            {BAND_TAG[e.shiftBand].label}
+                          </span>
+                        )}
                         {e.home_branch_id !== branchId && (
                           <span className={cn(
                             'ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5',

@@ -10,6 +10,7 @@ import {
   voidOrder,
   reopenOrder,
   requestOrderAdjustment,
+  setOrderStatus,
 } from '@/app/(dashboard)/sales-orders/actions';
 
 interface Props {
@@ -50,6 +51,13 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
       else toast.error(r.error);
     });
   }
+  function doComplete() {
+    startTransition(async () => {
+      const r = await setOrderStatus(orderId, 'completed');
+      if (r.ok) { toast.success('Order completed'); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
 
   return (
     <>
@@ -57,7 +65,10 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
         <span className="text-xs font-medium text-muted-foreground">Start each service below to begin</span>
       )}
       {status === 'in_service' && (
-        <span className="text-xs font-medium text-muted-foreground">Completes when every service is finished or skipped</span>
+        <>
+          <Button size="sm" onClick={doComplete} disabled={pending}>Complete</Button>
+          <span className="text-xs font-medium text-muted-foreground">All services must be finished, skipped, or cancelled first</span>
+        </>
       )}
       {status === 'paid' && (
         <span className="text-xs font-medium text-muted-foreground">Paid — closes at daily Revenue Confirm</span>

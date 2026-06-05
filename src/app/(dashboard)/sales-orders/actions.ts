@@ -431,7 +431,15 @@ async function recomputeTotals(orderId: string) {
   // yet has no price) — coalesce so a pending line contributes 0, not NaN.
   const subtotal = (items ?? []).reduce((s, i) => s + (i.list_price_cents ?? 0), 0);
   const discount = (items ?? []).reduce((s, i) => s + (i.discount_amount_cents ?? 0), 0);
-  const total = (items ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
+  const serviceTotal = (items ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
+  // Tips are recognised revenue on top of the service bill, so the order total
+  // (what the guest pays) includes them. They live as kind=tip folio lines.
+  const { data: tipLines } = await supabase
+    .from('folio_lines')
+    .select('amount_cents')
+    .eq('order_id', orderId)
+    .eq('kind', 'tip');
+  const total = serviceTotal + (tipLines ?? []).reduce((s, t) => s + (t.amount_cents ?? 0), 0);
   await supabase
     .from('orders')
     .update({ subtotal_cents: subtotal, discount_cents: discount, total_cents: total })
@@ -1486,6 +1494,19 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
     return { ok: false, error: `Cannot move from ${order.status} to ${next}` };
   }
 
+  // A completed order is the bill closed for service: no line may still be
+  // pending (draft) or running (in_service) when the order advances.
+  if (next === 'completed') {
+    const { data: pending } = await supabase
+      .from('order_items')
+      .select('status')
+      .eq('order_id', orderId)
+      .in('status', ['draft', 'in_service']);
+    if (pending && pending.length > 0) {
+      return { ok: false, error: 'Finish, skip, or cancel every service before completing the order' };
+    }
+  }
+
   const { error } = await supabase.from('orders').update({ status: next }).eq('id', orderId);
   if (error) return { ok: false, error: error.message };
   await logStatus(orderId, order.status, next, null, session?.staffUserId ?? null);
@@ -1557,15 +1578,15 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       .select('final_amount_cents')
       .eq('order_id', d.order_id)
       .eq('order_customer_id', d.order_customer_id)
-      .neq('status', 'cancelled');
+      .not('status', 'in', '(cancelled,no_show)');
     const custSubtotal = (custItems ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
     const { data: custPays } = await supabase
       .from('folio_lines')
       .select('amount_cents, kind')
       .eq('order_id', d.order_id)
       .eq('order_customer_id', d.order_customer_id)
-      .in('kind', ['payment', 'refund']);
-    const custPaid = (custPays ?? []).reduce((s, p) => s + (p.kind === 'refund' ? -p.amount_cents : p.amount_cents), 0);
+      .in('kind', ['payment', 'refund', 'tip']);
+    const custPaid = (custPays ?? []).reduce((s, p) => s + (p.kind === 'payment' ? p.amount_cents : -p.amount_cents), 0);
     const custDue = Math.max(0, custSubtotal - custPaid);
     if (amountCents > custDue) {
       return { ok: false, error: `Amount exceeds this guest's balance due (${(custDue / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
@@ -1581,6 +1602,11 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
   // Tips ride a non-cash payment (PAYMAYA, or a stored-value redemption where the
   // tip itself is charged via PAYMAYA). Cash tips never enter the system.
   const tips = d.tips ?? [];
+  const tipsTotalCents = tips.reduce((s, t) => s + Math.round(t.amount * 100), 0);
+  // The payment folio line is GROSS: the full cash the method actually received
+  // (service + tips). Tips are recognised as revenue (kind=tip lines on the
+  // revenue side) and the order total includes them, so paid == total at settle.
+  const grossCents = amountCents + tipsTotalCents;
   if (tips.length > 0 && !['paymaya', 'stored_value_card'].includes(method?.code ?? '')) {
     return { ok: false, error: 'Tips can only be recorded on a PAYMAYA or stored-value payment' };
   }
@@ -1609,7 +1635,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       order_customer_id: d.order_customer_id || null,
       shift_id: openShift.id,
       kind: 'payment',
-      amount_cents: amountCents,
+      amount_cents: grossCents,
       posted_by: session.staffUserId,
       payment_method_id: d.payment_method_id,
       payment_ref: d.payment_ref || null,
@@ -1666,10 +1692,15 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     if (te) return { ok: false, error: te.message };
   }
 
-  const newPaid = order.paid_cents + amountCents;
+  // Tips just posted are part of the bill now, so refresh the total before
+  // settling, then compare gross paid against the fresh total.
+  await recomputeTotals(d.order_id);
+  const { data: fresh } = await supabase.from('orders').select('total_cents').eq('id', d.order_id).single();
+  const freshTotal = fresh?.total_cents ?? order.total_cents;
+  const newPaid = order.paid_cents + grossCents;
   const patch: { paid_cents: number; status?: string } = { paid_cents: newPaid };
   // Auto-advance to paid when fully covered (from completed or earlier).
-  if (newPaid >= order.total_cents && order.total_cents > 0 && order.status !== 'paid') {
+  if (newPaid >= freshTotal && freshTotal > 0 && order.status !== 'paid') {
     patch.status = 'paid';
   }
   const { error: ue } = await supabase.from('orders').update(patch).eq('id', d.order_id);

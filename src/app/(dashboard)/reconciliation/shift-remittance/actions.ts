@@ -105,7 +105,9 @@ export async function loadShiftRemittance(branchId: string, date: string): Promi
       .in('shift_id', shiftIds);
     for (const l of lines ?? []) {
       const a = agg.get(l.shift_id) ?? { revenue: 0, cash: 0, nonCash: 0 };
-      if (l.kind === 'revenue') a.revenue += l.amount_cents;
+      // Tips are recognised revenue now, so they count toward the shift's
+      // posted revenue alongside service revenue (keeps revenue == payments).
+      if (l.kind === 'revenue' || l.kind === 'tip') a.revenue += l.amount_cents;
       else if (l.kind === 'payment') {
         if ((one(l.method)?.code ?? '').toLowerCase() === 'cash') a.cash += l.amount_cents;
         else a.nonCash += l.amount_cents;

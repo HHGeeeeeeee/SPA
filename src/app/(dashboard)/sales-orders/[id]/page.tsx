@@ -236,6 +236,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const signedAmt = (l: { kind: string; amount_cents: number }) => (l.kind === 'refund' ? -l.amount_cents : l.amount_cents);
   const payLines = orderLines.filter((l) => l.kind === 'payment' || l.kind === 'refund');
   const tipTotal = orderLines.filter((l) => l.kind === 'tip').reduce((s, l) => s + l.amount_cents, 0);
+  const customerLabel = new Map(
+    (order.order_customers ?? []).map((c) => [c.id, `#${c.seq_no} · ${c.customer_name}`]),
+  );
   const folioLines = orderLines.map((l) => {
     const sh = one(l.shift);
     return {
@@ -248,15 +251,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       branch_code: one<{ code: string }>(sh?.branch ?? null)?.code ?? null,
       created_by: one(l.posted_by_staff)?.display_name ?? null,
       created_at: l.posted_at,
+      customer_label: l.order_customer_id ? customerLabel.get(l.order_customer_id) ?? null : null,
+      ref: l.payment_ref ?? null,
     };
   });
   const customers = (order.order_customers ?? []).map((c) => {
     const subtotal = orderItemsRaw
-      .filter((it) => it.order_customer_id === c.id && it.status !== 'cancelled')
+      .filter((it) => it.order_customer_id === c.id && !['cancelled', 'no_show'].includes(it.status))
       .reduce((s, it) => s + (it.final_amount_cents ?? 0), 0);
-    const paid = payLines
-      .filter((l) => l.order_customer_id === c.id)
-      .reduce((s, l) => s + signedAmt(l), 0);
+    // Net toward this guest's service bill: gross payment minus refunds and
+    // tips (tips are revenue on top, not payment of the service charge).
+    const paid = orderLines
+      .filter((l) => l.order_customer_id === c.id && ['payment', 'refund', 'tip'].includes(l.kind))
+      .reduce((s, l) => s + (l.kind === 'payment' ? l.amount_cents : -l.amount_cents), 0);
     return {
       id: c.id,
       customer_name: c.customer_name,
@@ -267,9 +274,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       paid_cents: paid,
     };
   });
-  const customerLabel = new Map(
-    (order.order_customers ?? []).map((c) => [c.id, `#${c.seq_no} · ${c.customer_name}`]),
-  );
+
   const payments = payLines.map((l, i) => ({
     id: l.id,
     amount_cents: signedAmt(l),
@@ -469,10 +474,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <dl className="flex flex-col gap-2 text-sm">
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Subtotal</dt><dd className="font-bold tabular">{peso(order.subtotal_cents)}</dd></div>
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Discount</dt><dd className="font-bold tabular text-destructive">-{peso(order.discount_cents)}</dd></div>
+              {tipTotal > 0 && (
+                <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Tips (PAYMAYA)</dt><dd className="font-bold tabular text-primary">+{peso(tipTotal)}</dd></div>
+              )}
               <div className="flex justify-between border-t border-border pt-2"><dt className="font-bold">Total</dt><dd className="font-extrabold tabular text-lg">{peso(order.total_cents)}</dd></div>
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Paid</dt><dd className="font-bold tabular">{peso(order.paid_cents)}</dd></div>
               <div className={`flex justify-between ${order.total_cents - order.paid_cents > 0 ? 'text-destructive' : ''}`}><dt className="font-bold">Due</dt><dd className="font-extrabold tabular text-lg">{peso(Math.max(0, order.total_cents - order.paid_cents))}</dd></div>
-              <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Tips (PAYMAYA)</dt><dd className="font-bold tabular text-primary">{peso(payments.reduce((s, p) => s + p.tip_cents, 0))}</dd></div>
             </dl>
           </CardContent>
         </Card>

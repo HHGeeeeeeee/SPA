@@ -41,7 +41,6 @@ import {
   finishOrderItem,
   skipOrderItem,
   redoOrderItem,
-  releaseBed,
 } from '@/app/(dashboard)/sales-orders/actions';
 import { ServiceLineEditor, type LineDraft } from '@/components/sales-orders/service-line-editor';
 import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/customer-payment-card';
@@ -123,6 +122,8 @@ interface FolioLineRecord {
   branch_code: string | null;
   created_by: string | null;
   created_at: string;
+  customer_label: string | null;
+  ref: string | null;
 }
 interface Props {
   order: {
@@ -186,8 +187,8 @@ function FolioRow({ l }: { l: FolioLineRecord }) {
   return (
     <div className="flex items-start justify-between gap-2 py-2 text-sm">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name].filter(Boolean).join(' / ') || l.kind}</span>
-        <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at)].filter(Boolean).join(' - ') || '-'}</span>
+        <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name, l.customer_label].filter(Boolean).join(' / ') || l.kind}</span>
+        <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at), l.ref].filter(Boolean).join(' - ') || '-'}</span>
       </div>
       <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
     </div>
@@ -625,13 +626,6 @@ export function OrderWorkspace({
     });
   }
 
-  function doReleaseBed(id: string) {
-    startTransition(async () => {
-      const r = await releaseBed(id);
-      if (r.ok) { toast.success('Bed marked ready'); router.refresh(); } else toast.error(r.error);
-    });
-  }
-
   function doRemoveCustomer(id: string) {
     startTransition(async () => {
       const r = await removeOrderCustomer(id, order.id);
@@ -815,12 +809,6 @@ export function OrderWorkspace({
                     </div>
                     <ul className="flex flex-col divide-y divide-border">
                       {itemsByCustomer(c.id).map((it) => {
-                        const cleaningUntil =
-                          ['service_completed', 'interrupted'].includes(it.status)
-                          && it.actual_end && it.resource_id && it.cleanup_minutes > 0 && !it.bed_released_at
-                            ? new Date(new Date(it.actual_end).getTime() + it.cleanup_minutes * 60000)
-                            : null;
-                        const isCleaning = cleaningUntil != null && cleaningUntil.getTime() > Date.now();
                         const guestHasLiveService = items.some((x) => x.id !== it.id && x.order_customer_id === it.order_customer_id && x.status === 'in_service');
 
                         // Not-yet-started lines edit inline — bare selects in the
@@ -867,7 +855,6 @@ export function OrderWorkspace({
                         const statusTag =
                           it.status === 'draft' ? { t: 'Draft', c: 'text-muted-foreground' }
                           : it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
-                          : isCleaning ? { t: 'Cleaning', c: 'text-amber-600 dark:text-amber-400' }
                           : (it.status === 'service_completed') ? { t: 'Done', c: 'text-primary' }
                           : it.status === 'interrupted' ? (it.switched ? { t: 'Switched', c: 'text-amber-600 dark:text-amber-400' } : { t: 'Interrupted', c: 'text-destructive' })
                           : it.status === 'cancelled' ? { t: 'Cancelled', c: 'text-muted-foreground' }
@@ -891,11 +878,6 @@ export function OrderWorkspace({
                             </span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {dispatch ? (it.external_room_no || '—') : <>{it.station_branch_code ? `${it.station_branch_code} · ` : ''}{it.station_name ?? '—'}</>}
-                              {isCleaning && (
-                                <span className="mt-0.5 block">
-                                  <ActionBtn tip="Free the bed now, before the cleanup buffer ends." variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => doReleaseBed(it.id)} disabled={pending}>Ready now</ActionBtn>
-                                </span>
-                              )}
                             </span>
                             <span className="text-right tabular text-sm font-medium text-muted-foreground">{peso(it.list_price_cents)}</span>
                             <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
@@ -925,7 +907,7 @@ export function OrderWorkspace({
                             <div className="flex flex-wrap items-center gap-1 justify-end">
                               {canRunService && it.status === 'in_service' && (
                                 <>
-                                  <ActionBtn tip="Mark this service finished — stamps the end time." className="bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700" onClick={() => doFinishItem(it)} disabled={pending}>Finish</ActionBtn>
+                                  <ActionBtn tip="Mark this service finished — stamps the end time." onClick={() => doFinishItem(it)} disabled={pending}>Finish</ActionBtn>
                                   <ActionBtn tip="Stop mid-service and decide the charge (none / partial / full / reschedule)." variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => setInterruptItem(it)} disabled={pending}>Interrupt</ActionBtn>
                                 </>
                               )}
@@ -1011,15 +993,15 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Revenue</CardTitle></CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
-                  {folioLines.filter((l) => l.kind === 'revenue').map((l) => <FolioRow key={l.id} l={l} />)}
-                  {folioLines.every((l) => l.kind !== 'revenue') && <p className="py-2 text-sm text-muted-foreground">No revenue posted yet.</p>}
+                  {folioLines.filter((l) => ['revenue', 'tip'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
+                  {folioLines.every((l) => !['revenue', 'tip'].includes(l.kind)) && <p className="py-2 text-sm text-muted-foreground">No revenue posted yet.</p>}
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Payments & refunds</CardTitle></CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
-                  {folioLines.filter((l) => l.kind !== 'revenue').map((l) => <FolioRow key={l.id} l={l} />)}
-                  {folioLines.every((l) => l.kind === 'revenue') && <p className="py-2 text-sm text-muted-foreground">No payments yet.</p>}
+                  {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
+                  {folioLines.every((l) => !['payment', 'refund'].includes(l.kind)) && <p className="py-2 text-sm text-muted-foreground">No payments yet.</p>}
                 </CardContent>
               </Card>
             </div>
@@ -1099,30 +1081,7 @@ export function OrderWorkspace({
                 />
               ))}
 
-            {payments.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  Recorded payments
-                  {order.status === 'paid' && (
-                    <span className="ml-2 font-medium normal-case text-muted-foreground/80">— fully paid; use Collect / Refund above to adjust</span>
-                  )}
-                </p>
-                {payments.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-sm">
-                    <div className="min-w-0">
-                      <span className="font-semibold">{p.method_name}</span>
-                      {p.customer_label && <span className="ml-2 font-medium text-muted-foreground">{p.customer_label}</span>}
-                      {p.payment_ref && <span className="ml-2 font-mono text-xs text-muted-foreground">{p.payment_ref}</span>}
-                      {p.tip_cents > 0 && <span className="ml-2 text-xs font-semibold text-primary">+ tip {peso(p.tip_cents)}</span>}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {p.amount_cents < 0 && <span className="rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-destructive">Refund</span>}
-                      <span className="font-bold tabular">{peso(p.amount_cents)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+
           </CardContent>
         </Card>
       )}

@@ -45,9 +45,10 @@ function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
-// Roster data for one branch + week: the branch's own therapists plus any from
-// branches in the same sharing group (cross-branch borrowing), and their shifts
-// for the week. Position is joined so the grid can group rows by role.
+// Roster data for one branch + week: the branch's own (home-branch) therapists
+// and their shifts for the week. The roster is home-branch only — cross-branch
+// borrowing is arranged on the Calendar, not on this page. Position is joined so
+// the grid can group rows by role.
 async function fetchRoster(branchParam?: string, weekParam?: string) {
   const supabase = createServiceClient();
   const allowed = await getAllowedBranchIds();
@@ -61,10 +62,8 @@ async function fetchRoster(branchParam?: string, weekParam?: string) {
   let employees: { id: string; employee_code: string; name: string; home_branch_id: string | null; position_code: string | null }[] = [];
   let shifts: ShiftRow[] = [];
   if (branchId) {
-    const group = list.find((b) => b.id === branchId)?.therapist_share_group;
-    const homeBranchIds = group ? list.filter((b) => b.therapist_share_group === group).map((b) => b.id) : [branchId];
     const [emp, sh] = await Promise.all([
-      supabase.from('employees').select('id, employee_code, name, home_branch_id, position:positions ( code )').in('home_branch_id', homeBranchIds).eq('status', 'active').order('employee_code'),
+      supabase.from('employees').select('id, employee_code, name, home_branch_id, position:positions ( code )').eq('home_branch_id', branchId).eq('status', 'active').order('employee_code'),
       supabase.from('employee_shifts')
         .select('employee_id, shift_date, shift_type, shift_start, shift_end, leave_type')
         .eq('branch_id', branchId)
@@ -117,7 +116,7 @@ export default async function ShiftSchedulePage({
         </Card>
       ) : employees.length === 0 ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
-          No active staff for this branch (or its sharing group).
+          No active home-branch staff for this branch.
         </Card>
       ) : (
         <div className="flex flex-col gap-3">

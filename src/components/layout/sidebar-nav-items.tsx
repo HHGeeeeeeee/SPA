@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   CalendarDays,
   CalendarClock,
+  Receipt,
   CreditCard,
   Wallet,
   BarChart3,
@@ -60,6 +61,7 @@ export const mainNavItems: NavItem[] = [
   // feeds it) lead the list — the desk's daily-start workflow precedes taking
   // individual orders against it.
   { label: 'Calendar', href: '/calendar', icon: CalendarClock },
+  { label: 'Shift Remittance', href: '/reconciliation/shift-remittance', icon: Receipt },
   { label: 'Shift Schedule', href: '/shift-schedule', icon: CalendarDays },
   // Pending Reschedules child temporarily disabled (2026-05-31) — re-enable
   // when the reschedule handling option is re-added to interrupt-taxonomy.
@@ -81,7 +83,6 @@ export const mainNavItems: NavItem[] = [
       // close steps; staff only owns the Cash Count.
       { label: 'End of Day', href: '/reconciliation/end-of-day', section: 'Daily Close', managerOnly: true },
       { label: 'Shift Cash Count', href: '/reconciliation/cash', section: 'Daily Close' },
-      { label: 'Shift Remittance', href: '/reconciliation/shift-remittance', section: 'Daily Close' },
       { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm', section: 'Daily Close', managerOnly: true },
       // Periodic trio — scheduled rhythm rather than daily must-do: Tip and
       // Commission settle semi-monthly, AR cadence depends on each billing

@@ -440,6 +440,9 @@ export function ScheduleBoard({
   // the placed blocks incl. prep/cleanup; staff on shift from the roster).
   const [hoverMin, setHoverMin] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
+  // The availability popover only floats while the pointer is over the top strip
+  // (time ruler + Pending/hr band), not over the bed rows.
+  const [hoverStrip, setHoverStrip] = useState(false);
 
   // Stable station ordering / labelling for the hover popup's Stations section.
   const STATION_ORDER = ['massage_bed', 'hair_chair', 'nail_station'] as const;
@@ -660,12 +663,16 @@ export function ScheduleBoard({
           className="relative"
           style={{ minWidth: LABEL_W + trackWidth }}
           onMouseMove={(e) => {
+            // Over the top strip? The ruler (h-12) + Pending/hr band ≈ 76px, and
+            // the ruler is sticky so the strip is always at the card's top edge.
+            const card = scrollRef.current?.getBoundingClientRect();
+            setHoverStrip(card ? e.clientY - card.top <= 76 : false);
             const x = e.clientX - e.currentTarget.getBoundingClientRect().left - LABEL_W;
             if (x < 0) { setHoverMin(null); setHoverX(null); return; }
             setHoverMin(Math.min(windowEndMin, Math.max(windowStartMin, snapMin(windowStartMin + x / PX_PER_MIN))));
             setHoverX(LABEL_W + x);
           }}
-          onMouseLeave={() => { setHoverMin(null); setHoverX(null); }}
+          onMouseLeave={() => { setHoverMin(null); setHoverX(null); setHoverStrip(false); }}
         >
           {/* hour + 15-min ruler */}
           <div className="flex border-b border-border sticky top-0 z-30 bg-muted">
@@ -794,7 +801,7 @@ export function ScheduleBoard({
               but flipped to the left when there isn't enough room on the right
               (would otherwise clip on narrow boards). Pointer-events:none so it
               never steals a click meant for an empty bed slot. */}
-          {axis === 'bed' && hoverMin != null && hoverX != null && hoverStaff && hoverStations && (
+          {axis === 'bed' && hoverStrip && hoverMin != null && hoverX != null && hoverStaff && hoverStations && (
             <HoverPopover x={hoverX} time={hhmm(hoverMin)} stations={hoverStations} staff={hoverStaff} />
           )}
         </div>

@@ -36,7 +36,6 @@ import {
   addOrderItem,
   updateOrderItem,
   markNoShow,
-  removeOrderItem,
   startOrderItem,
   startAllServices,
   finishOrderItem,
@@ -535,12 +534,6 @@ export function OrderWorkspace({
     });
   }
 
-  function doRemoveItem(id: string) {
-    startTransition(async () => {
-      const r = await removeOrderItem(id, order.id);
-      if (!r.ok) toast.error(r.error);
-    });
-  }
 
   function doNoShow(id: string) {
     startTransition(async () => {
@@ -658,11 +651,11 @@ export function OrderWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, items, order.editable]);
 
-  // A guest can be removed only while none of their services have started and no
-  // payment is attributed to them — mirrors the server guard.
+  // A guest can be removed only before any service line exists for them and while
+  // no payment is attributed — once they have services, void/cancel the lines
+  // instead of deleting the guest.
   const customerRemovable = (c: OrderCustomer) =>
-    !items.some((i) => i.order_customer_id === c.id && !['unassigned', 'scheduled', 'cancelled'].includes(i.status))
-    && c.paid_cents === 0;
+    itemsByCustomer(c.id).length === 0 && c.paid_cents === 0;
   const multiCustomer = customers.length > 1;
   // Guests who still owe on their own line (Pay separately shows one card each).
   const splitCustomers = customers
@@ -861,9 +854,6 @@ export function OrderWorkspace({
                                 )}
                                 {!['paid', 'closed', 'void'].includes(order.status) && (
                                   <ActionBtn tip="Guest didn't show — mark no-show (zero charge, leaves the schedule)." variant="outline" className="border-muted-foreground/40 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => doNoShow(it.id)} disabled={pending}>No-show</ActionBtn>
-                                )}
-                                {order.status === 'draft' && (
-                                  <Button size="icon-sm" variant="ghost" onClick={() => doRemoveItem(it.id)} disabled={pending} title="Remove service"><Trash2 className="size-3.5 text-destructive" /></Button>
                                 )}
                               </div>
                             </li>

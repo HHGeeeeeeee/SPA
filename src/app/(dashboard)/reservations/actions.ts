@@ -27,6 +27,9 @@ const schema = z.object({
   desired_service_start: z.string().min(1),
   desired_service_end: z.string().min(1),
   service_location_type: z.enum(['on_site', 'external_hotel']).default('on_site'),
+  // Dispatch (external_hotel): which hotel (order) + room number (each line).
+  external_hotel_id: z.string().uuid().optional().nullable(),
+  external_room_no: z.string().max(40).optional().nullable(),
   note: z.string().max(500).optional().nullable(),
   // Explicit staff bed override (hybrid). Empty = let the system decide.
   resource_ids: z.array(z.string().uuid()).optional().default([]),
@@ -103,6 +106,7 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
       // enum is renamed in the final cleanup).
       order_type: 'reservation',
       service_location_type: d.service_location_type,
+      external_hotel_id: d.service_location_type === 'external_hotel' ? (d.external_hotel_id ?? null) : null,
       service_date: serviceDate,
       note: d.note || null,
       status: 'draft',
@@ -151,7 +155,7 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
       duration_minutes: durationMin,
       resource_id: bedId,
       therapist_id: d.therapist_id ?? null,
-      external_room_no: null,
+      external_room_no: d.service_location_type === 'external_hotel' ? (d.external_room_no ?? null) : null,
       discount_class_id: discountClassId,
       discount_amount_cents: 0,
       list_price_cents: null,

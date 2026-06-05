@@ -182,6 +182,7 @@ export function NewReservationDialog({
   const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : toLocalInput(new Date().toISOString()));
   const [end, setEnd] = useState(reservation ? toLocalInput(reservation.desired_service_end) : '');
   const [locationType, setLocationType] = useState(reservation?.service_location_type ?? 'on_site');
+  const [roomNo, setRoomNo] = useState('');
   const [note, setNote] = useState(reservation?.note ?? '');
   // Booking-side intent (groups who want to sit together → system auto-assigns
   // adjacent beds). Staff can override the actual beds via the picker below.
@@ -403,6 +404,7 @@ export function NewReservationDialog({
       desired_service_start: new Date(start).toISOString(),
       desired_service_end: new Date(end).toISOString(),
       service_location_type: locationType,
+      external_room_no: locationType === 'external_hotel' ? (roomNo.trim() || null) : null,
       note: note || null,
       resource_ids: locationType === 'external_hotel' ? [] : pinnedBeds,
       seat_together: locationType === 'external_hotel' ? false : seatTogether && paxNum > 1,
@@ -759,6 +761,13 @@ export function NewReservationDialog({
                   <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
                     Switching to External — the locked bed will be released on save (therapist travels to the hotel room).
                   </p>
+                )}
+                {locationType === 'external_hotel' && (
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="r-room" className="text-xs font-semibold text-muted-foreground">Room no</Label>
+                    <Input id="r-room" value={roomNo} onChange={(e) => setRoomNo(e.target.value)} placeholder="Hotel room no" />
+                    <p className="text-[11px] font-medium text-muted-foreground">Hotel itself is set on the order (Type = Dispatch).</p>
+                  </div>
                 )}
               </div>
             )}

@@ -6,12 +6,18 @@ import { z } from 'zod';
 import { createAuditedClient } from '@/lib/supabase/server';
 import type { Database } from '@/types/database';
 import { requireManager } from '@/lib/auth';
+import { RESOURCE_TYPES } from '@/lib/resource-types';
 
 type ResourceUpdate = Database['public']['Tables']['resources']['Update'];
 
+// Validate against the single source of truth (resource-types.ts) — the same
+// list the Type dropdown renders, so the two can't drift (a dropdown option the
+// server rejects, e.g. Facial Bed, was the bug this guards against).
+const RESOURCE_TYPE_VALUES = RESOURCE_TYPES.map((r) => r.value) as [string, ...string[]];
+
 const schema = z.object({
   branch_id: z.string().uuid(),
-  resource_type: z.enum(['massage_bed', 'rest_room', 'hair_chair', 'nail_station', 'steam_room']),
+  resource_type: z.enum(RESOURCE_TYPE_VALUES),
   resource_name: z.string().min(1).max(80),
   location_zone: z.string().max(40).optional().nullable(),
   capacity: z.coerce.number().int().min(1).max(20).default(1),

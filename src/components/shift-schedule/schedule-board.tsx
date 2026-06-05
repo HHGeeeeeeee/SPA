@@ -16,13 +16,6 @@ import {
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
@@ -229,7 +222,7 @@ const VARIANT_CLASS: Record<BlockVariant, string> = {
   completed: 'bg-zinc-400/70 text-white line-through dark:bg-zinc-500/70',
 };
 
-function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock) => void }) {
+function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock, e: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: block.key,
     data: { block },
@@ -252,7 +245,7 @@ function BlockView({ block, windowStartMin, onOpen }: { block: BoardBlock; windo
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      onClick={(e) => { e.stopPropagation(); onOpen(block); }}
+      onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
       className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
       title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}`}
@@ -275,7 +268,7 @@ function BedRow({
   trackWidth: number;
   hours: number[];
   nowMin: number | null;
-  onOpen: (b: BoardBlock) => void;
+  onOpen: (b: BoardBlock, e: React.MouseEvent) => void;
   onEmptyClick: (bedId: string, min: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bed:${bed.id}` });
@@ -349,7 +342,7 @@ function BedRow({
 // A draggable card in the left "Unallocated" rail. It carries no axis position;
 // dragging it onto a bed row places it (a timed card keeps its booked time, an
 // untimed card lands at the drop point).
-function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock) => void }) {
+function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock, e: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: block.key,
     data: { block },
@@ -366,7 +359,7 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      onClick={(e) => { e.stopPropagation(); onOpen(block); }}
+      onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
       className={`rounded px-2 py-1.5 flex flex-col gap-0.5 overflow-hidden text-[11px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
       title={`${block.guest ? `${block.guest} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''}${block.untimed ? '' : ` · ${hhmm(block.startMin)}`}`}
@@ -419,7 +412,7 @@ export function ScheduleBoard({
   const [addKey, setAddKey] = useState(0);
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
   // Block-detail popover (opened by clicking a booking; "Open order" navigates).
-  const [detail, setDetail] = useState<BoardBlock | null>(null);
+  const [detail, setDetail] = useState<{ block: BoardBlock; x: number; y: number } | null>(null);
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -565,8 +558,11 @@ export function ScheduleBoard({
 
   // Click a block → a small detail popover (Cloudbeds-style). It carries an
   // "Open order" button; we no longer jump straight to the order on click.
-  function openBlock(b: BoardBlock) {
-    setDetail(b);
+  function openBlock(b: BoardBlock, e: React.MouseEvent) {
+    const PW = 256, PH = 230;
+    const x = Math.max(8, Math.min(e.clientX + 8, window.innerWidth - PW - 8));
+    const y = Math.max(8, Math.min(e.clientY + 8, window.innerHeight - PH - 8));
+    setDetail({ block: b, x, y });
   }
 
   function onEmptyClick(bedId: string, min: number) {
@@ -830,42 +826,50 @@ export function ScheduleBoard({
         />
       )}
 
-      {/* Click-a-block detail popover — summary first, "Open order" to act. */}
-      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) setDetail(null); }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="font-bold">{detail?.guest || detail?.line1 || 'Booking'}</DialogTitle>
-          </DialogHeader>
-          {detail && (
-            <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-sm">
-              {detail.guest && (
-                <>
-                  <dt className="font-medium text-muted-foreground">Guest</dt>
-                  <dd className="font-semibold">{detail.guest}{detail.pax && detail.pax > 1 ? ` · ${detail.pax} pax` : ''}</dd>
-                </>
-              )}
-              <dt className="font-medium text-muted-foreground">Service</dt>
-              <dd className="font-semibold">{detail.line1}</dd>
-              {detail.line2 && (
-                <>
-                  <dt className="font-medium text-muted-foreground">{axis === 'person' ? 'Detail' : 'Therapist'}</dt>
-                  <dd className="font-semibold">{detail.line2}</dd>
-                </>
-              )}
-              <dt className="font-medium text-muted-foreground">Time</dt>
-              <dd className="font-semibold tabular-nums">{detail.untimed ? 'No time yet' : `${hhmm(detail.startMin)}–${hhmm(detail.endMin)}`}</dd>
-              <dt className="font-medium text-muted-foreground">Status</dt>
-              <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[detail.variant] ?? detail.variant}</dd>
-            </dl>
-          )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDetail(null)}>Close</Button>
-            {detail?.orderId && (
-              <Button onClick={() => router.push(`/sales-orders/${detail.orderId}`)}>Open order</Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Click-a-block detail popover — anchored at the click point; a full-screen
+          backdrop closes it. Summary first; "Open order" to actually go in. */}
+      {detail && (() => {
+        const b = detail.block;
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setDetail(null)} />
+            <div
+              className="fixed z-50 w-64 rounded-lg border border-border bg-card p-3 shadow-xl"
+              style={{ left: detail.x, top: detail.y }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-2 border-b border-border pb-1.5 mb-2">
+                <span className="font-bold text-sm truncate">{b.guest || b.line1}</span>
+                <button type="button" onClick={() => setDetail(null)} className="shrink-0 text-muted-foreground hover:text-foreground">✕</button>
+              </div>
+              <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[13px]">
+                {b.guest && (
+                  <>
+                    <dt className="font-medium text-muted-foreground">Guest</dt>
+                    <dd className="font-semibold truncate">{b.guest}{b.pax && b.pax > 1 ? ` · ${b.pax} pax` : ''}</dd>
+                  </>
+                )}
+                <dt className="font-medium text-muted-foreground">Service</dt>
+                <dd className="font-semibold truncate">{b.line1}</dd>
+                {b.line2 && (
+                  <>
+                    <dt className="font-medium text-muted-foreground">{axis === 'person' ? 'Detail' : 'Therapist'}</dt>
+                    <dd className="font-semibold truncate">{b.line2}</dd>
+                  </>
+                )}
+                <dt className="font-medium text-muted-foreground">Time</dt>
+                <dd className="font-semibold tabular-nums">{b.untimed ? 'No time yet' : `${hhmm(b.startMin)}–${hhmm(b.endMin)}`}</dd>
+                <dt className="font-medium text-muted-foreground">Status</dt>
+                <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[b.variant] ?? b.variant}</dd>
+              </dl>
+              <div className="mt-3 flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
+                {b.orderId && <Button size="sm" onClick={() => router.push(`/sales-orders/${b.orderId}`)}>Open order</Button>}
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
     </DndContext>
   );

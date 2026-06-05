@@ -30,6 +30,10 @@ export interface BoardBed {
    *  faint "on shift" band; bed rows leave these undefined. */
   shiftStartMin?: number | null;
   shiftEndMin?: number | null;
+  /** Bed rows (axis='bed') carry their branch code + zone so the board can nest
+   *  Branch > Type > Zone > Station. */
+  branch?: string;
+  zone?: string | null;
 }
 export type BlockVariant = 'pending' | 'confirmed' | 'scheduled' | 'in_service' | 'completed';
 export interface BoardBlock {
@@ -381,6 +385,37 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
   );
 }
 
+// Full-width collapsible group header (Branch / Type / Zone) for the bed board's
+// nesting. The label column is sticky-left so it stays put while the timeline
+// scrolls; the rest of the row is empty to keep the time axis aligned.
+function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, indent = 0, tone }: {
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  trackWidth: number;
+  Icon?: React.ComponentType<{ className?: string }>;
+  indent?: number;
+  tone: string;
+}) {
+  return (
+    <div className={`flex border-b border-border ${tone}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`w-40 shrink-0 p-2 flex items-center gap-1.5 sticky left-0 z-20 ${tone} text-left hover:brightness-95 transition-[filter]`}
+        style={{ paddingLeft: 8 + indent * 14 }}
+      >
+        {collapsed ? <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" /> : <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />}
+        {Icon && <Icon className="size-3.5 shrink-0 text-muted-foreground" />}
+        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground truncate">{label}</span>
+        <span className="ml-auto pr-1 font-extrabold tabular text-xs text-foreground/80">{count}</span>
+      </button>
+      <div className="flex-1" style={{ minWidth: trackWidth }} />
+    </div>
+  );
+}
+
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
   axis = 'bed', subjectLabel = 'Station',
@@ -510,6 +545,32 @@ export function ScheduleBoard({
     }
     return ordered;
   })();
+
+  // Bed board nesting: Branch > Type > Zone > Station. STATION_ORDER orders the
+  // types; branches + zones sort alphabetically. (The person board keeps the flat
+  // position grouping above.)
+  const bedTree = axis === 'bed' ? (() => {
+    const byBranch = new Map<string, BoardBed[]>();
+    for (const b of beds) { const k = b.branch ?? '—'; if (!byBranch.has(k)) byBranch.set(k, []); byBranch.get(k)!.push(b); }
+    return [...byBranch.keys()].sort().map((branch) => {
+      const rows = byBranch.get(branch)!;
+      const byType = new Map<string, BoardBed[]>();
+      for (const b of rows) { if (!byType.has(b.type)) byType.set(b.type, []); byType.get(b.type)!.push(b); }
+      const typeKeys = [...STATION_ORDER.filter((t) => byType.has(t)), ...[...byType.keys()].filter((t) => !(STATION_ORDER as readonly string[]).includes(t))];
+      return {
+        branch, count: rows.length,
+        types: typeKeys.map((type) => {
+          const trows = byType.get(type)!;
+          const byZone = new Map<string, BoardBed[]>();
+          for (const b of trows) { const z = b.zone ?? ''; if (!byZone.has(z)) byZone.set(z, []); byZone.get(z)!.push(b); }
+          return {
+            type, label: groupLabel(type), Icon: groupIcon(type), count: trows.length,
+            zones: [...byZone.keys()].sort().map((zone) => ({ zone, count: byZone.get(zone)!.length, rows: byZone.get(zone)! })),
+          };
+        }),
+      };
+    });
+  })() : null;
 
   // Per-type station free-now @ hoverMin. A station is "busy" if any block on
   // it overlaps [start − prep, end + cleanup]; everything else is free.
@@ -750,6 +811,37 @@ export function ScheduleBoard({
 
           {beds.length === 0 ? (
             <div className="p-8 text-center text-sm font-semibold text-muted-foreground">{axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}</div>
+          ) : axis === 'bed' && bedTree ? (
+            bedTree.map((bg) => {
+              const bKey = `b:${bg.branch}`;
+              const bCol = collapsedTypes.has(bKey);
+              return (
+                <Fragment key={bKey}>
+                  <GroupHeader label={bg.branch} count={bg.count} collapsed={bCol} onToggle={() => toggleType(bKey)} trackWidth={trackWidth} indent={0} tone="bg-muted/70" />
+                  {!bCol && bg.types.map((tg) => {
+                    const tKey = `t:${bg.branch}:${tg.type}`;
+                    const tCol = collapsedTypes.has(tKey);
+                    return (
+                      <Fragment key={tKey}>
+                        <GroupHeader label={tg.label} count={tg.count} collapsed={tCol} onToggle={() => toggleType(tKey)} trackWidth={trackWidth} Icon={tg.Icon} indent={1} tone="bg-muted/40" />
+                        {!tCol && tg.zones.map((zg) => {
+                          const zKey = `z:${bg.branch}:${tg.type}:${zg.zone}`;
+                          const zCol = collapsedTypes.has(zKey);
+                          return (
+                            <Fragment key={zKey}>
+                              {zg.zone && <GroupHeader label={zg.zone} count={zg.count} collapsed={zCol} onToggle={() => toggleType(zKey)} trackWidth={trackWidth} indent={2} tone="bg-muted/20" />}
+                              {(!zg.zone || !zCol) && zg.rows.map((bed) => (
+                                <BedRow key={bed.id} bed={bed} blocks={blocksByBed.get(bed.id) ?? []} windowStartMin={windowStartMin} trackWidth={trackWidth} hours={hours} nowMin={nowMin} onOpen={openBlock} onEmptyClick={onEmptyClick} />
+                              ))}
+                            </Fragment>
+                          );
+                        })}
+                      </Fragment>
+                    );
+                  })}
+                </Fragment>
+              );
+            })
           ) : (
             bedsByType.map((group) => {
               const isCollapsed = collapsedTypes.has(group.type);

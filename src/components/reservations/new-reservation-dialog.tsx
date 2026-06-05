@@ -117,6 +117,16 @@ const LOCATION_TYPES = [
 ];
 const rtLabel = (rt: string) => RESOURCE_TYPE_LABEL[rt] ?? rt;
 
+// "Now" rounded UP to the next 15-minute mark, as an ISO string. Default start
+// for new reservations so the desk lands on a clean slot (e.g. 10:19 → 10:30).
+function nextQuarterHourIso(): string {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  const r = d.getMinutes() % 15;
+  if (r !== 0) d.setMinutes(d.getMinutes() + (15 - r));
+  return d.toISOString();
+}
+
 // ISO timestamp → "YYYY-MM-DDTHH:mm" in local (browser) time for datetime-local.
 function toLocalInput(iso: string): string {
   const d = new Date(iso);
@@ -179,7 +189,7 @@ export function NewReservationDialog({
   const [genderPref, setGenderPref] = useState(reservation?.gender_preference ?? '__none__');
   // New reservations default Start to today + the current time; the date / time
   // are edited as two separate fields below. Walk-in mode recomputes this.
-  const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : toLocalInput(new Date().toISOString()));
+  const [start, setStart] = useState(reservation ? toLocalInput(reservation.desired_service_start) : toLocalInput(nextQuarterHourIso()));
   const [end, setEnd] = useState(reservation ? toLocalInput(reservation.desired_service_end) : '');
   const [locationType, setLocationType] = useState(reservation?.service_location_type ?? 'on_site');
   const [roomNo, setRoomNo] = useState('');
@@ -203,7 +213,18 @@ export function NewReservationDialog({
   const sourceOptions = sources.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
   const selectedBranch = branches.find((b) => b.id === branchId) ?? null;
   const branchUnits = selectedBranch?.businessUnitIds ?? [];
-  const availableCategories = serviceCategories.filter((c) => c.businessUnitIds.some((u) => branchUnits.includes(u)));
+  // The four high-traffic service types go first so the desk doesn't have to
+  // scroll for them; everything else keeps its original order below. Match on
+  // name keywords (codes vary per tenant) — anything not matched sorts after.
+  const CATEGORY_PRIORITY = ['massage', 'hair salon', 'facial', 'nail'];
+  const categoryRank = (c: CategoryOpt) => {
+    const name = c.name.toLowerCase();
+    const i = CATEGORY_PRIORITY.findIndex((k) => name.includes(k));
+    return i === -1 ? CATEGORY_PRIORITY.length : i;
+  };
+  const availableCategories = serviceCategories
+    .filter((c) => c.businessUnitIds.some((u) => branchUnits.includes(u)))
+    .sort((a, b) => categoryRank(a) - categoryRank(b));
 
   function toggleCategory(id: string) {
     setCategoryIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -423,7 +444,7 @@ export function NewReservationDialog({
         toast.success(isEdit ? 'Reservation updated' : walkIn ? 'Walk-in booked (confirmed)' : 'Reservation created');
         setOpen(false);
         if (!isEdit) {
-          setGuestName(''); setGuestPhone(''); setStart(toLocalInput(new Date().toISOString())); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]); setSeatTogether(false); setShowBedPicker(false); setWalkInMsg(null);
+          setGuestName(''); setGuestPhone(''); setStart(toLocalInput(nextQuarterHourIso())); setEnd(''); setNote(''); setCategoryIds([]); setPinnedBeds([]); setSeatTogether(false); setShowBedPicker(false); setWalkInMsg(null);
         }
       } else toast.error(r.error);
     });
@@ -503,7 +524,7 @@ export function NewReservationDialog({
 
             <div className="flex flex-col gap-2 col-span-2">
               <Label className="font-semibold">Service Types *</Label>
-              <div className="flex flex-col gap-1 rounded-lg border border-input p-2">
+              <div className="flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-input p-2">
                 {availableCategories.length === 0 ? (
                   <p className="text-xs font-medium text-muted-foreground px-2 py-1">No service types at this branch.</p>
                 ) : (

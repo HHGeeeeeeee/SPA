@@ -1277,8 +1277,10 @@ export function ScheduleBoard({
                 )}
                 {/* Start a not-yet-started service inline. Same guards as the order
                     page (needs service picked, therapist/bed where required, an
-                    open shift) — errors surface as a toast. */}
-                {b.variant === 'scheduled' && b.orderId && (
+                    open shift) — errors surface as a toast. Hidden until the
+                    booking is complete: a therapist, a station/bed (on-site), and
+                    a booked start time. Incomplete blocks already paint red. */}
+                {b.variant === 'scheduled' && b.orderId && !b.needsAssignment && !b.bedUnassigned && !b.untimed && (
                   <Button size="sm" disabled={pending} onClick={() => doStartFromBoard(b.refId, b.orderId!)}>
                     Start
                   </Button>

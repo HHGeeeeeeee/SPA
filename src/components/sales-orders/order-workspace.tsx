@@ -384,6 +384,14 @@ export function OrderWorkspace({
   // Whole order dispatched to a hotel → services use a room no, not an in-house station.
   const dispatch = order.service_location_type === 'external_hotel';
 
+  // A draft line can only be Started once every required field is set: service +
+  // duration (svcId), a booked start time, a therapist, and a station (or room no
+  // when dispatched). Until then the Start button (and "Start all") stays hidden
+  // and the empty fields are tinted red. Mirrors the calendar board's gating.
+  const lineComplete = (d: LineDraft): boolean =>
+    !!d.svcId && !!d.start && d.therapistId !== NONE
+    && (dispatch ? d.roomNo.trim() !== '' : d.resourceId !== NONE);
+
   // Therapist-gender preference now lives on the guest, not the service line.
   // The service editor (only ever open for one guest at a time) filters its
   // therapist picker / auto-assign by the active guest's preference.
@@ -724,7 +732,8 @@ export function OrderWorkspace({
             </div>
           )}
         </div>
-        {canRunService && items.some((i) => i.status === 'draft') && !hasCrossBranchDraft ? (
+        {canRunService && items.some((i) => i.status === 'draft') && !hasCrossBranchDraft
+          && items.filter((i) => i.status === 'draft').every((i) => lineComplete(effectiveDraft(i))) ? (
           <Button
             onClick={doStartAll}
             disabled={pending}
@@ -850,12 +859,13 @@ export function OrderWorkspace({
                                 defaultDiscountId={defaultDiscountId}
                                 dispatch={dispatch}
                                 disabled={pending}
+                                highlightMissing
                               />
                               <span className="text-right font-bold tabular text-sm">{peso(it.final_amount_cents)}</span>
                               <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Draft</span>
                               <span className="text-xs font-medium text-muted-foreground">—</span>
                               <div className="flex flex-wrap items-center gap-1 justify-end">
-                                {canRunService && it.status === 'draft' && (
+                                {canRunService && it.status === 'draft' && lineComplete(d) && (
                                   <ActionBtn tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'} className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={() => doStartItem(it)} disabled={pending || guestHasLiveService}>Start</ActionBtn>
                                 )}
                                 {canRunService && it.status === 'draft' && (

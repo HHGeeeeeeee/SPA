@@ -15,7 +15,7 @@ import {
   INTERRUPT_REASON_CODES_BY_HANDLING,
   interruptReasonLabel,
 } from '@/lib/interrupt-taxonomy';
-import { verifyManagerPin, listPinCapableManagers } from '@/lib/manager-pin';
+import { verifyManagerPin, verifyAnyManagerPin, listPinCapableManagers } from '@/lib/manager-pin';
 
 /** Surface the manager list to client components that need to render a PIN
  *  approval picker (e.g. Interrupt with No charge). Re-exported here so the
@@ -1088,7 +1088,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group ), resource:resources!order_items_resource_id_fkey ( branch_id )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group, category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
     .eq('id', itemId)
     .single();
 
@@ -1195,8 +1195,12 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     .eq('id', itemId);
   if (error) return { ok: false, error: error.message };
 
-  // Post the service's revenue to the folio, bound to the open shift.
+  // Post the service's revenue to the folio, bound to the open shift. The line
+  // carries the posting branch and the category's revenue transaction code (the
+  // GL code rides the order, set on the service category) so the ERP post reads
+  // it straight off the line instead of re-deriving it later.
   const startSession = await currentSession();
+  const svcCategory = Array.isArray(svc?.category) ? svc?.category[0] : svc?.category;
   await supabase.from('folio_lines').insert({
     order_id: orderId,
     shift_id: openShift.id,
@@ -1204,6 +1208,8 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     amount_cents: item?.final_amount_cents ?? 0,
     posted_by: startSession?.staffUserId ?? null,
     order_item_id: itemId,
+    branch_id: shiftBranchId,
+    transaction_code_id: svcCategory?.revenue_transaction_code_id ?? null,
   });
 
   // Starting the first service moves the order into service automatically —
@@ -1702,6 +1708,31 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
   return { ok: true };
 }
 
+// GL credit accounts that disambiguate same-method transaction codes (mirrors
+// the ERP resolver in revenue-confirm): service revenue vs tip payable.
+const TX_REVENUE_ACCOUNT = '40140';
+const TX_TIPS_PAYABLE = '20500';
+
+// Resolve the active transaction_code id for a folio posting. Payment-side codes
+// are branch-scoped and keyed by (method, credit account); the branchless
+// service-revenue code is keyed by credit account alone. Returns null when no
+// matching code is configured — the line still posts, the ERP step flags the gap.
+async function resolveTxCodeId(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  args: { branchId: string | null; type: string; methodId?: string | null; creditAccount: string },
+): Promise<string | null> {
+  let q = supabase
+    .from('transaction_codes')
+    .select('id')
+    .eq('transaction_type', args.type)
+    .eq('credit_account', args.creditAccount)
+    .eq('active', true);
+  q = args.branchId ? q.eq('branch_id', args.branchId) : q.is('branch_id', null);
+  q = args.methodId ? q.eq('payment_method_id', args.methodId) : q.is('payment_method_id', null);
+  const { data } = await q.maybeSingle();
+  return data?.id ?? null;
+}
+
 const paymentSchema = z.object({
   order_id: z.string().uuid(),
   order_customer_id: z.string().uuid().optional().nullable(),
@@ -1813,6 +1844,11 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     svcCard = card;
   }
 
+  // Resolve the branch-scoped GL codes for this method up front: the payment
+  // code (CR revenue) and, if there are tips, the tip code (CR tips payable).
+  const paymentTxCodeId = await resolveTxCodeId(supabase, { branchId: order.branch_id, type: 'payment', methodId: d.payment_method_id, creditAccount: TX_REVENUE_ACCOUNT });
+  const tipTxCodeId = tips.length > 0 ? await resolveTxCodeId(supabase, { branchId: order.branch_id, type: 'payment', methodId: d.payment_method_id, creditAccount: TX_TIPS_PAYABLE }) : null;
+
   // The payment is a folio line bound to the open shift (folio_lines is the
   // single ledger now - there is no separate payments table).
   const { data: paymentLine, error: pe } = await supabase
@@ -1827,6 +1863,8 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       payment_method_id: d.payment_method_id,
       payment_ref: d.payment_ref || null,
       stored_value_card_id: svcCard?.id ?? null,
+      branch_id: order.branch_id,
+      transaction_code_id: paymentTxCodeId,
     })
     .select('id')
     .single();
@@ -1864,6 +1902,8 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
         amount_cents: tipCents,
         posted_by: session.staffUserId,
         payment_method_id: d.payment_method_id,
+        branch_id: order.branch_id,
+        transaction_code_id: tipTxCodeId,
       })
       .select('id')
       .single();
@@ -1968,6 +2008,8 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
 
   // Refund = an append-only folio line (kind=refund). Amount is stored positive;
   // the kind carries the direction. paid = sum(payment) - sum(refund).
+  // Reuses the method's payment code (a refund reverses a payment).
+  const refundTxCodeId = await resolveTxCodeId(supabase, { branchId: order.branch_id, type: 'payment', methodId: d.payment_method_id, creditAccount: TX_REVENUE_ACCOUNT });
   const { data: refundLine, error: pe } = await supabase
     .from('folio_lines')
     .insert({
@@ -1980,6 +2022,8 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
       payment_method_id: d.payment_method_id,
       payment_ref: d.payment_ref || null,
       stored_value_card_id: d.stored_value_card_id || null,
+      branch_id: order.branch_id,
+      transaction_code_id: refundTxCodeId,
     })
     .select('id')
     .single();
@@ -2014,5 +2058,118 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${d.order_id}`);
   revalidatePath('/reconciliation/cash');
+  return { ok: true };
+}
+
+// Shared guard for a manual folio revenue posting (Add revenue / Adjust charge):
+// the order must be reachable, the business day open, and a cash shift open for
+// the branch (every folio line is shift-bound). Returns the resolved bits.
+async function revenuePostingContext(orderId: string): Promise<
+  | { ok: true; shiftId: string; branchId: string | null }
+  | { ok: false; error: string }
+> {
+  const supabase = await createAuditedClient();
+  const { data: order } = await supabase
+    .from('orders')
+    .select('status, branch_id, service_date')
+    .eq('id', orderId)
+    .single();
+  if (!order) return { ok: false, error: 'Order not found' };
+  if (order.branch_id && !(await canAccessBranch(order.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (order.status === 'void') return { ok: false, error: 'Order is void' };
+  if (await isBusinessDayClosed(order.branch_id, order.service_date)) {
+    return { ok: false, error: 'The business day is closed — revenue can no longer post to this date.' };
+  }
+  const openShift = order.branch_id ? await getCurrentOpenShift(order.branch_id) : null;
+  if (!openShift) {
+    return { ok: false, error: 'No cash shift is open for this branch — open one on the Sales Remittance page first.' };
+  }
+  return { ok: true, shiftId: openShift.id, branchId: order.branch_id };
+}
+
+const addRevenueSchema = z.object({
+  order_id: z.string().uuid(),
+  amount: z.coerce.number().positive(),
+  note: z.string().max(200).optional().nullable(),
+});
+
+// Manually post a revenue line to the order's folio (a positive kind=revenue
+// line bound to the open shift). For revenue that isn't a service line — a
+// surcharge, a correction up, etc. Available in any status; the order's billed
+// total (derived from items + tips) is untouched, this rides the folio ledger.
+export async function addRevenue(input: unknown): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!session) return { ok: false, error: 'Sign in required' };
+  const parsed = addRevenueSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+
+  const ctx = await revenuePostingContext(d.order_id);
+  if (!ctx.ok) return ctx;
+
+  const supabase = await createAuditedClient();
+  // Manual revenue has no service category to bind a code from, so fall back to
+  // the branchless service-revenue code (CR 40140).
+  const txCodeId = await resolveTxCodeId(supabase, { branchId: null, type: 'revenue', methodId: null, creditAccount: TX_REVENUE_ACCOUNT });
+  const { error } = await supabase.from('folio_lines').insert({
+    order_id: d.order_id,
+    shift_id: ctx.shiftId,
+    kind: 'revenue',
+    amount_cents: Math.round(d.amount * 100),
+    posted_by: session.staffUserId,
+    note: d.note?.trim() || null,
+    branch_id: ctx.branchId,
+    transaction_code_id: txCodeId,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  revalidatePath('/reconciliation/cash');
+  revalidatePath('/reconciliation');
+  return { ok: true };
+}
+
+const adjustChargeSchema = z.object({
+  order_id: z.string().uuid(),
+  amount: z.coerce.number().positive(),
+  note: z.string().min(3, 'A reason is required').max(200),
+  // Manager-override PIN (any active manager/admin's) — entered as one masked
+  // field in the dialog; verified against all managers so no picker is needed.
+  manager_pin: z.string().regex(/^\d{4,6}$/, 'Enter the 4–6 digit manager PIN'),
+});
+
+// Post a downward charge correction to the folio: the operator enters a positive
+// amount, it lands as a NEGATIVE kind=revenue line (reduces recognised revenue).
+// Manager-gated via a single override PIN; the approver is recorded on the note.
+export async function adjustCharge(input: unknown): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!session) return { ok: false, error: 'Sign in required' };
+  const parsed = adjustChargeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+
+  const pin = await verifyAnyManagerPin(d.manager_pin);
+  if (!pin.ok) return { ok: false, error: pin.error };
+
+  const ctx = await revenuePostingContext(d.order_id);
+  if (!ctx.ok) return ctx;
+
+  const supabase = await createAuditedClient();
+  const txCodeId = await resolveTxCodeId(supabase, { branchId: null, type: 'revenue', methodId: null, creditAccount: TX_REVENUE_ACCOUNT });
+  const { error } = await supabase.from('folio_lines').insert({
+    order_id: d.order_id,
+    shift_id: ctx.shiftId,
+    kind: 'revenue',
+    amount_cents: -Math.round(d.amount * 100),
+    posted_by: session.staffUserId,
+    note: `${d.note.trim()} (approved: ${pin.approverName})`,
+    branch_id: ctx.branchId,
+    transaction_code_id: txCodeId,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  revalidatePath('/reconciliation/cash');
+  revalidatePath('/reconciliation');
   return { ok: true };
 }

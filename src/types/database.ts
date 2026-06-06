@@ -1522,6 +1522,7 @@ export type Database = {
         Row: {
           amount_cents: number
           auth_code: string | null
+          branch_id: string | null
           card_last4: string | null
           created_at: string
           id: string
@@ -1537,11 +1538,13 @@ export type Database = {
           shift_id: string
           stored_value_card_id: string | null
           tip_cents: number | null
+          transaction_code_id: string | null
           updated_at: string
         }
         Insert: {
           amount_cents: number
           auth_code?: string | null
+          branch_id?: string | null
           card_last4?: string | null
           created_at?: string
           id?: string
@@ -1557,11 +1560,13 @@ export type Database = {
           shift_id: string
           stored_value_card_id?: string | null
           tip_cents?: number | null
+          transaction_code_id?: string | null
           updated_at?: string
         }
         Update: {
           amount_cents?: number
           auth_code?: string | null
+          branch_id?: string | null
           card_last4?: string | null
           created_at?: string
           id?: string
@@ -1577,6 +1582,7 @@ export type Database = {
           shift_id?: string
           stored_value_card_id?: string | null
           tip_cents?: number | null
+          transaction_code_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -2864,6 +2870,7 @@ export type Database = {
           required_resource_type: string | null
           required_resource_types: string[]
           revenue_account: string | null
+          revenue_transaction_code_id: string | null
           tip_applicable: boolean
           updated_at: string
           updated_by: string | null
@@ -2879,6 +2886,7 @@ export type Database = {
           required_resource_type?: string | null
           required_resource_types?: string[]
           revenue_account?: string | null
+          revenue_transaction_code_id?: string | null
           tip_applicable?: boolean
           updated_at?: string
           updated_by?: string | null
@@ -2894,11 +2902,20 @@ export type Database = {
           required_resource_type?: string | null
           required_resource_types?: string[]
           revenue_account?: string | null
+          revenue_transaction_code_id?: string | null
           tip_applicable?: boolean
           updated_at?: string
           updated_by?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "service_categories_revenue_transaction_code_id_fkey"
+            columns: ["revenue_transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       service_category_branches: {
         Row: {
@@ -3780,7 +3797,7 @@ export type Database = {
       transaction_codes: {
         Row: {
           active: boolean
-          branch_id: string
+          branch_id: string | null
           code: string
           created_at: string
           created_by: string | null
@@ -3798,7 +3815,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
-          branch_id: string
+          branch_id?: string | null
           code: string
           created_at?: string
           created_by?: string | null
@@ -3816,7 +3833,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
-          branch_id?: string
+          branch_id?: string | null
           code?: string
           created_at?: string
           created_by?: string | null

@@ -9,7 +9,6 @@ import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
 import {
   cancelOrder,
   reopenOrder,
-  requestOrderAdjustment,
   setOrderStatus,
 } from '@/app/(dashboard)/sales-orders/actions';
 
@@ -28,7 +27,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
   const router = useRouter();
   const [cancelOpen, setCancelOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
-  const [adjustOpen, setAdjustOpen] = useState(false);
 
   function doCancel(reason: string) {
     startTransition(async () => {
@@ -41,13 +39,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
     startTransition(async () => {
       const r = await reopenOrder(orderId, reason);
       if (r.ok) { toast.success('Order reopened'); setReopenOpen(false); router.refresh(); }
-      else toast.error(r.error);
-    });
-  }
-  function doAdjust(reason: string) {
-    startTransition(async () => {
-      const r = await requestOrderAdjustment(orderId, reason);
-      if (r.ok) { toast.success('Adjustment requested'); setAdjustOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -72,9 +63,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
       )}
       {status === 'completed' && canManage && (
         <Button size="sm" variant="outline" onClick={() => setReopenOpen(true)} disabled={pending}>Reopen</Button>
-      )}
-      {status === 'closed' && canManage && (
-        <Button size="sm" variant="outline" onClick={() => setAdjustOpen(true)} disabled={pending}>Request Adjustment</Button>
       )}
       {!['closed', 'void'].includes(status) && canManage && (
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setCancelOpen(true)} disabled={pending}>Cancel</Button>
@@ -102,15 +90,6 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
         confirmLabel="Reopen"
         pending={pending}
         onConfirm={doReopen}
-      />
-      <ReasonDialog
-        open={adjustOpen}
-        onOpenChange={setAdjustOpen}
-        title="Request adjustment?"
-        description="Closed orders are corrected via an adjustment (reversal journal posts in the ERP phase)."
-        confirmLabel="Request adjustment"
-        pending={pending}
-        onConfirm={doAdjust}
       />
     </>
   );

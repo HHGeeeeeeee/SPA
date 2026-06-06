@@ -11,7 +11,6 @@ import { OrderNoteEditor } from '@/components/sales-orders/order-note-editor';
 import { OrderSourceBillingEditor } from '@/components/sales-orders/order-source-billing-editor';
 import { OrderBranchUnitEditor } from '@/components/sales-orders/order-branch-unit-editor';
 import { OrderLocationEditor } from '@/components/sales-orders/order-location-editor';
-import { PaymentAdjust } from '@/components/sales-orders/payment-adjust';
 import { OrderStatusActions } from '@/components/sales-orders/order-status-actions';
 import { ServiceBadge, PaymentBadge } from '@/components/sales-orders/order-badges';
 import { RetryOrderPostingButton } from '@/components/sales-orders/retry-order-posting-button';
@@ -427,15 +426,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           )}
           <OrderStatusActions orderId={order.id} status={order.status} canManage={canManage} itemCount={items.length} hasPayments={payments.length > 0} />
           <div className="ml-auto flex items-center gap-3">
-            {canManage && !arBilled && ['completed', 'closed'].includes(order.status) && (
-              <PaymentAdjust
-                orderId={order.id}
-                methods={paymentMethods.filter((m) => m.code !== 'ar')}
-                storedValueCards={storedValueCards}
-                dueCents={Math.max(0, order.total_cents - order.paid_cents)}
-                paidCents={order.paid_cents}
-              />
-            )}
             <ReportIncidentDialog orderId={order.id} defaultCustomerName={customers[0]?.customer_name ?? ''} />
           </div>
         </div>

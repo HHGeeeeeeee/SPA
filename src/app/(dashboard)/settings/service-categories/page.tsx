@@ -20,19 +20,23 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [catRes, buRes] = await Promise.all([
+  const [catRes, buRes, rcRes] = await Promise.all([
     supabase
       .from('service_categories')
       .select(`
-        id, code, name, commission_applicable, tip_applicable, revenue_account, required_resource_types, active, updated_at,
+        id, code, name, commission_applicable, tip_applicable, revenue_account, revenue_transaction_code_id, required_resource_types, active, updated_at,
         service_category_business_units ( business_unit_id, business_units ( id, code, name ) )
       `)
       .order('code'),
     supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
+    // Branchless revenue codes a category can bind to (its code rides the
+    // service's revenue folio line at Start).
+    supabase.from('transaction_codes').select('id, code').eq('transaction_type', 'revenue').eq('active', true).order('code'),
   ]);
   if (catRes.error) throw new Error(catRes.error.message);
   if (buRes.error) throw new Error(buRes.error.message);
-  return { categories: catRes.data ?? [], businessUnits: buRes.data ?? [] };
+  if (rcRes.error) throw new Error(rcRes.error.message);
+  return { categories: catRes.data ?? [], businessUnits: buRes.data ?? [], revenueCodes: rcRes.data ?? [] };
 }
 
 function Yes({ on }: { on: boolean }) {
@@ -48,7 +52,7 @@ function Yes({ on }: { on: boolean }) {
 }
 
 export default async function ServiceCategoriesPage() {
-  const { categories, businessUnits } = await fetchData();
+  const { categories, businessUnits, revenueCodes } = await fetchData();
   const activeCount = categories.filter((i) => i.active).length;
 
   return (
@@ -69,6 +73,7 @@ export default async function ServiceCategoriesPage() {
         </div>
         <ServiceCategoryFormDialog
           businessUnits={businessUnits}
+          revenueCodes={revenueCodes}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -113,6 +118,7 @@ export default async function ServiceCategoriesPage() {
                   commission_applicable: c.commission_applicable,
                   tip_applicable: c.tip_applicable,
                   revenue_account: c.revenue_account,
+                  revenue_transaction_code_id: c.revenue_transaction_code_id,
                   required_resource_types: c.required_resource_types ?? [],
                   active: c.active,
                 };
@@ -143,7 +149,7 @@ export default async function ServiceCategoriesPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <ServiceCategoryRowActions item={categoryItem} businessUnits={businessUnits} />
+                      <ServiceCategoryRowActions item={categoryItem} businessUnits={businessUnits} revenueCodes={revenueCodes} />
                     </TableCell>
                   </TableRow>
                 );

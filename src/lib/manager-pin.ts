@@ -83,6 +83,26 @@ export async function verifyManagerPin(managerUserId: string, pin: string): Prom
   return { ok: true, approverUserId: user.id, approverName: user.display_name ?? '' };
 }
 
+// Manager-override variant of verifyManagerPin: matches a PIN against ANY active
+// manager/admin without naming one first — for inline step-up approvals that
+// want a single masked PIN field (e.g. Adjust charge). No per-user lockout (the
+// actor is unknown until match), so keep it for low-frequency, audited actions.
+export async function verifyAnyManagerPin(pin: string): Promise<PinResult> {
+  const sb = createServiceClient();
+  const { data: users } = await sb
+    .from('staff_users')
+    .select('id, display_name, role, active, manager_pin_hash')
+    .in('role', ['manager', 'admin'])
+    .eq('active', true)
+    .not('manager_pin_hash', 'is', null);
+  for (const u of users ?? []) {
+    if (u.manager_pin_hash && (await bcrypt.compare(pin, u.manager_pin_hash))) {
+      return { ok: true, approverUserId: u.id, approverName: u.display_name ?? '' };
+    }
+  }
+  return { ok: false, error: 'Invalid manager PIN' };
+}
+
 /** List managers + admins who are active AND have a PIN set — drives the
  *  "Manager" dropdown on the PIN entry UI. Returns a minimal shape so we
  *  don't leak more than name+id into the client. */

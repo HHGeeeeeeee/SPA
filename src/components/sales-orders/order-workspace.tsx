@@ -47,6 +47,7 @@ import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/c
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { AuditTrail } from '@/components/sales-orders/audit-trail';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
+import { FolioActions } from '@/components/sales-orders/folio-actions';
 import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 
 function peso(cents: number): string {
@@ -187,7 +188,7 @@ function FolioRow({ l }: { l: FolioLineRecord }) {
         <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name, l.customer_label].filter(Boolean).join(' / ') || l.kind}</span>
         <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at), l.ref].filter(Boolean).join(' - ') || '-'}</span>
       </div>
-      <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
+      <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' || l.amount_cents < 0 ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
     </div>
   );
 }
@@ -1018,24 +1019,28 @@ export function OrderWorkspace({
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Tips (PAYMAYA)</p><p className="text-xl font-extrabold tabular mt-1 text-primary">{peso(totalTips)}</p></CardContent></Card>
           </div>
 
-          {folioLines.length > 0 && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Revenue</CardTitle></CardHeader>
+                <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-bold">Revenue</CardTitle>
+                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} />
+                </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['revenue', 'tip'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
                   {folioLines.every((l) => !['revenue', 'tip'].includes(l.kind)) && <p className="py-2 text-sm text-muted-foreground">No revenue posted yet.</p>}
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Payments & refunds</CardTitle></CardHeader>
+                <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-bold">Payments & refunds</CardTitle>
+                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods.filter((m) => m.code !== 'ar')} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} />
+                </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
                   {folioLines.every((l) => !['payment', 'refund'].includes(l.kind)) && <p className="py-2 text-sm text-muted-foreground">No payments yet.</p>}
                 </CardContent>
               </Card>
             </div>
-          )}
 
       {/* AR-billed orders are invoiced, not collected at the counter */}
       {paymentPolicy.arBilled && ['completed', 'paid'].includes(order.status) && (

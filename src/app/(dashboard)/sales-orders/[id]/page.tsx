@@ -61,7 +61,7 @@ async function fetchData(id: string) {
   if (error) throw new Error(error.message);
   if (!order) return null;
 
-  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
+  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll, txCodes] = await Promise.all([
     supabase
       .from('service_items')
       .select('id, code, name, service_group, service_category_id, duration_minutes, allowed_resource_types, category:service_categories ( name ), service_item_prices ( price_cents, price_class, branch_id )')
@@ -88,6 +88,9 @@ async function fetchData(id: string) {
     // All active branches + their business units — for the inline Branch /
     // Business Unit editor on the order detail panel.
     supabase.from('branches').select('id, code, name, branch_business_units ( business_units ( id, name ) )').eq('active', true).order('code'),
+    // Payment + revenue transaction codes — drive the read-only code shown in
+    // the folio dialogs (payment by branch+method, revenue is branchless).
+    supabase.from('transaction_codes').select('id, code, branch_id, payment_method_id, credit_account, transaction_type').in('transaction_type', ['payment', 'revenue']).eq('active', true),
   ]);
 
   const svcCardsRes = await supabase
@@ -241,6 +244,10 @@ async function fetchData(id: string) {
             .filter(Boolean) as { id: string; name: string }[],
         }));
     })(),
+    // Branches the user can post a folio line to (code only) + this order's branch.
+    accessibleBranches: (brAll.data ?? []).filter((b) => allowedBranchIds.has(b.id)).map((b) => ({ id: b.id, code: b.code })),
+    orderBranchId: order.branch_id as string | null,
+    transactionCodes: (txCodes.data ?? []) as { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[],
   };
 }
 
@@ -249,7 +256,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -541,6 +548,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         storedValueCards={storedValueCards}
         capabilityByEmployee={capabilityByEmployee}
         paymentPolicy={paymentPolicy}
+        accessibleBranches={accessibleBranches}
+        orderBranchId={orderBranchId}
+        transactionCodes={transactionCodes}
       />
     </div>
   );

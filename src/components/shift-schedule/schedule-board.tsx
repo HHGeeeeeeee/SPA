@@ -1191,15 +1191,16 @@ export function ScheduleBoard({
                 <div className="flex shrink-0 items-center gap-3 pl-1">
                   {/* Open the parent order — an icon up here instead of a footer button. */}
                   {b.orderId && (
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/sales-orders/${b.orderId}`)}
+                    <a
+                      href={`/sales-orders/${b.orderId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="text-muted-foreground hover:text-foreground"
-                      title="Open order"
-                      aria-label="Open order"
+                      title="Open order in a new tab"
+                      aria-label="Open order in a new tab"
                     >
                       <ExternalLink className="size-4" />
-                    </button>
+                    </a>
                   )}
                   <button type="button" onClick={() => setDetail(null)} className="text-muted-foreground hover:text-foreground" aria-label="Close">✕</button>
                 </div>

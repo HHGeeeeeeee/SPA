@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand, ExternalLink, Unlink } from 'lucide-react';
+import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand, ExternalLink } from 'lucide-react';
 import {
   DndContext,
   type DragEndEvent,
@@ -24,7 +24,7 @@ import { cn, formatPHP } from '@/lib/utils';
 import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { moveScheduledOrderItem, assignTherapistToOrderItem, unassignOrderItem } from '@/app/(dashboard)/calendar/actions';
-import { startOrderItem } from '@/app/(dashboard)/sales-orders/actions';
+import { startOrderItem, finishOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 
 export interface BoardBed {
   id: string;
@@ -831,6 +831,15 @@ export function ScheduleBoard({
       else toast.error(r.error);
     });
   }
+  // Finish an in-service line straight from the board — stamps the end time, same
+  // action as the order page's Finish.
+  function doFinishFromBoard(itemId: string, orderId: string) {
+    startTransition(async () => {
+      const r = await finishOrderItem(itemId, orderId);
+      if (r.ok) { toast.success('Service finished'); setDetail(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
   // Staff drags only target `assign:` blocks; booking/bed drags only `bed:` rows.
   const collisionDetection: CollisionDetection = (args) => {
     const isStaff = !!args.active.data.current?.staff;
@@ -1179,7 +1188,7 @@ export function ScheduleBoard({
                     b.guest,
                   ].filter(Boolean).join(' - ') || b.line1}
                 </span>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-3 pl-1">
                   {/* Open the parent order — an icon up here instead of a footer button. */}
                   {b.orderId && (
                     <button
@@ -1292,18 +1301,10 @@ export function ScheduleBoard({
                 {/* Unassign — Station board strips the bed (only when one is set),
                     People board strips the therapist. Sends the line back to this
                     board's unallocated rail; the other assignment is kept. */}
-                {b.variant === 'scheduled' && b.orderId && b.draggable && (
-                  axis === 'bed'
-                    ? !b.bedUnassigned && (
-                        <Button size="sm" variant="outline" disabled={pending} onClick={() => doUnassign(b.refId, 'station')}>
-                          <Unlink className="size-4" /> Unassign station
-                        </Button>
-                      )
-                    : b.therapistId && (
-                        <Button size="sm" variant="outline" disabled={pending} onClick={() => doUnassign(b.refId, 'therapist')}>
-                          <Unlink className="size-4" /> Unassign therapist
-                        </Button>
-                      )
+                {b.variant === 'scheduled' && b.orderId && b.draggable && (axis === 'bed' ? !b.bedUnassigned : !!b.therapistId) && (
+                  <Button size="sm" variant="outline" disabled={pending} onClick={() => doUnassign(b.refId, axis === 'bed' ? 'station' : 'therapist')}>
+                    Unassign
+                  </Button>
                 )}
                 {/* Start a not-yet-started service inline. Same guards as the order
                     page (needs service picked, therapist/bed where required, an
@@ -1313,6 +1314,13 @@ export function ScheduleBoard({
                 {b.variant === 'scheduled' && b.orderId && !b.needsAssignment && !b.bedUnassigned && !b.untimed && (
                   <Button size="sm" disabled={pending} onClick={() => doStartFromBoard(b.refId, b.orderId!)}>
                     Start
+                  </Button>
+                )}
+                {/* Finish an in-service line — stamps the end time, same as the
+                    order page's Finish. */}
+                {b.variant === 'in_service' && b.orderId && (
+                  <Button size="sm" disabled={pending} onClick={() => doFinishFromBoard(b.refId, b.orderId!)}>
+                    Finish
                   </Button>
                 )}
               </div>

@@ -1256,21 +1256,36 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   const auth = await requireOrderBranchAccess(orderId);
   if (!auth.ok) return auth;
   const supabase = await createAuditedClient();
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
   const { data: item } = await supabase
     .from('order_items')
-    .select('actual_start, status')
+    .select('actual_start, scheduled_start, slot_end, duration_minutes, status')
     .eq('id', itemId)
     .single();
   if (!item) return { ok: false, error: 'Service line not found' };
   if (item.status !== 'in_service') return { ok: false, error: 'Only an in-service line can be finished' };
+
+  // The end time is capped at the planned end (booked start + duration, or the
+  // stored slot_end): finishing early records the real end, but finishing late
+  // can't push the line past its plan — an overrun never extends the booked block.
+  const planEndMs = item.slot_end
+    ? Date.parse(item.slot_end)
+    : (item.scheduled_start && item.duration_minutes != null)
+      ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
+      : null;
+  let endMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
+  // Never before the service actually started (a line started after its own plan
+  // end would otherwise read end < start).
+  if (item.actual_start) endMs = Math.max(endMs, Date.parse(item.actual_start));
+  const end = new Date(endMs).toISOString();
+
   const patch: { status: string; actual_end: string; service_end: string; actual_duration_minutes?: number } = {
     status: 'service_completed',
-    actual_end: now,
-    service_end: now,
+    actual_end: end,
+    service_end: end,
   };
   if (item?.actual_start) {
-    patch.actual_duration_minutes = Math.max(1, Math.round((Date.parse(now) - Date.parse(item.actual_start)) / 60000));
+    patch.actual_duration_minutes = Math.max(1, Math.round((endMs - Date.parse(item.actual_start)) / 60000));
   }
   const { error } = await supabase.from('order_items').update(patch).eq('id', itemId);
   if (error) return { ok: false, error: error.message };

@@ -140,8 +140,6 @@ export interface BoardOccupancy {
   therapistCount: number;    // service therapists rostered into therapistHours
   capacityHours: number;     // min(bedHours, therapistHours) — the real ceiling
   actualHours: number;       // delivered service-hours (in_service elapsed + done + interrupted)
-  revenueCents: number;      // net recognized revenue posted for the day (incl. adjustments)
-  revPathCents: number | null;     // RevPATH = revenue / capacityHours (cents per available hr)
   utilizationPct: number | null;   // actualHours / capacityHours
   stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
   therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
@@ -977,7 +975,7 @@ export function ScheduleBoard({
                 <span className="text-base font-extrabold tabular-nums text-foreground">{occPct(occupancy.stationOccPct)}</span>
                 <span className="text-xs font-medium text-muted-foreground tabular-nums">({occupancy.stationCount} st. - {occHrs(occupancy.bedHours)} available hr)</span>
               </div>
-              <span className="text-[11px] font-medium italic text-muted-foreground/80">
+              <span className="w-full text-[11px] font-medium italic text-muted-foreground/80">
                 Utilization = Service Hour / min available hour between Therapist and Station
               </span>
             </div>

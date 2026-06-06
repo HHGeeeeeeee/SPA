@@ -545,7 +545,7 @@ function buildOccupancy(p: {
   actual: OccWin[];   // delivered service windows (utilization numerator)
 }): BoardOccupancy {
   if (!p.computable) {
-    return { computable: false, note: p.note, perHour: [], bedHours: 0, therapistHours: 0, capacityHours: 0, actualHours: 0, utilizationPct: null, stationOccPct: null, therapistOccPct: null };
+    return { computable: false, note: p.note, perHour: [], bedHours: 0, therapistHours: 0, stationCount: p.stationCount, therapistCount: p.shifts.length, capacityHours: 0, actualHours: 0, utilizationPct: null, stationOccPct: null, therapistOccPct: null };
   }
   const ws = p.windowStartMin;
   const we = p.windowEndMin;
@@ -577,6 +577,8 @@ function buildOccupancy(p: {
     perHour,
     bedHours,
     therapistHours,
+    stationCount: p.stationCount,
+    therapistCount: p.shifts.length,
     capacityHours,
     actualHours,
     utilizationPct: capacityHours > 0 ? actualHours / capacityHours : null,

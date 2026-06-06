@@ -6,6 +6,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ShiftRemittancePanel } from '@/components/reconciliation/shift-remittance-panel';
+import { ShiftPostingStatus } from '@/components/reconciliation/shift-posting-status';
 import { ShiftLinesTabs } from '@/components/reconciliation/shift-lines-tabs';
 import { loadShiftDetail, loadRemittanceChecks, type UnsettledOrder } from '../actions';
 
@@ -98,8 +99,17 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
 
       {/* Remittance — per-method table (cash counted inline) + summary + close. */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
           <CardTitle className="text-base font-bold">Remittance</CardTitle>
+          {d.status === 'closed' && (
+            <ShiftPostingStatus
+              shiftId={d.id}
+              postingStatus={d.postingStatus}
+              glBatchNbr={d.glBatchNbr}
+              postingError={d.postingError}
+              canRetry={isManager(session)}
+            />
+          )}
         </CardHeader>
         <CardContent>
           <ShiftRemittancePanel

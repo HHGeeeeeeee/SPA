@@ -3347,12 +3347,15 @@ export type Database = {
           closed_by: string | null
           closing_count_cents: number | null
           created_at: string
+          gl_batch_nbr: string | null
           id: string
           label: string
           note: string | null
           opened_at: string
           opened_by: string | null
           opening_float_cents: number
+          posting_error: string | null
+          posting_status: string | null
           status: string
           updated_at: string
           variance_cents: number | null
@@ -3365,12 +3368,15 @@ export type Database = {
           closed_by?: string | null
           closing_count_cents?: number | null
           created_at?: string
+          gl_batch_nbr?: string | null
           id?: string
           label: string
           note?: string | null
           opened_at?: string
           opened_by?: string | null
           opening_float_cents?: number
+          posting_error?: string | null
+          posting_status?: string | null
           status?: string
           updated_at?: string
           variance_cents?: number | null
@@ -3383,12 +3389,15 @@ export type Database = {
           closed_by?: string | null
           closing_count_cents?: number | null
           created_at?: string
+          gl_batch_nbr?: string | null
           id?: string
           label?: string
           note?: string | null
           opened_at?: string
           opened_by?: string | null
           opening_float_cents?: number
+          posting_error?: string | null
+          posting_status?: string | null
           status?: string
           updated_at?: string
           variance_cents?: number | null

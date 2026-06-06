@@ -8,6 +8,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
 import { getBranchShiftConfig } from '../cash/actions';
 import { isBusinessDayClosed } from '../end-of-day/actions';
+import { postShiftToErp } from '@/lib/shift-erp-posting';
 
 export type ActionResult<T = unknown> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -174,6 +175,9 @@ export interface ShiftDetail {
   paymentsExpectedTotalCents: number;
   revenueLines: ShiftRevenueLine[];
   folioLines: ShiftFolioLine[];
+  postingStatus: string | null;
+  glBatchNbr: string | null;
+  postingError: string | null;
 }
 
 /** One shift's full remittance detail: revenue total, payments rolled up per
@@ -183,7 +187,7 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
   const supabase = await createAuditedClient();
   const { data: s } = await supabase
     .from('shifts')
-    .select('id, branch_id, business_date, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason, opener:staff_users!shifts_opened_by_fkey ( display_name, email ), closer:staff_users!shifts_closed_by_fkey ( display_name, email ), branch:branches!shifts_branch_id_fkey ( code )')
+    .select('id, branch_id, business_date, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason, posting_status, gl_batch_nbr, posting_error, opener:staff_users!shifts_opened_by_fkey ( display_name, email ), closer:staff_users!shifts_closed_by_fkey ( display_name, email ), branch:branches!shifts_branch_id_fkey ( code )')
     .eq('id', shiftId)
     .maybeSingle();
   if (!s) return null;
@@ -272,6 +276,9 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
     paymentsExpectedTotalCents: [...methodAgg.values()].reduce((a, b) => a + b.cents, 0),
     revenueLines,
     folioLines,
+    postingStatus: (s as { posting_status: string | null }).posting_status ?? null,
+    glBatchNbr: (s as { gl_batch_nbr: string | null }).gl_batch_nbr ?? null,
+    postingError: (s as { posting_error: string | null }).posting_error ?? null,
   };
 }
 
@@ -430,7 +437,29 @@ export async function closeShift(input: unknown): Promise<ActionResult> {
     .eq('id', d.shift_id)
     .eq('status', 'open');
   if (error) return { ok: false, error: error.message };
+
+  // Unified ERP posting: aggregate this shift's folio lines into one GL journal.
+  // Best-effort — the shift is closed regardless; a posting failure lands on the
+  // shift row (posting_status='failed') and is retriable. No-op until Acumatica
+  // is configured.
+  await postShiftToErp(d.shift_id);
+
   revalidatePath('/reconciliation/shift-remittance');
+  return { ok: true };
+}
+
+/** Re-attempt the ERP post for a closed shift whose previous post failed (or was
+ *  skipped because Acumatica wasn't yet configured). Manager-gated. */
+export async function retryShiftPosting(shiftId: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const supabase = await createAuditedClient();
+  const { data: shift } = await supabase.from('shifts').select('branch_id').eq('id', shiftId).maybeSingle();
+  if (!shift) return { ok: false, error: 'Shift not found' };
+  if (!(await canAccessBranch(shift.branch_id))) return { ok: false, error: 'No access to this branch' };
+  const r = await postShiftToErp(shiftId);
+  revalidatePath('/reconciliation/shift-remittance');
+  if (!r.ok) return { ok: false, error: r.error };
   return { ok: true };
 }
 

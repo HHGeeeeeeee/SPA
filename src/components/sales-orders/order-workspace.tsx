@@ -63,6 +63,7 @@ interface OrderItem {
   id: string;
   order_customer_id: string;
   service_item_id: string | null;
+  service_category_id: string | null;
   discount_class_id: string | null;
   service_name: string;
   therapist_name: string | null;
@@ -101,7 +102,7 @@ interface Opt { id: string; code: string; name: string; gender?: string | null; 
 interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
+interface ServiceVariant { id: string; name: string; group: string; categoryId: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface PaymentRecord {
   id: string;
   amount_cents: number;
@@ -147,10 +148,12 @@ interface Props {
    *  legacy `history` prop stays for the curated status-only narrative
    *  (status_log + edit_log entries) that the tab still optionally shows. */
   auditTrail: import('@/lib/order-audit-trail').AuditEntry[];
+  auditNames: Record<string, string>;
   serviceItems: ServiceVariant[];
   employees: Opt[];
   borrowableEmployees: BorrowOpt[];
   busyTherapistIds: string[];
+  busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
@@ -265,10 +268,12 @@ export function OrderWorkspace({
   folioLines,
   history,
   auditTrail,
+  auditNames,
   serviceItems,
   employees,
   borrowableEmployees,
   busyTherapistIds,
+  busyTherapistEndMap,
   busyResourceIds,
   resources,
   discountClasses,
@@ -319,7 +324,8 @@ export function OrderWorkspace({
   // values, so after a save (+ refresh) the cleared draft shows the fresh data.
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const draftFromItem = (it: OrderItem): LineDraft => ({
-    groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group ?? '',
+    groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group
+      ?? (it.service_category_id ? serviceItems.find((s) => s.categoryId === it.service_category_id)?.group ?? '' : ''),
     svcId: it.service_item_id ?? '',
     start: toHHmm(it.scheduled_start),
     therapistId: it.therapist_id ?? NONE,
@@ -706,7 +712,7 @@ export function OrderWorkspace({
           <Button
             onClick={doStartAll}
             disabled={pending}
-            className="bg-blue-600 font-bold text-white shadow-sm hover:bg-blue-700 focus-visible:ring-blue-500/40 dark:bg-blue-600 dark:hover:bg-blue-700"
+            className="font-bold shadow-sm"
           >
             <Play className="size-4 fill-current" /> Start all
           </Button>
@@ -819,6 +825,7 @@ export function OrderWorkspace({
                                 discountClasses={discountClasses}
                                 capabilityByEmployee={capabilityByEmployee}
                                 busyTherapistIds={busyTherapistIds}
+                                busyTherapistEndMap={busyTherapistEndMap}
                                 busyResourceIds={busyResourceIds}
                                 guestGender={guestGenderOf(c)}
                                 sourceDiscountLocked={sourceDiscountLocked}
@@ -940,6 +947,7 @@ export function OrderWorkspace({
                           discountClasses={discountClasses}
                           capabilityByEmployee={capabilityByEmployee}
                           busyTherapistIds={busyTherapistIds}
+                          busyTherapistEndMap={busyTherapistEndMap}
                           busyResourceIds={busyResourceIds}
                           guestGender={guestGenderOf(c)}
                           sourceDiscountLocked={sourceDiscountLocked}
@@ -1110,7 +1118,7 @@ export function OrderWorkspace({
             )}
             <Card>
               <CardContent>
-                <AuditTrail entries={auditTrail} />
+                <AuditTrail entries={auditTrail} names={auditNames} />
               </CardContent>
             </Card>
           </div>

@@ -30,7 +30,7 @@ export interface LineDraft {
   discountOverride: string;
 }
 
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
+interface ServiceVariant { id: string; name: string; group: string; categoryId: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface Emp { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
@@ -51,6 +51,7 @@ export function ServiceLineEditor({
   discountClasses,
   capabilityByEmployee,
   busyTherapistIds,
+  busyTherapistEndMap,
   busyResourceIds,
   guestGender,
   sourceDiscountLocked,
@@ -67,6 +68,7 @@ export function ServiceLineEditor({
   discountClasses: DiscountOpt[];
   capabilityByEmployee: Record<string, string[]>;
   busyTherapistIds: string[];
+  busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
   guestGender: string;
   sourceDiscountLocked: boolean;
@@ -83,29 +85,38 @@ export function ServiceLineEditor({
   const canDoGroup = (id: string) => canPerformGroup(capabilityByEmployee[id] ?? [], draft.groupSel || null);
   const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
   const matchGender = (id: string) => matchesGender(genderOf.get(id), guestGender);
-  const thisBranchOptions = employees
-    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
-  const borrowOptions = borrowableEmployees
-    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
+  const freeAtLabel = (id: string) => {
+    const iso = busyTherapistEndMap[id];
+    if (!iso) return 'in service';
+    const d = new Date(iso);
+    return `free ~${d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false })}`;
+  };
+  const eligible = (e: { id: string }) => canDoGroup(e.id) && matchGender(e.id);
+  // This branch: available vs in-service
+  const thisBranchAvailable = employees
+    .filter((e) => eligible(e) && !busy.has(e.id))
+    .map((e) => ({ value: e.id, label: e.name, disabled: false }));
+  const thisBranchBusy = employees
+    .filter((e) => eligible(e) && busy.has(e.id))
+    .map((e) => ({ value: e.id, label: `${e.name} · ${freeAtLabel(e.id)}`, disabled: false }));
+  // Share-group: available vs in-service
+  const borrowAvailable = borrowableEmployees
+    .filter((e) => eligible(e) && !busy.has(e.id))
+    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}`, disabled: false }));
+  const borrowBusy = borrowableEmployees
+    .filter((e) => eligible(e) && busy.has(e.id))
+    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''} · ${freeAtLabel(e.id)}`, disabled: false }));
   // Keep the line's currently-assigned therapist on the list even if today's
   // skill/gender/busy filters would drop them (a share-group loan, or the
   // service group changed after assignment). Without this the trigger can't
   // resolve the name and shows a raw id.
+  const allOptions = [...thisBranchAvailable, ...thisBranchBusy, ...borrowAvailable, ...borrowBusy];
   const empById = new Map([...employees, ...borrowableEmployees].map((e) => [e.id, e] as const));
-  const assignedInList = draft.therapistId !== NONE
-    && (thisBranchOptions.some((o) => o.value === draft.therapistId) || borrowOptions.some((o) => o.value === draft.therapistId));
+  const assignedInList = draft.therapistId !== NONE && allOptions.some((o) => o.value === draft.therapistId);
   const assignedEmp = draft.therapistId !== NONE && !assignedInList ? empById.get(draft.therapistId) : null;
   const assignedOption = assignedEmp
     ? { value: assignedEmp.id, label: `${assignedEmp.name}${'homeBranchCode' in assignedEmp && assignedEmp.homeBranchCode ? ` · ${assignedEmp.homeBranchCode}` : ''}` }
     : null;
-  const empItems = [
-    { value: NONE, label: 'Unassigned' },
-    ...(assignedOption ? [assignedOption] : []),
-    ...thisBranchOptions,
-    ...borrowOptions,
-  ];
 
   const busyRes = new Set(busyResourceIds);
   const svcSelected = serviceItems.find((s) => s.id === draft.svcId);
@@ -179,7 +190,7 @@ export function ServiceLineEditor({
         <Input type="time" className="h-8 w-full" value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
       </div>
       <div className="min-w-0">
-        <Select items={empItems} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
+        <Select items={[{ value: NONE, label: 'Unassigned' }, ...(assignedOption ? [assignedOption] : []), ...allOptions]} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>Unassigned</SelectItem>
@@ -189,21 +200,39 @@ export function ServiceLineEditor({
                 <SelectItem value={assignedOption.value}>{assignedOption.label}</SelectItem>
               </SelectGroup>
             )}
-            <SelectGroup>
-              <SelectLabel>At this branch</SelectLabel>
-              {thisBranchOptions.length === 0 ? (
+            {thisBranchAvailable.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Available</SelectLabel>
+                {thisBranchAvailable.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectGroup>
+            )}
+            {thisBranchBusy.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>In service</SelectLabel>
+                {thisBranchBusy.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectGroup>
+            )}
+            {thisBranchAvailable.length === 0 && thisBranchBusy.length === 0 && (
+              <SelectGroup>
+                <SelectLabel>At this branch</SelectLabel>
                 <SelectItem value="__nobody__" disabled>{draft.groupSel ? `No therapist here can do ${draft.groupSel}` : 'No therapist rostered here'}</SelectItem>
-              ) : (
-                thisBranchOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)
-              )}
-            </SelectGroup>
-            {borrowOptions.length > 0 && (
+              </SelectGroup>
+            )}
+            {(borrowAvailable.length > 0 || borrowBusy.length > 0) && (
               <>
                 <SelectSeparator />
-                <SelectGroup>
-                  <SelectLabel>Borrow from other branch</SelectLabel>
-                  {borrowOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)}
-                </SelectGroup>
+                {borrowAvailable.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Other branches · available</SelectLabel>
+                    {borrowAvailable.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectGroup>
+                )}
+                {borrowBusy.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Other branches · in service</SelectLabel>
+                    {borrowBusy.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectGroup>
+                )}
               </>
             )}
           </SelectContent>

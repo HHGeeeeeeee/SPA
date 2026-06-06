@@ -1,8 +1,9 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Plus, Users } from 'lucide-react';
+import { Plus, Users, CreditCard } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -56,7 +57,9 @@ function one<T>(v: T | T[] | null): T | null {
 }
 
 export default async function CustomersPage() {
-  if (!isManager(await currentSession())) redirect('/dashboard');
+  const session = await currentSession();
+  if (!isManager(session)) redirect('/dashboard');
+  const admin = isAdmin(session);
   const { customers, businessUnits, branches } = await fetchData();
   const activeCount = customers.filter((c) => c.status === 'active').length;
 
@@ -69,16 +72,25 @@ export default async function CustomersPage() {
             {customers.length} total · {activeCount} active · Repeat guests, SVC holders, members
           </p>
         </div>
-        <CustomerFormDialog
-          businessUnits={businessUnits}
-          branches={branches}
-          trigger={
-            <Button>
-              <Plus className="size-4" />
-              New Customer
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {/* Stored Value Cards lives here (admin-only) instead of the sidebar. */}
+          {admin && (
+            <Link href="/stored-value-cards" className={buttonVariants({ variant: 'outline' })}>
+              <CreditCard className="size-4" />
+              Stored Value Cards
+            </Link>
+          )}
+          <CustomerFormDialog
+            businessUnits={businessUnits}
+            branches={branches}
+            trigger={
+              <Button>
+                <Plus className="size-4" />
+                New Customer
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <Card className="p-0 overflow-hidden">

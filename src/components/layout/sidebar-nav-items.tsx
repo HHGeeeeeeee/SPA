@@ -3,7 +3,6 @@ import {
   CalendarDays,
   CalendarClock,
   Receipt,
-  CreditCard,
   Wallet,
   BarChart3,
   BookOpen,
@@ -68,10 +67,11 @@ export const mainNavItems: NavItem[] = [
   // Sales Orders is reachable from the Calendar control bar (opens in a new tab),
   // not the sidebar.
 
+  // Customers carries the Stored Value Cards entry in its page header (admin-only)
+  // rather than a top-level nav item, keeping SVC tucked under the customer area.
   { label: 'Customers', href: '/customers', icon: Users, managerOnly: true },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the
   // page/route stays but is off the nav.
-  { label: 'Stored Value Cards', href: '/stored-value-cards', icon: CreditCard, adminOnly: true },
   {
     label: 'Reconciliation',
     icon: Wallet,

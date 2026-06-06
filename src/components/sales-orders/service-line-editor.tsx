@@ -193,8 +193,14 @@ export function ServiceLineEditor({
   return (
     <>
       <div className="min-w-0">
-        <Select items={groupOptions} value={draft.groupSel} onValueChange={changeGroup} disabled={disabled}>
-          <SelectTrigger className="h-8 w-full"><SelectValue placeholder="Service" /></SelectTrigger>
+        <Select items={categoryOptions} value={draft.categorySel} onValueChange={changeCategory} disabled={disabled}>
+          <SelectTrigger className="h-8 w-full"><SelectValue placeholder="Category" /></SelectTrigger>
+          <SelectContent>{categoryOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-0">
+        <Select items={groupOptions} value={draft.groupSel} onValueChange={changeGroup} disabled={disabled || !draft.categorySel}>
+          <SelectTrigger className="h-8 w-full"><SelectValue placeholder={draft.categorySel ? 'Service' : 'Pick category'} /></SelectTrigger>
           <SelectContent>{groupOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>

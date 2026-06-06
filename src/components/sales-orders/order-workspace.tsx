@@ -302,6 +302,7 @@ export function OrderWorkspace({
   // add item (per customer) — two-step: group → duration variant. This panel only
   // ADDS new lines now; existing not-yet-started lines edit inline (per row).
   const [activeCustomer, setActiveCustomer] = useState<string | null>(null);
+  const [addCategory, setAddCategory] = useState('');
   const [groupSel, setGroupSel] = useState('');
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
@@ -324,6 +325,9 @@ export function OrderWorkspace({
   // values, so after a save (+ refresh) the cleared draft shows the fresh data.
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const draftFromItem = (it: OrderItem): LineDraft => ({
+    categorySel: it.service_category_id
+      ?? serviceItems.find((s) => s.id === it.service_item_id)?.categoryId
+      ?? '',
     groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group
       ?? (it.service_category_id ? serviceItems.find((s) => s.categoryId === it.service_category_id)?.group ?? '' : ''),
     svcId: it.service_item_id ?? '',
@@ -421,7 +425,7 @@ export function OrderWorkspace({
   function closeItemForm() {
     setActiveCustomer(null);
     setAddStart(''); setAddRoomNo('');
-    setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
+    setSvcId(''); setGroupSel(''); setAddCategory(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
     setTherapistId(NONE); setResourceId(NONE);
   }
 
@@ -816,7 +820,6 @@ export function OrderWorkspace({
                           const d = effectiveDraft(it);
                           return (
                             <li key={it.id} className={`${SERVICE_GRID} py-1.5`}>
-                              <span className="text-xs font-medium text-muted-foreground truncate">{serviceItems.find((s) => s.group === d.groupSel)?.categoryName ?? serviceItems.find((s) => s.categoryId === it.service_category_id)?.categoryName ?? '—'}</span>
                               <ServiceLineEditor
                                 draft={d}
                                 onChange={(patch) => setDraft(it, patch)}
@@ -931,10 +934,10 @@ export function OrderWorkspace({
                     <div className="min-w-max">
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
                       <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
-                        <span className="text-xs font-medium text-muted-foreground truncate">{serviceItems.find((s) => s.group === groupSel)?.categoryName ?? '—'}</span>
                         <ServiceLineEditor
-                          draft={{ groupSel, svcId, start: addStart, therapistId, resourceId, roomNo: addRoomNo, discountId, discountOverride }}
+                          draft={{ categorySel: addCategory, groupSel, svcId, start: addStart, therapistId, resourceId, roomNo: addRoomNo, discountId, discountOverride }}
                           onChange={(patch) => {
+                            if (patch.categorySel !== undefined) setAddCategory(patch.categorySel);
                             if (patch.groupSel !== undefined) setGroupSel(patch.groupSel);
                             if (patch.svcId !== undefined) setSvcId(patch.svcId);
                             if (patch.start !== undefined) setAddStart(patch.start);

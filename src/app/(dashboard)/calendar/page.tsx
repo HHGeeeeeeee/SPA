@@ -61,7 +61,10 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
   // Multi-branch: show the selected branch + the rest of its therapist-sharing
   // group, so cross-branch stations + bookings sit on one board (grouped by
   // Branch). Falls back to just the selected branch when it isn't in a group.
-  const { data: brCodes } = await supabase.from('branches').select('id, code').in('id', branchIds);
+  // Map ALL branch codes (not just the filtered ones): a booking can sit on a
+  // cross-branch station whose branch is outside the current filter, and its
+  // label must still resolve to that station's real branch.
+  const { data: brCodes } = await supabase.from('branches').select('id, code');
   const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
   const [bedsRes, itemsRes, shiftRes, unassignedRes] = await Promise.all([
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
@@ -81,7 +84,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     // rail. No resource filter (they have none); branch/day filtered in the loop.
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, total_cents, paid_cents )')
+      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
       .eq('status', 'draft').is('resource_id', null),
   ]);
 
@@ -120,6 +123,8 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       variant, draggable, orderId: ord.id,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       therapistId: it.therapist_id ?? null,
+      // On a bed already; red only when it still lacks a therapist.
+      needsAssignment: it.status === 'draft' && !it.therapist_id,
     });
     mins.push(startMin, endMin);
   }
@@ -146,6 +151,9 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       therapistId: it.therapist_id ?? null,
       untimed: !timed,
+      // Bedless rail card: red unless it's a dispatch (never needs a bed) that
+      // already has a therapist.
+      needsAssignment: !it.therapist_id || ord.service_location_type !== 'external_hotel',
     });
     if (timed) mins.push(startMin, endMin);
   }
@@ -203,14 +211,27 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
 
   // Multi-branch: the selected branch + its therapist-sharing group (∩ access),
   // so the group's therapists show on one board, grouped by Branch.
-  const { data: brCodes } = await supabase.from('branches').select('id, code').in('id', branchIds);
+  // Map ALL branch codes (not just the filtered ones): a line assigned to a
+  // cross-branch station must show that station's real branch, even when the
+  // station's branch sits outside the current top-filter selection.
+  const { data: brCodes } = await supabase.from('branches').select('id, code');
   const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
 
-  const [shiftRes, itemsRes, bedsRes] = await Promise.all([
+  const [empRes, shiftRes, itemsRes, bedsRes] = await Promise.all([
+    // Rows = every active service therapist whose HOME branch is in the filter,
+    // rostered today or not ("these are your branch's people"). Off-shift ones
+    // still get a row; the board's "Available only" toggle hides the empties.
+    supabase
+      .from('employees')
+      .select('id, name, employee_code, home_branch_id, position:positions ( code )')
+      .in('home_branch_id', branchIds).eq('status', 'active'),
+    // Today's shifts across ALL branches — matched to the home-branch therapists
+    // below to paint each row's on-shift band. A loaned-out (cross_branch) therapist
+    // has their shift at the OTHER branch, so shifts can't be filtered by branchIds.
     supabase
       .from('employee_shifts')
-      .select('employee_id, branch_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
-      .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
+      .select('employee_id, branch_id, shift_start, shift_end')
+      .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
       .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
@@ -220,38 +241,51 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
   ]);
 
+  // Home-branch service therapists become the rows.
+  const homeEmps = (empRes.data ?? []).filter((e) => isServicePosition(one(e.position)?.code ?? null));
+  const homeEmpIds = new Set(homeEmps.map((e) => e.id));
+
+  // On-shift band per therapist: the union of their shifts today, placed onto the
+  // board's minute axis. No shift today → no band (an empty row). rawStarts feeds
+  // the early-open widening (pre-open morning starts), placedEnds the late close.
+  const bandByEmp = new Map<string, { start: number; end: number }>();
+  const rawStarts: number[] = [];
+  const placedEnds: number[] = [];
+  for (const s of shiftRes.data ?? []) {
+    if (!homeEmpIds.has(s.employee_id)) continue;
+    const ss = timeToMin(s.shift_start); const se = timeToMin(s.shift_end);
+    if (ss == null || se == null) continue;
+    rawStarts.push(ss); placedEnds.push(place(se));
+    const start = place(ss); const end = place(se);
+    const prev = bandByEmp.get(s.employee_id);
+    bandByEmp.set(s.employee_id, prev ? { start: Math.min(prev.start, start), end: Math.max(prev.end, end) } : { start, end });
+  }
+
   // Open the window early enough to cover shifts that start before the branch
   // opens (e.g. 09:00 vs a 10:00 open) — only the few hours before open, so a
   // genuine after-midnight shift can't drag the window backwards.
-  const earlyStarts = (shiftRes.data ?? [])
-    .map((s) => timeToMin(s.shift_start))
-    .filter((m): m is number => m != null && m < branchOpen && m >= branchOpen - 360);
+  const earlyStarts = rawStarts.filter((m) => m < branchOpen && m >= branchOpen - 360);
   const windowStartMin = earlyStarts.length ? Math.min(branchOpen, ...earlyStarts) : branchOpen;
   const windowEndMin = Math.max(
     ...branchHours.map((h) => (h.close <= h.open ? h.close + 1440 : h.close)),
-    ...(shiftRes.data ?? []).map((s) => { const m = timeToMin(s.shift_end); return m == null ? 0 : place(m); }),
+    ...placedEnds,
     windowStartMin + 60,
   );
 
-  // Rows = on-shift service therapists today, carrying their shift window so the
-  // row paints a faint "on shift" band.
+  // Each home-branch therapist is a row, grouped under their HOME branch, painting
+  // a faint "on shift" band when rostered today.
   const rowsById = new Map<string, BoardBed>();
   const staffShifts: BoardStaffShift[] = [];
-  // A therapist loaned out (cross_branch) can also carry a home regular shift the
-  // same day; process cross_branch LAST so it wins the row's branch — they're
-  // physically at the branch they're loaned to.
-  const shiftRank = (t: string | null) => (t === 'cross_branch' ? 2 : t === 'on_call' ? 1 : 0);
-  const sortedShifts = [...(shiftRes.data ?? [])].sort((a, b) => shiftRank(a.shift_type) - shiftRank(b.shift_type));
-  for (const s of sortedShifts) {
-    const e = one(s.employees);
-    const positionCode = e ? one(e.position)?.code ?? null : null;
-    if (!isServicePosition(positionCode)) continue;
-    const ss = timeToMin(s.shift_start); const se = timeToMin(s.shift_end);
-    const startMin = ss == null ? null : place(ss);
-    const endMin = se == null ? null : place(se);
-    rowsById.set(s.employee_id, { id: s.employee_id, name: e?.name ?? '—', type: positionCode ?? '_other', shiftStartMin: startMin, shiftEndMin: endMin, branch: branchCodeById.get(s.branch_id) ?? '—', zone: '' });
-    if (startMin != null && endMin != null) {
-      staffShifts.push({ id: s.employee_id, name: e?.name ?? '—', code: e?.employee_code ?? '', positionCode, startMin, endMin });
+  for (const e of homeEmps) {
+    const positionCode = one(e.position)?.code ?? null;
+    const band = bandByEmp.get(e.id) ?? null;
+    rowsById.set(e.id, {
+      id: e.id, name: e.name ?? '—', type: positionCode ?? '_other',
+      shiftStartMin: band?.start ?? null, shiftEndMin: band?.end ?? null,
+      branch: branchCodeById.get(e.home_branch_id ?? '') ?? '—', zone: '',
+    });
+    if (band) {
+      staffShifts.push({ id: e.id, name: e.name ?? '—', code: e.employee_code ?? '', positionCode, startMin: band.start, endMin: band.end });
     }
   }
 
@@ -261,7 +295,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   const bedBusy = new Map<string, { s: number; e: number }[]>();
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
-    if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
+    if (!ord || ord.service_date !== day || ord.status === 'void') continue;
     const dur = it.duration_minutes ?? 60;
     let startMin: number;
     let endMin: number;
@@ -285,10 +319,13 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       bedBusy.set(it.resource_id, arr);
     }
     const therapistId = it.therapist_id ?? null;
-    // A booking whose therapist isn't on shift today still needs a row to show on.
-    if (therapistId && !rowsById.has(therapistId)) {
-      rowsById.set(therapistId, { id: therapistId, name: one(it.therapist)?.name ?? 'Therapist', type: '_other', branch: '—', zone: '' });
-    }
+    // Inclusion: a line assigned to one of our home-branch therapists shows on
+    // their row no matter which branch the order/station sits in — the person's
+    // time is occupied. A still-unassigned line rides the rail only when its order
+    // branch is in the filter (no therapist home branch to key it on yet).
+    // (bedBusy above is intentionally computed for ALL bed-holding items first, so
+    // the Assign-bed picker still sees a bed taken by a non-row therapist.)
+    if (therapistId ? !rowsById.has(therapistId) : !brSet.has(ord.branch_id)) continue;
     // line2: dispatch shows hotel info; regular bookings show station / branch.
     const orderBranch = branchCodeById.get(ord.branch_id) ?? '—';
     const res = one(it.resource);
@@ -297,7 +334,10 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     const line2 = ord.service_location_type === 'external_hotel'
       ? `Dispatch${it.external_room_no ? ` · Rm ${it.external_room_no}` : ''}`
       : res
-        ? `${branchCodeById.get(res.branch_id) ?? orderBranch} · ${res.resource_name}`
+        // Assigned station → its OWN branch (revenue follows the station). Never
+        // fall back to the order branch: a cross-branch station kept showing the
+        // order branch under a single-branch filter (e.g. HSPA2 bed read "HSPA1").
+        ? `${branchCodeById.get(res.branch_id) ?? '—'} · ${res.resource_name}`
         : `${orderBranch} · not assigned`;
     // Station types this service may sit on (item-level allow-list wins, else the
     // category's required type) so the bed picker only offers compatible beds.
@@ -316,6 +356,9 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       orderId: ord.id, therapistId, untimed,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       bedUnassigned, allowedResourceTypes,
+      // Red "needs assignment" when a not-yet-started booking lacks a therapist
+      // or (on-site) a bed.
+      needsAssignment: it.status === 'draft' && (!therapistId || bedUnassigned),
     });
   }
 

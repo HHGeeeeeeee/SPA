@@ -76,6 +76,9 @@ export interface BoardBlock {
   /** On-site booking that still has no bed (resource_id null). Drives the red
    *  "not assigned" hint and unlocks the People popover's "Assign bed" picker. */
   bedUnassigned?: boolean;
+  /** Not-yet-started booking missing a therapist and/or a station — the block
+   *  paints in the red "needs assignment" scheme so the desk can spot it. */
+  needsAssignment?: boolean;
   /** Station types this service may use (service item's allowed types, else the
    *  category's required type). Empty = any bed. Filters the bed picker. */
   allowedResourceTypes?: string[];
@@ -253,6 +256,11 @@ const VARIANT_CLASS: Record<BlockVariant, string> = {
   in_service: 'bg-blue-500/80 text-white',
   completed: 'bg-zinc-400/70 text-white line-through dark:bg-zinc-500/70',
 };
+// A not-yet-started booking still missing a therapist and/or a station paints
+// red regardless of variant, so unassigned work stands out on either board.
+const NEEDS_ASSIGN_CLASS = 'border border-dashed border-red-500/80 bg-red-500/25 text-red-950 dark:text-red-100';
+// The block's colour: red when it needs an assignment, else its variant scheme.
+const blockClass = (b: BoardBlock) => (b.needsAssignment ? NEEDS_ASSIGN_CLASS : VARIANT_CLASS[b.variant]);
 
 function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock, e: React.MouseEvent) => void; assignMode?: boolean }) {
   const { attributes, listeners, setNodeRef: dragRef, transform, isDragging } = useDraggable({
@@ -283,7 +291,7 @@ function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: Board
       {...attributes}
       onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
-      className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]} ${assignMode && canAssign ? (isOver ? 'ring-2 ring-primary ring-offset-1' : 'ring-2 ring-primary/40') : ''}`}
+      className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${blockClass(block)} ${assignMode && canAssign ? (isOver ? 'ring-2 ring-primary ring-offset-1' : 'ring-2 ring-primary/40') : ''}`}
       title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}${block.owing ? ' · balance due' : ''}`}
     >
       {/* Balance-due flag: a red dot on any order block that isn't paid in full
@@ -415,7 +423,7 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
       {...attributes}
       onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
-      className={`rounded px-2 py-1.5 flex flex-col gap-0.5 overflow-hidden text-[11px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
+      className={`rounded px-2 py-1.5 flex flex-col gap-0.5 overflow-hidden text-[11px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${blockClass(block)}`}
       title={`${block.guest ? `${block.guest} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''}${block.untimed ? '' : ` · ${hhmm(block.startMin)}`}`}
     >
       {block.guest && (

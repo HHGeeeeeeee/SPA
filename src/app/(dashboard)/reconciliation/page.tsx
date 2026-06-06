@@ -1,10 +1,9 @@
 import Link from 'next/link';
-import { Banknote, CheckCircle2, HandCoins, Percent, Wallet, FileText, ChevronRight } from 'lucide-react';
+import { HandCoins, Percent, Wallet, FileText, ChevronRight } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { loadReconStatus } from '@/lib/recon-status';
-import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
 import { currentSession, isManager } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -16,33 +15,12 @@ function peso(cents: number): string {
 export default async function ReconciliationHubPage() {
   const viewerIsManager = isManager(await currentSession());
   const s = await loadReconStatus();
-  const overdueItems = s.branches
-    .filter((b) => b.overdueClose)
-    .map((b) => ({
-      branch_id: b.id,
-      branch_code: b.code,
-      business_date: b.overdueClose!.business_date,
-      days_overdue: b.overdueClose!.days_overdue,
-    }));
 
   // tone: 'attention' = amber dot (something to do), 'clear' = green dot.
   // `managerOnly` cards drop off entirely for staff / external booker so the
   // landing only shows the surfaces they can actually open — matches the
   // sidebar's managerOnly filter on the same routes.
   const modules = [
-    {
-      href: '/reconciliation/cash', label: 'Shift Cash Count', icon: Banknote,
-      desc: 'Count and confirm the day’s cash drawer against recorded cash payments.',
-      metric: s.cashNotClosed > 0 ? `${s.cashNotClosed} branch not closed today` : 'All branches closed today',
-      attention: s.cashNotClosed > 0,
-    },
-    {
-      href: '/reconciliation/revenue-confirm', label: 'Revenue Confirm', icon: CheckCircle2,
-      desc: 'Daily close — move paid and AR-completed orders to Closed.',
-      metric: s.pendingConfirm > 0 ? `${s.pendingConfirm} order(s) pending · ${peso(s.pendingConfirmCents)}` : 'Nothing pending today',
-      attention: s.pendingConfirm > 0,
-      managerOnly: true,
-    },
     {
       href: '/reconciliation/tips', label: 'Tip Settlement', icon: HandCoins,
       desc: 'Half-month PAYMAYA tip payout to therapists (to AP).',
@@ -81,11 +59,6 @@ export default async function ReconciliationHubPage() {
           Daily cash &amp; revenue close, tips, commission, and AR statements · live status for {s.today}.
         </p>
       </div>
-
-      {/* Overdue close is a manager problem (only manager+ can run End of Day
-          / force close). Staff seeing an action banner they can't act on is
-          worse than not seeing it. */}
-      {viewerIsManager && <OverdueCloseBanner items={overdueItems} />}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {modules.map((m) => (

@@ -7,7 +7,7 @@ import { pushGLEntry, attachFileToJournal, pushAPBill, attachFileToBill, type GL
 
 export const acumaticaConfigured = (): boolean => !!process.env.ACUMATICA_BASE_URL;
 
-export type PostingTable = 'orders' | 'revenue_soa' | 'revenue_soa_payments' | 'tip_settlements';
+export type PostingTable = 'orders' | 'revenue_soa' | 'revenue_soa_payments' | 'tip_settlements' | 'shifts';
 
 interface PostToErpArgs {
   /** Audit-log entity type, e.g. 'revenue_confirm' | 'soa_settle' | 'tip_settlement'. */

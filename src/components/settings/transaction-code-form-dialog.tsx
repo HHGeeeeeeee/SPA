@@ -31,8 +31,8 @@ import {
 export interface TxCodeItem {
   id: string;
   code: string;
-  branch_id: string;
-  transaction_type: 'payment' | 'settle' | 'cost' | 'adjust';
+  branch_id: string | null;
+  transaction_type: 'payment' | 'settle' | 'cost' | 'adjust' | 'revenue';
   payment_method_id: string | null;
   debit_account: string | null;
   debit_subaccount: string | null;
@@ -81,10 +81,13 @@ export function TransactionCodeFormDialog({
   const isEdit = mode === 'edit';
 
   const [code, setCode] = useState(item?.code ?? '');
-  const [branchId, setBranchId] = useState(item?.branch_id ?? branches[0]?.id ?? '');
+  // Revenue codes are branchless (NONE); branch-scoped types default to the
+  // first branch on a fresh create.
+  const [branchId, setBranchId] = useState(item ? (item.branch_id ?? NONE) : (branches[0]?.id ?? ''));
   const [txType, setTxType] = useState<TxCodeItem['transaction_type']>(
     item?.transaction_type ?? 'payment',
   );
+  const isRevenue = txType === 'revenue';
   const [paymentMethodId, setPaymentMethodId] = useState(item?.payment_method_id ?? NONE);
   const [debitAccount, setDebitAccount] = useState(item?.debit_account ?? '');
   const [debitSubaccount, setDebitSubaccount] = useState(item?.debit_subaccount ?? '');
@@ -107,7 +110,7 @@ export function TransactionCodeFormDialog({
     e.preventDefault();
     const payload = {
       code,
-      branch_id: branchId,
+      branch_id: branchId === NONE ? null : branchId,
       transaction_type: txType,
       payment_method_id: paymentMethodId === NONE ? null : paymentMethodId,
       debit_account: debitAccount,
@@ -168,10 +171,16 @@ export function TransactionCodeFormDialog({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Branch *</Label>
-              <Select items={branchOptions} value={branchId} onValueChange={(v) => v && setBranchId(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Label className="font-semibold">Branch {isRevenue ? '' : '*'}</Label>
+              <Select
+                items={isRevenue ? [{ value: NONE, label: '(none — order-driven)' }, ...branchOptions] : branchOptions}
+                value={branchId || NONE}
+                onValueChange={(v) => v && setBranchId(v)}
+                disabled={isRevenue && branchId === NONE && branches.length === 0}
+              >
+                <SelectTrigger><SelectValue placeholder={isRevenue ? '(none — order-driven)' : undefined} /></SelectTrigger>
                 <SelectContent>
+                  {isRevenue && <SelectItem value={NONE}>(none — order-driven)</SelectItem>}
                   {branchOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                   ))}
@@ -181,10 +190,15 @@ export function TransactionCodeFormDialog({
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Type *</Label>
-              <Select items={[{ value: 'payment', label: 'Payment' }, { value: 'settle', label: 'Settle' }, { value: 'cost', label: 'Cost' }, { value: 'adjust', label: 'Adjust' }]} value={txType} onValueChange={(v) => v && setTxType(v as TxCodeItem['transaction_type'])}>
+              <Select
+                items={[{ value: 'payment', label: 'Payment' }, { value: 'revenue', label: 'Revenue' }, { value: 'settle', label: 'Settle' }, { value: 'cost', label: 'Cost' }, { value: 'adjust', label: 'Adjust' }]}
+                value={txType}
+                onValueChange={(v) => { if (!v) return; const t = v as TxCodeItem['transaction_type']; setTxType(t); if (t === 'revenue') setBranchId(NONE); }}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="payment">Payment</SelectItem>
+                  <SelectItem value="revenue">Revenue</SelectItem>
                   <SelectItem value="settle">Settle</SelectItem>
                   <SelectItem value="cost">Cost</SelectItem>
                   <SelectItem value="adjust">Adjust</SelectItem>

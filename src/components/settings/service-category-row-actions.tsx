@@ -32,9 +32,10 @@ import {
 interface Props {
   item: CategoryItem & { active: boolean };
   businessUnits: { id: string; code: string; name: string }[];
+  revenueCodes: { id: string; code: string }[];
 }
 
-export function ServiceCategoryRowActions({ item, businessUnits }: Props) {
+export function ServiceCategoryRowActions({ item, businessUnits, revenueCodes }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -86,6 +87,7 @@ export function ServiceCategoryRowActions({ item, businessUnits }: Props) {
         mode="edit"
         item={item}
         businessUnits={businessUnits}
+        revenueCodes={revenueCodes}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

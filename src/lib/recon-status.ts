@@ -131,18 +131,17 @@ export async function loadReconStatus(): Promise<ReconStatus> {
   // and the page always show the same number. ---
   const arOutstandingCents = (await loadArBalance()).total_cents;
 
-  // --- SOA: closed AR orders not yet on a statement ---
+  // --- SOA: orders with unbilled AR folio lines (掛帳 not yet on a statement) ---
   let soaUnstated = 0;
   if (arId) {
-    const [{ data: closedAr }, { data: taken }] = await Promise.all([
-      supabase
-        .from('orders')
-        .select('id, billing:billing_destinations!orders_billing_to_id_fkey ( default_payment_method_id )')
-        .eq('status', 'closed').is('deleted_at', null),
-      supabase.from('revenue_soa_orders').select('order_id'),
-    ]);
-    const takenIds = new Set((taken ?? []).map((t) => t.order_id));
-    soaUnstated = (closedAr ?? []).filter((o) => one(o.billing)?.default_payment_method_id === arId && !takenIds.has(o.id)).length;
+    const { data: unbilled } = await supabase
+      .from('folio_lines')
+      .select('order_id')
+      .eq('payment_method_id', arId)
+      .in('kind', ['payment', 'refund'])
+      .is('soa_session_id', null)
+      .not('order_id', 'is', null);
+    soaUnstated = new Set((unbilled ?? []).map((r) => r.order_id)).size;
   }
 
   return {

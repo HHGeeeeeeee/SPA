@@ -16,6 +16,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import {
   createServiceCategory,
@@ -31,6 +32,7 @@ export interface CategoryItem {
   commission_applicable: boolean;
   tip_applicable: boolean;
   revenue_account: string | null;
+  revenue_transaction_code_id: string | null;
   required_resource_types: string[];
 }
 
@@ -39,20 +41,29 @@ interface BusinessUnitOption {
   code: string;
   name: string;
 }
+interface RevenueCodeOption {
+  id: string;
+  code: string;
+}
 
 interface Props {
   mode?: 'create' | 'edit';
   item?: CategoryItem;
   businessUnits: BusinessUnitOption[];
+  // Revenue-type transaction codes (branchless) this category can bind to.
+  revenueCodes: RevenueCodeOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
 
+const NONE = '__none__';
+
 export function ServiceCategoryFormDialog({
   mode = 'create',
   item,
   businessUnits,
+  revenueCodes,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -66,6 +77,7 @@ export function ServiceCategoryFormDialog({
   const [commissionApplicable, setCommissionApplicable] = useState(item?.commission_applicable ?? true);
   const [tipApplicable, setTipApplicable] = useState(item?.tip_applicable ?? true);
   const [revenueAccount, setRevenueAccount] = useState(item?.revenue_account ?? '');
+  const [revenueCodeId, setRevenueCodeId] = useState(item?.revenue_transaction_code_id ?? NONE);
   const [resourceTypes, setResourceTypes] = useState<string[]>(item?.required_resource_types ?? []);
   const [pending, startTransition] = useTransition();
 
@@ -93,6 +105,7 @@ export function ServiceCategoryFormDialog({
       commission_applicable: commissionApplicable,
       tip_applicable: tipApplicable,
       revenue_account: revenueAccount || null,
+      revenue_transaction_code_id: revenueCodeId === NONE ? null : revenueCodeId,
       required_resource_types: resourceTypes,
     };
     startTransition(async () => {
@@ -106,6 +119,7 @@ export function ServiceCategoryFormDialog({
           setCode('');
           setName('');
           setRevenueAccount('');
+          setRevenueCodeId(NONE);
           setUnitIds([]);
           setResourceTypes([]);
         }
@@ -237,6 +251,20 @@ export function ServiceCategoryFormDialog({
                 </p>
               </div>
               <Switch checked={tipApplicable} onCheckedChange={setTipApplicable} />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label className="font-semibold">Revenue Transaction Code</Label>
+              <Select items={[{ value: NONE, label: 'None' }, ...revenueCodes.map((c) => ({ value: c.id, label: c.code }))]} value={revenueCodeId} onValueChange={(v) => v && setRevenueCodeId(v)}>
+                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>None</SelectItem>
+                  {revenueCodes.map((c) => <SelectItem key={c.id} value={c.id}>{c.code}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs font-medium text-muted-foreground">
+                The GL revenue code stamped on each service&apos;s revenue folio line when it starts.
+              </p>
             </div>
           </div>
 

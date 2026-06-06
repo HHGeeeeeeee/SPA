@@ -31,40 +31,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ShiftCard } from '@/components/reconciliation/shift-card';
 import {
   openShift,
   type ShiftListItem,
-  type ShiftRemittance,
 } from '@/app/(dashboard)/reconciliation/shift-remittance/actions';
 
 function peso(cents: number | null): string {
   return ((cents ?? 0) / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
-}
-
-// Build the ShiftRemittance shape ShiftCard expects from a flat list row, so the
-// per-row dialog reuses the exact count / close / reopen UI + logic.
-function toRemittance(it: ShiftListItem): ShiftRemittance {
-  return {
-    label: it.label,
-    windowLabel: '',
-    firstOfDay: it.firstOfDay,
-    shift: {
-      id: it.id,
-      label: it.label,
-      status: it.status,
-      openedAt: it.openedAt,
-      closedAt: it.closedAt,
-      openingFloatCents: it.openingFloatCents,
-      closingCountCents: it.closingCountCents,
-      varianceCents: it.varianceCents,
-      varianceReason: it.varianceReason,
-    },
-    revenueCents: it.revenueCents,
-    cashCents: it.cashCents,
-    nonCashCents: it.nonCashCents,
-    expectedCashCents: it.expectedCashCents,
-  };
 }
 
 interface Props {
@@ -72,12 +45,10 @@ interface Props {
   branches: { id: string; code: string; name: string }[];
   shiftOptions: { branchId: string; labels: string[] }[];
   today: string;
-  canReopen: boolean;
 }
 
-export function ShiftRemittanceList({ items, branches, shiftOptions, today, canReopen }: Props) {
+export function ShiftRemittanceList({ items, branches, shiftOptions, today }: Props) {
   const router = useRouter();
-  const [active, setActive] = useState<ShiftListItem | null>(null);
 
   // ── Open-shift dialog ─────────────────────────────────────────────────────
   const [openDlg, setOpenDlg] = useState(false);
@@ -147,7 +118,7 @@ export function ShiftRemittanceList({ items, branches, shiftOptions, today, canR
               items.map((it) => (
                 <TableRow
                   key={it.id}
-                  onClick={() => setActive(it)}
+                  onClick={() => router.push(`/reconciliation/shift-remittance/${it.id}`)}
                   className="cursor-pointer"
                 >
                   <TableCell className="font-bold">{it.branchCode}</TableCell>
@@ -172,30 +143,6 @@ export function ShiftRemittanceList({ items, branches, shiftOptions, today, canR
           </TableBody>
         </Table>
       </div>
-
-      {/* Per-row count / close / reopen — reuses ShiftCard. */}
-      <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-bold">
-              {active ? `${active.branchCode} · ${active.businessDate} · ${active.label}` : 'Shift'}
-            </DialogTitle>
-            <DialogDescription className="font-medium">
-              {active?.openedByName ? `Opened by ${active.openedByName}` : 'Shift remittance'}
-            </DialogDescription>
-          </DialogHeader>
-          {active && (
-            <ShiftCard
-              key={active.id}
-              branchId={active.branchId}
-              date={active.businessDate}
-              item={toRemittance(active)}
-              canReopen={canReopen}
-              onDone={() => setActive(null)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Open shift: pick branch + shift, opens for today. */}
       <Dialog open={openDlg} onOpenChange={setOpenDlg}>

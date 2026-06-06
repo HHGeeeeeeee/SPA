@@ -3,9 +3,7 @@ import {
   CalendarDays,
   CalendarClock,
   Receipt,
-  CreditCard,
   Wallet,
-  BarChart3,
   BookOpen,
   Settings,
   KeyRound,
@@ -68,22 +66,19 @@ export const mainNavItems: NavItem[] = [
   // Sales Orders is reachable from the Calendar control bar (opens in a new tab),
   // not the sidebar.
 
+  // Customers carries the Stored Value Cards entry in its page header (admin-only)
+  // rather than a top-level nav item, keeping SVC tucked under the customer area.
   { label: 'Customers', href: '/customers', icon: Users, managerOnly: true },
   // Waitlist consolidated into Reservations (walk-ins use "Next available"); the
   // page/route stays but is off the nav.
-  { label: 'Stored Value Cards', href: '/stored-value-cards', icon: CreditCard, adminOnly: true },
   {
     label: 'Reconciliation',
     icon: Wallet,
     href: '/reconciliation',
     children: [
-      // Daily-close trio — desk must run these every business day before EoD
-      // can close. Rendered in the primary-tinted "Daily Close" segment so
-      // the urgency reads visually. EoD + Revenue Confirm are manager-driven
-      // close steps; staff only owns the Cash Count.
-      { label: 'End of Day', href: '/reconciliation/end-of-day', section: 'Daily Close', managerOnly: true },
-      { label: 'Shift Cash Count', href: '/reconciliation/cash', section: 'Daily Close' },
-      { label: 'Revenue Confirm', href: '/reconciliation/revenue-confirm', section: 'Daily Close', managerOnly: true },
+      // Cash + revenue close moved to the shift-based Sales Remittance flow, so
+      // the old Daily Close trio (End of Day / Shift Cash Count / Revenue
+      // Confirm) is off the nav. What's left is the periodic back-office cadence.
       // Periodic trio — scheduled rhythm rather than daily must-do: Tip and
       // Commission settle semi-monthly, AR cadence depends on each billing
       // destination's credit terms. Rendered in a muted "Periodic" segment so
@@ -94,7 +89,6 @@ export const mainNavItems: NavItem[] = [
       { label: 'Accounts Receivable', href: '/reconciliation/soa', section: 'Periodic', managerOnly: true },
     ],
   },
-  { label: 'Reports', href: '/reports', icon: BarChart3, managerOnly: true },
   { label: 'Incidents', href: '/incidents', icon: CircleAlert },
   { label: 'Help', href: '/help', icon: BookOpen },
   {

@@ -8,7 +8,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
 import { getBranchShiftConfig } from '../cash/actions';
 import { isBusinessDayClosed } from '../end-of-day/actions';
-import { windowsFromConfig, formatWindow } from '../cash/shifts';
+import { postShiftToErp } from '@/lib/shift-erp-posting';
 
 export type ActionResult<T = unknown> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -33,111 +33,6 @@ async function shiftCashExpected(
     .filter((l) => l.kind === 'refund' && (one(l.method)?.code ?? '').toLowerCase() === 'cash')
     .reduce((s, l) => s + l.amount_cents, 0);
   return openingFloatCents + cashIn - cashOut;
-}
-
-export interface ShiftRow {
-  id: string;
-  label: string;
-  status: 'open' | 'closed';
-  openedAt: string | null;
-  closedAt: string | null;
-  openingFloatCents: number;
-  closingCountCents: number | null;
-  varianceCents: number | null;
-  varianceReason: string | null;
-}
-
-/** The branch's shifts for a day, in config order (so the Remittance page can
- *  list every configured shift, opened or not). */
-export async function listShiftsForDay(branchId: string, date: string): Promise<ShiftRow[]> {
-  const supabase = await createAuditedClient();
-  const { data } = await supabase
-    .from('shifts')
-    .select('id, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason')
-    .eq('branch_id', branchId)
-    .eq('business_date', date);
-  return (data ?? []).map((s) => ({
-    id: s.id,
-    label: s.label,
-    status: s.status as 'open' | 'closed',
-    openedAt: s.opened_at,
-    closedAt: s.closed_at,
-    openingFloatCents: s.opening_float_cents,
-    closingCountCents: s.closing_count_cents,
-    varianceCents: s.variance_cents,
-    varianceReason: s.variance_reason,
-  }));
-}
-
-export interface ShiftRemittance {
-  label: string;
-  windowLabel: string;
-  firstOfDay: boolean;
-  shift: ShiftRow | null;     // the shifts row once opened, else null
-  revenueCents: number;       // folio revenue posted into this shift
-  cashCents: number;          // cash payments posted into this shift
-  nonCashCents: number;       // card / other payments
-  expectedCashCents: number;  // opening float + cash
-}
-
-/** Every configured shift for the branch/day (opened or not) with its folio
- *  totals — the data the Shift Remittance page lists. Folio totals are 0 until
- *  the posting paths land; the structure is ready for them. */
-export async function loadShiftRemittance(branchId: string, date: string): Promise<ShiftRemittance[]> {
-  const supabase = await createAuditedClient();
-  const cfg = await getBranchShiftConfig(branchId);
-  const windows = windowsFromConfig(cfg);
-
-  const { data: rows } = await supabase
-    .from('shifts')
-    .select('id, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason')
-    .eq('branch_id', branchId)
-    .eq('business_date', date);
-  const byLabel = new Map((rows ?? []).map((r) => [r.label, r]));
-
-  // Folio aggregates per opened shift (revenue + cash/non-cash payments).
-  const agg = new Map<string, { revenue: number; cash: number; nonCash: number }>();
-  const shiftIds = (rows ?? []).map((r) => r.id);
-  if (shiftIds.length > 0) {
-    const { data: lines } = await supabase
-      .from('folio_lines')
-      .select('shift_id, kind, amount_cents, method:payment_methods!folio_lines_payment_method_id_fkey ( code )')
-      .in('shift_id', shiftIds);
-    for (const l of lines ?? []) {
-      const a = agg.get(l.shift_id) ?? { revenue: 0, cash: 0, nonCash: 0 };
-      // Tips are recognised revenue now, so they count toward the shift's
-      // posted revenue alongside service revenue (keeps revenue == payments).
-      if (l.kind === 'revenue' || l.kind === 'tip') a.revenue += l.amount_cents;
-      else if (l.kind === 'payment') {
-        if ((one(l.method)?.code ?? '').toLowerCase() === 'cash') a.cash += l.amount_cents;
-        else a.nonCash += l.amount_cents;
-      }
-      agg.set(l.shift_id, a);
-    }
-  }
-
-  return windows.map((w, i) => {
-    const row = byLabel.get(w.name) ?? null;
-    const a = (row && agg.get(row.id)) || { revenue: 0, cash: 0, nonCash: 0 };
-    const shift: ShiftRow | null = row
-      ? {
-          id: row.id, label: row.label, status: row.status as 'open' | 'closed',
-          openedAt: row.opened_at, closedAt: row.closed_at,
-          openingFloatCents: row.opening_float_cents, closingCountCents: row.closing_count_cents,
-          varianceCents: row.variance_cents, varianceReason: row.variance_reason,
-        }
-      : null;
-    return {
-      label: w.name,
-      windowLabel: formatWindow(w.start, w.end),
-      firstOfDay: i === 0,
-      shift,
-      revenueCents: a.revenue,
-      cashCents: a.cash,
-      nonCashCents: a.nonCash,
-      expectedCashCents: (shift?.openingFloatCents ?? 0) + a.cash,
-    };
-  });
 }
 
 export interface ShiftListItem {
@@ -231,36 +126,205 @@ export async function loadShiftLabelOptions(branchIds: string[]): Promise<{ bran
   return branchIds.map((branchId, i) => ({ branchId, labels: cfgs[i].shifts.map((s) => s.name) }));
 }
 
+export interface ShiftMethodRow {
+  code: string;
+  method: string;
+  expectedCents: number;
+  declaredCents: number | null; // null = not counted yet (open cash row)
+  overShortCents: number | null;
+  countable: boolean; // cash → physically counted on close
+}
+export interface ShiftFolioLine {
+  id: string;
+  postedAt: string;
+  orderId: string | null;
+  orderNo: string | null;
+  kind: string;
+  method: string | null;
+  ref: string | null;
+  amountCents: number;
+}
+export interface ShiftRevenueLine {
+  id: string;
+  postedAt: string;
+  orderId: string | null;
+  orderNo: string | null;
+  category: string;
+  amountCents: number;
+}
+export interface ShiftDetail {
+  id: string;
+  branchId: string;
+  branchCode: string;
+  businessDate: string;
+  label: string;
+  status: 'open' | 'closed';
+  openedAt: string | null;
+  openedByName: string | null;
+  closedAt: string | null;
+  closedByName: string | null;
+  openingFloatCents: number;
+  closingCountCents: number | null;
+  varianceCents: number | null;
+  varianceReason: string | null;
+  firstOfDay: boolean;
+  revenueTotalCents: number;
+  revenueByCategory: { name: string; cents: number }[];
+  methodRows: ShiftMethodRow[];
+  cashExpectedCents: number;
+  paymentsExpectedTotalCents: number;
+  revenueLines: ShiftRevenueLine[];
+  folioLines: ShiftFolioLine[];
+  postingStatus: string | null;
+  glBatchNbr: string | null;
+  postingError: string | null;
+}
+
+/** One shift's full remittance detail: revenue total, payments rolled up per
+ *  method (cash carrying its counted/variance), and the raw collected-payment
+ *  folio lines. Cash is the only physically-counted method. */
+export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | null> {
+  const supabase = await createAuditedClient();
+  const { data: s } = await supabase
+    .from('shifts')
+    .select('id, branch_id, business_date, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason, posting_status, gl_batch_nbr, posting_error, opener:staff_users!shifts_opened_by_fkey ( display_name, email ), closer:staff_users!shifts_closed_by_fkey ( display_name, email ), branch:branches!shifts_branch_id_fkey ( code )')
+    .eq('id', shiftId)
+    .maybeSingle();
+  if (!s) return null;
+  if (!(await canAccessBranch(s.branch_id))) return null;
+
+  // First shift of the (branch, day) shows no handover float.
+  const { data: first } = await supabase
+    .from('shifts').select('id')
+    .eq('branch_id', s.branch_id).eq('business_date', s.business_date)
+    .order('opened_at', { ascending: true }).limit(1).maybeSingle();
+
+  const { data: lines } = await supabase
+    .from('folio_lines')
+    .select('id, kind, amount_cents, posted_at, payment_ref, method:payment_methods!folio_lines_payment_method_id_fkey ( code, display_name ), order:orders!folio_lines_order_id_fkey ( id, order_no ), item:order_items!folio_lines_order_item_id_fkey ( category:service_categories ( name ) )')
+    .eq('shift_id', shiftId)
+    .order('posted_at', { ascending: false });
+
+  let revenueTotal = 0;
+  let cashIn = 0;
+  let cashOut = 0;
+  const methodAgg = new Map<string, { display: string; cents: number }>();
+  const revenueByCat = new Map<string, number>();
+  const revenueLines: ShiftRevenueLine[] = [];
+  const folioLines: ShiftFolioLine[] = [];
+  for (const l of lines ?? []) {
+    const m = one(l.method);
+    const ord = one(l.order);
+    if (l.kind === 'revenue' || l.kind === 'tip') {
+      revenueTotal += l.amount_cents;
+      const catName = l.kind === 'tip' ? 'Tips' : (one(one(l.item)?.category)?.name ?? 'Service');
+      revenueByCat.set(catName, (revenueByCat.get(catName) ?? 0) + l.amount_cents);
+      revenueLines.push({ id: l.id, postedAt: l.posted_at, orderId: ord?.id ?? null, orderNo: ord?.order_no ?? null, category: catName, amountCents: l.amount_cents });
+      continue;
+    }
+    if (l.kind !== 'payment' && l.kind !== 'refund') continue;
+    const code = (m?.code ?? 'other').toLowerCase();
+    const cur = methodAgg.get(code) ?? { display: m?.display_name ?? 'Other', cents: 0 };
+    cur.cents += l.kind === 'refund' ? -l.amount_cents : l.amount_cents;
+    methodAgg.set(code, cur);
+    if (code === 'cash') { if (l.kind === 'payment') cashIn += l.amount_cents; else cashOut += l.amount_cents; }
+    folioLines.push({
+      id: l.id, postedAt: l.posted_at, orderId: ord?.id ?? null, orderNo: ord?.order_no ?? null,
+      kind: l.kind, method: m?.display_name ?? null, ref: l.payment_ref ?? null, amountCents: l.amount_cents,
+    });
+  }
+  const closed = s.status === 'closed';
+  const cashExpected = s.opening_float_cents + cashIn - cashOut;
+
+  const methodRows: ShiftMethodRow[] = [];
+  // Cash row always shown (it's the counted drawer, even with only a float).
+  methodRows.push({
+    code: 'cash',
+    method: methodAgg.get('cash')?.display ?? 'Cash',
+    expectedCents: cashExpected,
+    declaredCents: closed ? (s.closing_count_cents ?? 0) : null,
+    overShortCents: closed ? (s.variance_cents ?? 0) : null,
+    countable: true,
+  });
+  for (const [code, v] of methodAgg) {
+    if (code === 'cash') continue;
+    methodRows.push({ code, method: v.display, expectedCents: v.cents, declaredCents: v.cents, overShortCents: 0, countable: false });
+  }
+
+  const opener = one(s.opener);
+  const closer = one(s.closer);
+  return {
+    id: s.id,
+    branchId: s.branch_id,
+    branchCode: one(s.branch)?.code ?? '—',
+    businessDate: s.business_date,
+    label: s.label,
+    status: s.status as 'open' | 'closed',
+    openedAt: s.opened_at,
+    openedByName: opener?.display_name ?? opener?.email ?? null,
+    closedAt: s.closed_at,
+    closedByName: closer?.display_name ?? closer?.email ?? null,
+    openingFloatCents: s.opening_float_cents,
+    closingCountCents: s.closing_count_cents,
+    varianceCents: s.variance_cents,
+    varianceReason: s.variance_reason,
+    firstOfDay: first?.id === s.id,
+    revenueTotalCents: revenueTotal,
+    revenueByCategory: [...revenueByCat.entries()].map(([name, cents]) => ({ name, cents })).sort((a, b) => b.cents - a.cents),
+    methodRows,
+    cashExpectedCents: cashExpected,
+    paymentsExpectedTotalCents: [...methodAgg.values()].reduce((a, b) => a + b.cents, 0),
+    revenueLines,
+    folioLines,
+    postingStatus: (s as { posting_status: string | null }).posting_status ?? null,
+    glBatchNbr: (s as { gl_batch_nbr: string | null }).gl_batch_nbr ?? null,
+    postingError: (s as { posting_error: string | null }).posting_error ?? null,
+  };
+}
+
+export interface UnsettledOrder {
+  id: string;
+  orderNo: string;
+  branchCode: string;
+  totalCents: number;
+  paidCents: number;
+  status: string;
+}
+/** Pre-close pipeline checks across the given branches:
+ *  - cancelled (void) orders that still carry a non-zero due (total ≠ paid);
+ *  - orders with a non-zero due whose SO has NO in-service line right now
+ *    (owe money but nothing's being served — they should be settled). */
+export async function loadRemittanceChecks(branchIds: string[]): Promise<{ cancelledWithDue: UnsettledOrder[]; dueNotInService: UnsettledOrder[] }> {
+  if (branchIds.length === 0) return { cancelledWithDue: [], dueNotInService: [] };
+  const supabase = await createAuditedClient();
+  const { data: brs } = await supabase.from('branches').select('id, code').in('id', branchIds);
+  const codeById = new Map((brs ?? []).map((b) => [b.id, b.code]));
+  const { data: orders } = await supabase
+    .from('orders')
+    .select('id, order_no, status, total_cents, paid_cents, branch_id, order_items ( status )')
+    .in('branch_id', branchIds)
+    .is('deleted_at', null)
+    .neq('status', 'closed');
+
+  const cancelledWithDue: UnsettledOrder[] = [];
+  const dueNotInService: UnsettledOrder[] = [];
+  for (const o of orders ?? []) {
+    const due = (o.total_cents ?? 0) - (o.paid_cents ?? 0);
+    if (due === 0) continue;
+    const row: UnsettledOrder = {
+      id: o.id, orderNo: o.order_no, branchCode: codeById.get(o.branch_id) ?? '—',
+      totalCents: o.total_cents ?? 0, paidCents: o.paid_cents ?? 0, status: o.status,
+    };
+    if (o.status === 'void') { cancelledWithDue.push(row); continue; }
+    const hasInService = (o.order_items ?? []).some((it) => it.status === 'in_service');
+    if (!hasInService) dueNotInService.push(row);
+  }
+  return { cancelledWithDue, dueNotInService };
+}
+
 /** The branch's currently-open shift, or null. This is the "home" a posting
  *  (revenue on Start, payment on takePayment) will bind to — the guard those
  *  paths use lands in a later step; for now it's just a read. */
-/** Cancelled orders (status='void') for this branch+date that still have a
- *  non-zero balance (paid != 0 or total != 0). The desk should settle them. */
-export interface CancelledWithDue {
-  id: string;
-  order_no: string;
-  totalCents: number;
-  paidCents: number;
-}
-export async function loadCancelledWithDue(branchId: string, date: string): Promise<CancelledWithDue[]> {
-  const supabase = await createAuditedClient();
-  const { data } = await supabase
-    .from('orders')
-    .select('id, order_no, total_cents, paid_cents')
-    .eq('branch_id', branchId)
-    .eq('service_date', date)
-    .eq('status', 'void')
-    .is('deleted_at', null);
-  return (data ?? [])
-    .filter((o) => (o.total_cents ?? 0) !== 0 || (o.paid_cents ?? 0) !== 0)
-    .map((o) => ({
-      id: o.id,
-      order_no: o.order_no,
-      totalCents: o.total_cents ?? 0,
-      paidCents: o.paid_cents ?? 0,
-    }));
-}
-
 export async function getCurrentOpenShift(branchId: string): Promise<{ id: string; label: string } | null> {
   const supabase = await createAuditedClient();
   const { data } = await supabase
@@ -373,7 +437,29 @@ export async function closeShift(input: unknown): Promise<ActionResult> {
     .eq('id', d.shift_id)
     .eq('status', 'open');
   if (error) return { ok: false, error: error.message };
+
+  // Unified ERP posting: aggregate this shift's folio lines into one GL journal.
+  // Best-effort — the shift is closed regardless; a posting failure lands on the
+  // shift row (posting_status='failed') and is retriable. No-op until Acumatica
+  // is configured.
+  await postShiftToErp(d.shift_id);
+
   revalidatePath('/reconciliation/shift-remittance');
+  return { ok: true };
+}
+
+/** Re-attempt the ERP post for a closed shift whose previous post failed (or was
+ *  skipped because Acumatica wasn't yet configured). Manager-gated. */
+export async function retryShiftPosting(shiftId: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const supabase = await createAuditedClient();
+  const { data: shift } = await supabase.from('shifts').select('branch_id').eq('id', shiftId).maybeSingle();
+  if (!shift) return { ok: false, error: 'Shift not found' };
+  if (!(await canAccessBranch(shift.branch_id))) return { ok: false, error: 'No access to this branch' };
+  const r = await postShiftToErp(shiftId);
+  revalidatePath('/reconciliation/shift-remittance');
+  if (!r.ok) return { ok: false, error: r.error };
   return { ok: true };
 }
 

@@ -47,6 +47,7 @@ import { CustomerPaymentCard, type TipTarget } from '@/components/sales-orders/c
 import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { AuditTrail } from '@/components/sales-orders/audit-trail';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
+import { FolioActions } from '@/components/sales-orders/folio-actions';
 import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 
 function peso(cents: number): string {
@@ -137,6 +138,7 @@ interface Props {
     editable: boolean;
     service_date: string;
     service_location_type: string | null;
+    billing_to_id: string | null;
   };
   customers: OrderCustomer[];
   items: OrderItem[];
@@ -163,6 +165,11 @@ interface Props {
   storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   capabilityByEmployee: Record<string, string[]>;
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
+  accessibleBranches: { id: string; code: string }[];
+  orderBranchId: string | null;
+  transactionCodes: { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[];
+  openShifts: { branchId: string; label: string }[];
+  billingDestinations: { id: string; code: string; name: string; tx_code: string | null }[];
 }
 
 const NONE = '__none__';
@@ -187,7 +194,7 @@ function FolioRow({ l }: { l: FolioLineRecord }) {
         <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name, l.customer_label].filter(Boolean).join(' / ') || l.kind}</span>
         <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at), l.ref].filter(Boolean).join(' - ') || '-'}</span>
       </div>
-      <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
+      <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' || l.amount_cents < 0 ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
     </div>
   );
 }
@@ -283,6 +290,11 @@ export function OrderWorkspace({
   storedValueCards,
   paymentPolicy,
   capabilityByEmployee,
+  accessibleBranches,
+  orderBranchId,
+  transactionCodes,
+  openShifts,
+  billingDestinations,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -383,6 +395,14 @@ export function OrderWorkspace({
     && (orderBranchCode != null ? i.station_branch_code !== orderBranchCode : !orderBranchResIds.has(i.resource_id)));
   // Whole order dispatched to a hotel → services use a room no, not an in-house station.
   const dispatch = order.service_location_type === 'external_hotel';
+
+  // A draft line can only be Started once every required field is set: service +
+  // duration (svcId), a booked start time, a therapist, and a station (or room no
+  // when dispatched). Until then the Start button (and "Start all") stays hidden
+  // and the empty fields are tinted red. Mirrors the calendar board's gating.
+  const lineComplete = (d: LineDraft): boolean =>
+    !!d.svcId && !!d.start && d.therapistId !== NONE
+    && (dispatch ? d.roomNo.trim() !== '' : d.resourceId !== NONE);
 
   // Therapist-gender preference now lives on the guest, not the service line.
   // The service editor (only ever open for one guest at a time) filters its
@@ -724,7 +744,8 @@ export function OrderWorkspace({
             </div>
           )}
         </div>
-        {canRunService && items.some((i) => i.status === 'draft') && !hasCrossBranchDraft ? (
+        {canRunService && items.some((i) => i.status === 'draft') && !hasCrossBranchDraft
+          && items.filter((i) => i.status === 'draft').every((i) => lineComplete(effectiveDraft(i))) ? (
           <Button
             onClick={doStartAll}
             disabled={pending}
@@ -850,12 +871,13 @@ export function OrderWorkspace({
                                 defaultDiscountId={defaultDiscountId}
                                 dispatch={dispatch}
                                 disabled={pending}
+                                highlightMissing
                               />
                               <span className="text-right font-bold tabular text-sm">{peso(it.final_amount_cents)}</span>
                               <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Draft</span>
                               <span className="text-xs font-medium text-muted-foreground">—</span>
                               <div className="flex flex-wrap items-center gap-1 justify-end">
-                                {canRunService && it.status === 'draft' && (
+                                {canRunService && it.status === 'draft' && lineComplete(d) && (
                                   <ActionBtn tip={guestHasLiveService ? 'Finish this guest’s current service first.' : 'Begin this service now — stamps the start time.'} className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={() => doStartItem(it)} disabled={pending || guestHasLiveService}>Start</ActionBtn>
                                 )}
                                 {canRunService && it.status === 'draft' && (
@@ -1008,24 +1030,28 @@ export function OrderWorkspace({
             <Card><CardContent className="py-3"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Tips (PAYMAYA)</p><p className="text-xl font-extrabold tabular mt-1 text-primary">{peso(totalTips)}</p></CardContent></Card>
           </div>
 
-          {folioLines.length > 0 && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Revenue</CardTitle></CardHeader>
+                <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-bold">Revenue</CardTitle>
+                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} />
+                </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['revenue', 'tip'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
                   {folioLines.every((l) => !['revenue', 'tip'].includes(l.kind)) && <p className="py-2 text-sm text-muted-foreground">No revenue posted yet.</p>}
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold">Payments & refunds</CardTitle></CardHeader>
+                <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-bold">Payments & refunds</CardTitle>
+                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} billingDestinations={billingDestinations} orderBillingToId={order.billing_to_id} guests={customers.map((c) => ({ id: c.id, name: c.customer_name }))} />
+                </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
                   {folioLines.every((l) => !['payment', 'refund'].includes(l.kind)) && <p className="py-2 text-sm text-muted-foreground">No payments yet.</p>}
                 </CardContent>
               </Card>
             </div>
-          )}
 
       {/* AR-billed orders are invoiced, not collected at the counter */}
       {paymentPolicy.arBilled && ['completed', 'paid'].includes(order.status) && (

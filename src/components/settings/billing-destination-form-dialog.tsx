@@ -33,8 +33,7 @@ export interface BillingDestinationItem {
   code: string;
   name: string;
   settlement_type: 'intercompany' | 'third_party';
-  intercompany_account: string | null;
-  intercompany_sub: string | null;
+  transaction_code_id: string | null;
   default_payment_method_id: string | null;
   credit_terms_days: number;
 }
@@ -45,10 +44,20 @@ interface PaymentMethodOption {
   display_name: string;
 }
 
+export interface TxCodeOption {
+  id: string;
+  code: string;
+  transaction_type: string;
+  debit_account: string | null;
+  credit_account: string | null;
+  branch_code: string | null;
+}
+
 interface Props {
   mode?: 'create' | 'edit';
   item?: BillingDestinationItem;
   paymentMethods: PaymentMethodOption[];
+  transactionCodes: TxCodeOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -60,6 +69,7 @@ export function BillingDestinationFormDialog({
   mode = 'create',
   item,
   paymentMethods,
+  transactionCodes,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -75,8 +85,7 @@ export function BillingDestinationFormDialog({
   const [settlementType, setSettlementType] = useState<BillingDestinationItem['settlement_type']>(
     item?.settlement_type ?? 'intercompany',
   );
-  const [intercompanyAccount, setIntercompanyAccount] = useState(item?.intercompany_account ?? '50170');
-  const [intercompanySub, setIntercompanySub] = useState(item?.intercompany_sub ?? '000000T03');
+  const [transactionCodeId, setTransactionCodeId] = useState(item?.transaction_code_id ?? NONE);
   const [defaultPaymentMethodId, setDefaultPaymentMethodId] = useState(
     item?.default_payment_method_id ?? NONE,
   );
@@ -86,6 +95,15 @@ export function BillingDestinationFormDialog({
     { value: NONE, label: 'None' },
     ...paymentMethods.map((p) => ({ value: p.id, label: p.display_name })),
   ];
+  // The bound code drives both 掛帳 and settle, so offer the AR/settle-type codes
+  // (each carries its own DR→CR + DR/CR branch).
+  const txCodeOptions = [
+    { value: NONE, label: 'None' },
+    ...transactionCodes.map((t) => ({
+      value: t.id,
+      label: `${t.code} · ${t.debit_account ?? '—'}→${t.credit_account ?? '—'}`,
+    })),
+  ];
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -93,8 +111,7 @@ export function BillingDestinationFormDialog({
       code,
       name,
       settlement_type: settlementType,
-      intercompany_account: settlementType === 'intercompany' ? intercompanyAccount : null,
-      intercompany_sub: settlementType === 'intercompany' ? intercompanySub : null,
+      transaction_code_id: transactionCodeId === NONE ? null : transactionCodeId,
       default_payment_method_id: defaultPaymentMethodId === NONE ? null : defaultPaymentMethodId,
       credit_terms_days: Number(creditTermsDays),
     };
@@ -199,36 +216,24 @@ export function BillingDestinationFormDialog({
               </div>
             </div>
 
-            {settlementType === 'intercompany' && (
-              <>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="bd-ia" className="font-semibold">Intercompany Account *</Label>
-                  <Input
-                    id="bd-ia"
-                    value={intercompanyAccount ?? ''}
-                    onChange={(e) => setIntercompanyAccount(e.target.value)}
-                    placeholder="50170"
-                    required
-                    maxLength={20}
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="bd-is" className="font-semibold">Intercompany Sub *</Label>
-                  <Input
-                    id="bd-is"
-                    value={intercompanySub ?? ''}
-                    onChange={(e) => setIntercompanySub(e.target.value)}
-                    placeholder="000000T03"
-                    required
-                    maxLength={20}
-                    pattern="[^-]*"
-                  />
-                </div>
-                <p className="col-span-2 text-xs font-medium text-muted-foreground -mt-2">
-                  Subaccount cannot contain dashes. Defaults: 50170 / 000000T03.
-                </p>
-              </>
-            )}
+            <div className="flex flex-col gap-2 col-span-2">
+              <Label className="font-semibold">AR / Settle Transaction Code</Label>
+              <Select
+                items={txCodeOptions}
+                value={transactionCodeId ?? NONE}
+                onValueChange={(v) => setTransactionCodeId(v ?? NONE)}
+              >
+                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                <SelectContent>
+                  {txCodeOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs font-medium text-muted-foreground">
+                Drives both the AR booking (掛帳) line and the settle line. The code carries its own DR→CR accounts and branches.
+              </p>
+            </div>
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Default Payment Method</Label>

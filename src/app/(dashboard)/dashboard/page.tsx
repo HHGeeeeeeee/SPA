@@ -1,9 +1,13 @@
-import Link from 'next/link';
-
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { loadReconStatus } from '@/lib/recon-status';
 import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
+import { DashboardBranchPicker } from '@/components/dashboard/dashboard-branch-picker';
+import { DashboardUtilization } from '@/components/dashboard/dashboard-utilization';
+import { DashboardCommission, type CommRow } from '@/components/dashboard/dashboard-commission';
+import { computeDayOccupancy } from '@/lib/occupancy';
+import { loadCommissionGroups } from '@/app/(dashboard)/reconciliation/commission/actions';
+import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,42 +17,90 @@ function peso(cents: number): string {
 function todayPHT(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
+// Active branches the viewer may see, plus the resolved selection from the
+// `branch` URL param (comma-separated). Defaults to all allowed branches.
+async function fetchBranches(branchParam?: string): Promise<{ branches: { id: string; code: string; name: string }[]; selected: string[] }> {
+  const supabase = createServiceClient();
+  const allowed = await getAllowedBranchIds();
+  const { data } = await supabase.from('branches').select('id, code, name').eq('active', true).order('code');
+  const list = (data ?? []).filter((b) => allowed.has(b.id));
+  const requested = (branchParam ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const valid = requested.filter((id) => list.some((b) => b.id === id));
+  const selected = valid.length ? valid : list.map((b) => b.id);
+  return { branches: list, selected };
+}
 
-async function fetchData() {
+async function fetchData(branchIds: string[]) {
   const supabase = createServiceClient();
   const today = todayPHT();
 
-  const [todayOrders, inService, openTips, svc, arOrders] = await Promise.all([
-    supabase
-      .from('orders')
-      .select('id, total_cents, discount_cents, status, order_customers ( id )')
-      .eq('service_date', today)
-      .is('deleted_at', null)
-      .neq('status', 'void'),
-    supabase.from('order_items').select('id', { count: 'exact', head: true }).eq('status', 'in_service'),
-    supabase.from('tips').select('amount_cents').is('settlement_id', null).eq('status', 'open'),
-    supabase.from('stored_value_cards').select('current_balance_cents').eq('status', 'active'),
-    supabase.from('orders').select('total_cents').eq('status', 'closed').is('deleted_at', null),
-  ]);
+  const { data: todayOrders } = await supabase
+    .from('orders')
+    .select('id, subtotal_cents, discount_cents, status, order_customers ( id ), order_items ( status, duration_minutes )')
+    .eq('service_date', today)
+    .is('deleted_at', null)
+    .neq('status', 'void')
+    .in('branch_id', branchIds);
 
-  const orders = todayOrders.data ?? [];
-  const bookings = orders.length;
+  const orders = todayOrders ?? [];
+  // Footfall = every guest on the day (any status). Financial figures are on the
+  // closed-order basis (matches the commission engine, which only counts closed
+  // orders) so Net = Revenue − Discount − Commission stays coherent. Revenue is
+  // GROSS (subtotal, pre-discount) so the subtraction isn't double-counted.
   const pax = orders.reduce((s, o) => s + (o.order_customers?.length ?? 0), 0);
-  const revenue = orders.filter((o) => o.status === 'closed').reduce((s, o) => s + o.total_cents, 0);
-  const discount = orders.reduce((s, o) => s + o.discount_cents, 0);
-  const tipsOpen = (openTips.data ?? []).reduce((s, t) => s + t.amount_cents, 0);
-  const svcLiability = (svc.data ?? []).reduce((s, c) => s + c.current_balance_cents, 0);
+  const closed = orders.filter((o) => o.status === 'closed');
+  const revenue = closed.reduce((s, o) => s + (o.subtotal_cents ?? 0), 0);
+  const discount = closed.reduce((s, o) => s + (o.discount_cents ?? 0), 0);
+  // Delivered services today (operational — all activity, not just closed).
+  let serviceCount = 0;
+  let serviceMinutes = 0;
+  for (const o of orders) {
+    for (const it of o.order_items ?? []) {
+      if (it.status === 'service_completed') { serviceCount += 1; serviceMinutes += it.duration_minutes ?? 0; }
+    }
+  }
 
-  return {
-    today, bookings, pax, revenue, discount,
-    inService: inService.count ?? 0,
-    tipsOpen, svcLiability,
-    closedCount: (arOrders.data ?? []).length,
-  };
+  return { today, pax, revenue, discount, serviceCount, serviceHours: serviceMinutes / 60 };
 }
 
-export default async function DashboardPage() {
-  const [d, recon] = await Promise.all([fetchData(), loadReconStatus()]);
+// Simulated commission for today across the selected branches — reuses the
+// settlement engine (closed orders, completed services, current rates + warm-up),
+// merged per therapist for the ranking.
+async function fetchCommission(branchIds: string[], today: string): Promise<{ total: number; top: CommRow[] }> {
+  const perBranch = await Promise.all(branchIds.map((b) => loadCommissionGroups(b, today, today)));
+  const byTherapist = new Map<string, CommRow>();
+  for (const groups of perBranch) {
+    for (const g of groups) {
+      const minutes = g.items.reduce((s, it) => s + (it.duration_minutes ?? 0), 0);
+      const prev = byTherapist.get(g.therapist_id);
+      if (prev) {
+        prev.sessions += g.sessions;
+        prev.minutes += minutes;
+        prev.grossCents += g.gross_cents;
+        prev.commissionCents += g.commission_cents;
+        prev.borrowedFrom = prev.borrowedFrom ?? g.borrowed_from;
+      } else {
+        byTherapist.set(g.therapist_id, {
+          therapistId: g.therapist_id, name: g.therapist_name, sessions: g.sessions, minutes,
+          grossCents: g.gross_cents, commissionCents: g.commission_cents, borrowedFrom: g.borrowed_from,
+        });
+      }
+    }
+  }
+  const ranked = [...byTherapist.values()].sort((a, b) => b.commissionCents - a.commissionCents);
+  return { total: ranked.reduce((s, g) => s + g.commissionCents, 0), top: ranked.slice(0, 10) };
+}
+
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
+  const sp = await searchParams;
+  const { branches, selected } = await fetchBranches(sp.branch);
+  const today = todayPHT();
+  const [d, recon, occ, comm] = await Promise.all([
+    fetchData(selected),
+    loadReconStatus(),
+    computeDayOccupancy(selected, today, new Date().toISOString()),
+    fetchCommission(selected, today),
+  ]);
   const overdueItems = recon.branches
     .filter((b) => b.overdueClose)
     .map((b) => ({
@@ -58,22 +110,12 @@ export default async function DashboardPage() {
       days_overdue: b.overdueClose!.days_overdue,
     }));
 
-  const kpis = [
-    { label: 'Bookings Today', value: String(d.bookings) },
-    { label: 'Guests Today', value: String(d.pax) },
-    { label: 'Revenue Today', value: peso(d.revenue) },
-    { label: 'Discount Today', value: peso(d.discount) },
-    { label: 'In Service Now', value: String(d.inService) },
-  ];
-
-  const finance = [
-    { label: 'AR Outstanding', value: peso(recon.arOutstandingCents), href: '/reconciliation/soa?view=ar' },
-    { label: 'Tips Unsettled', value: peso(d.tipsOpen), href: '/reconciliation/tips' },
-    { label: 'Stored-Value Liability', value: peso(d.svcLiability), href: '/stored-value-cards' },
-  ];
+  const net = d.revenue - d.discount - comm.total;
 
   return (
     <div className="flex flex-col gap-6">
+      <DashboardBranchPicker branches={branches} selected={selected} />
+
       <div>
         <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">Today · {d.today}</p>
@@ -81,93 +123,52 @@ export default async function DashboardPage() {
 
       <OverdueCloseBanner items={overdueItems} />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        {kpis.map((k) => (
-          <Card key={k.label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">{k.label}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-extrabold tracking-tight tabular">{k.value}</div>
-            </CardContent>
-          </Card>
-        ))}
+      {/* One KPI row: the Revenue − Discount − Commission = Net waterfall (double
+          wide), then guests + services delivered. */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Card className="col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">( Revenue − Discount ) − Commission = Net</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-4xl font-extrabold tracking-tight tabular-nums">
+              <span className="text-2xl font-bold text-muted-foreground">(</span>
+              <span>{peso(d.revenue)}</span>
+              <span className="text-2xl font-bold text-muted-foreground">−</span>
+              <span>{peso(d.discount)}</span>
+              <span className="text-2xl font-bold text-muted-foreground">)</span>
+              <span className="text-2xl font-bold text-muted-foreground">−</span>
+              <span>{peso(comm.total)}</span>
+              <span className="text-2xl font-bold text-muted-foreground">=</span>
+              <span className={net < 0 ? 'text-destructive' : 'text-primary'}>{peso(net)}</span>
+            </div>
+            <p className="mt-0.5 text-xs font-medium text-muted-foreground">Gross revenue · closed orders today; commission simulated</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">Guests Today</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-extrabold tracking-tight tabular">{d.pax}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">Service Today</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-extrabold tracking-tight tabular">{d.serviceCount}</div>
+            <p className="mt-0.5 text-xs font-medium text-muted-foreground">{d.serviceHours.toFixed(1)} service hr</p>
+          </CardContent>
+        </Card>
       </div>
 
-      <div>
-        <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-[0.12em] mb-2">Financial</h3>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {finance.map((f) => (
-            <Link key={f.label} href={f.href}>
-              <Card className="transition-colors hover:bg-accent/40">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">{f.label}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-extrabold tracking-tight tabular">{f.value}</div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </div>
+      <DashboardCommission rows={comm.top} />
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-[0.12em]">Daily Close · {recon.today}</h3>
-          <Link href="/reconciliation" className="text-xs font-bold text-primary hover:underline">Reconciliation →</Link>
-        </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {recon.branches.map((b) => {
-            const quiet = b.dayStatus === 'no_activity';
-            const closed = b.dayStatus === 'closed';
-            const done = quiet || closed;
-            // Day-row colour follows the overall pipeline state, not the
-            // individual milestones (those are still shown on the Cash /
-            // To-confirm rows).
-            const dayClass =
-              closed ? 'text-primary' :
-              b.dayStatus === 'in_progress' ? 'text-amber-700 dark:text-amber-400' :
-              quiet ? 'text-muted-foreground' : 'text-muted-foreground';
-            const dayLabel =
-              closed ? 'Closed' :
-              b.dayStatus === 'in_progress' ? 'In progress' :
-              quiet ? '—' : 'Open';
-            return (
-              <Link key={b.id} href={`/reconciliation/end-of-day?branch=${b.id}&date=${recon.today}`}>
-                <Card className="transition-colors hover:bg-accent/40">
-                  <CardHeader className="pb-2 flex-row items-center justify-between">
-                    <CardTitle className="text-sm font-bold">{b.code}</CardTitle>
-                    {done
-                      ? <span className={`text-xs font-bold ${quiet ? 'text-muted-foreground' : 'text-primary'}`}>{quiet ? 'No activity' : 'All done'}</span>
-                      : <span className="size-2.5 rounded-full bg-amber-500" />}
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-1 text-sm font-semibold">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Cash</span>
-                      <span className={quiet
-                        ? 'text-muted-foreground'
-                        : b.cashClosed ? 'text-primary' : 'text-amber-700 dark:text-amber-400'}>
-                        {quiet ? '—' : (b.cashClosed ? 'Closed' : 'Pending')}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">To confirm</span>
-                      <span className={`tabular ${b.pendingConfirm > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>
-                        {b.pendingConfirm > 0 ? `${b.pendingConfirm} · ${peso(b.pendingConfirmCents)}` : '0'}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Day</span>
-                      <span className={dayClass}>{dayLabel}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      </div>
+      <DashboardUtilization occ={occ} />
     </div>
   );
 }

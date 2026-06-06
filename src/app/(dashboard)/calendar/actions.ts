@@ -210,6 +210,45 @@ export async function assignTherapistToOrderItem(input: unknown): Promise<Action
   return { ok: true };
 }
 
+const unassignSchema = z.object({
+  item_id: z.string().uuid(),
+  // 'station' clears the bed/station (the Station board's Unassign); 'therapist'
+  // clears the therapist (the People board's). The other assignment is kept.
+  target: z.enum(['station', 'therapist']),
+});
+
+/**
+ * Clear one assignment off a not-yet-started booking — its bed/station OR its
+ * therapist, never both — sending it back to that board's unallocated rail while
+ * leaving the other assignment and the booked time intact. Started services are
+ * locked, so only `draft` lines can be unassigned.
+ */
+export async function unassignOrderItem(input: unknown): Promise<ActionResult> {
+  const parsed = unassignSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { item_id, target } = parsed.data;
+  const supabase = await createAuditedClient();
+
+  const { data: it } = await supabase
+    .from('order_items')
+    .select('status, therapist_id, resource_id, order:orders!order_items_order_id_fkey ( branch_id )')
+    .eq('id', item_id)
+    .single();
+  if (!it) return { ok: false, error: 'Order item not found' };
+  if (it.status !== 'draft') return { ok: false, error: 'Service already started — assignment is locked' };
+  const branchId = one(it.order)?.branch_id;
+  if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
+
+  if (target === 'station' && it.resource_id == null) return { ok: true }; // nothing to clear
+  if (target === 'therapist' && it.therapist_id == null) return { ok: true };
+  const patch = target === 'station' ? { resource_id: null } : { therapist_id: null };
+
+  const { error } = await supabase.from('order_items').update(patch).eq('id', item_id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/calendar');
+  return { ok: true };
+}
+
 const schema = z.object({
   employee_id: z.string().uuid(),
   branch_id: z.string().uuid(),

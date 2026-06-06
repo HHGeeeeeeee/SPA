@@ -11,7 +11,6 @@ import { OrderNoteEditor } from '@/components/sales-orders/order-note-editor';
 import { OrderSourceBillingEditor } from '@/components/sales-orders/order-source-billing-editor';
 import { OrderBranchUnitEditor } from '@/components/sales-orders/order-branch-unit-editor';
 import { OrderLocationEditor } from '@/components/sales-orders/order-location-editor';
-import { PaymentAdjust } from '@/components/sales-orders/payment-adjust';
 import { OrderStatusActions } from '@/components/sales-orders/order-status-actions';
 import { ServiceBadge, PaymentBadge } from '@/components/sales-orders/order-badges';
 import { RetryOrderPostingButton } from '@/components/sales-orders/retry-order-posting-button';
@@ -62,7 +61,7 @@ async function fetchData(id: string) {
   if (error) throw new Error(error.message);
   if (!order) return null;
 
-  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
+  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll, txCodes] = await Promise.all([
     supabase
       .from('service_items')
       .select('id, code, name, service_group, service_category_id, duration_minutes, allowed_resource_types, category:service_categories ( name ), service_item_prices ( price_cents, price_class, branch_id )')
@@ -85,10 +84,13 @@ async function fetchData(id: string) {
     // All customer sources / billing destinations — for the inline Source /
     // Billing editor on the order detail panel.
     supabase.from('customer_sources').select('id, code, name, default_billing_to_id').order('code'),
-    supabase.from('billing_destinations').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('billing_destinations').select('id, code, name, transaction_code:transaction_codes ( code )').eq('active', true).order('code'),
     // All active branches + their business units — for the inline Branch /
     // Business Unit editor on the order detail panel.
     supabase.from('branches').select('id, code, name, branch_business_units ( business_units ( id, name ) )').eq('active', true).order('code'),
+    // Payment + revenue transaction codes — drive the read-only code shown in
+    // the folio dialogs (payment by branch+method, revenue is branchless).
+    supabase.from('transaction_codes').select('id, code, branch_id, payment_method_id, credit_account, transaction_type').in('transaction_type', ['payment', 'revenue']).eq('active', true),
   ]);
 
   const svcCardsRes = await supabase
@@ -199,6 +201,14 @@ async function fetchData(id: string) {
 
   const allowedBranchIds = await getAllowedBranchIds();
 
+  // Current open cash shift per accessible branch — shown read-only in the folio
+  // dialogs (and a "please open a shift" hint when a branch has none).
+  const openShiftsRes = await supabase
+    .from('shifts')
+    .select('id, label, branch_id')
+    .eq('status', 'open')
+    .in('branch_id', [...allowedBranchIds]);
+
   return {
     order,
     serviceItems: (svc.data ?? []).map((s) => {
@@ -230,7 +240,12 @@ async function fetchData(id: string) {
     })),
     capabilityByEmployee,
     allSources: (srcAll.data ?? []) as { id: string; code: string; name: string; default_billing_to_id: string | null }[],
-    allBilling: (billAll.data ?? []) as { id: string; code: string; name: string }[],
+    allBilling: (billAll.data ?? []).map((b) => ({
+      id: b.id,
+      code: b.code,
+      name: b.name,
+      tx_code: (Array.isArray(b.transaction_code) ? b.transaction_code[0] : b.transaction_code)?.code ?? null,
+    })) as { id: string; code: string; name: string; tx_code: string | null }[],
     allBranches: (() => {
       return (brAll.data ?? [])
         .filter((b) => allowedBranchIds.has(b.id))
@@ -242,6 +257,11 @@ async function fetchData(id: string) {
             .filter(Boolean) as { id: string; name: string }[],
         }));
     })(),
+    // Branches the user can post a folio line to (code only) + this order's branch.
+    accessibleBranches: (brAll.data ?? []).filter((b) => allowedBranchIds.has(b.id)).map((b) => ({ id: b.id, code: b.code })),
+    orderBranchId: order.branch_id as string | null,
+    transactionCodes: (txCodes.data ?? []) as { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[],
+    openShifts: (openShiftsRes.data ?? []).map((s) => ({ branchId: s.branch_id as string, label: s.label as string })),
   };
 }
 
@@ -250,7 +270,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes, openShifts } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -427,15 +447,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           )}
           <OrderStatusActions orderId={order.id} status={order.status} canManage={canManage} itemCount={items.length} hasPayments={payments.length > 0} />
           <div className="ml-auto flex items-center gap-3">
-            {canManage && !arBilled && ['completed', 'closed'].includes(order.status) && (
-              <PaymentAdjust
-                orderId={order.id}
-                methods={paymentMethods.filter((m) => m.code !== 'ar')}
-                storedValueCards={storedValueCards}
-                dueCents={Math.max(0, order.total_cents - order.paid_cents)}
-                paidCents={order.paid_cents}
-              />
-            )}
             <ReportIncidentDialog orderId={order.id} defaultCustomerName={customers[0]?.customer_name ?? ''} />
           </div>
         </div>
@@ -529,6 +540,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           editable,
           service_date: order.service_date,
           service_location_type: order.service_location_type,
+          billing_to_id: order.billing_to_id,
         }}
         customers={customers}
         items={items}
@@ -551,6 +563,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         storedValueCards={storedValueCards}
         capabilityByEmployee={capabilityByEmployee}
         paymentPolicy={paymentPolicy}
+        accessibleBranches={accessibleBranches}
+        orderBranchId={orderBranchId}
+        transactionCodes={transactionCodes}
+        openShifts={openShifts}
+        billingDestinations={allBilling}
       />
     </div>
   );

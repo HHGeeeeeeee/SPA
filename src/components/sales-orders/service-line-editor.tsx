@@ -60,6 +60,7 @@ export function ServiceLineEditor({
   defaultDiscountId,
   disabled,
   dispatch,
+  highlightMissing,
 }: {
   draft: LineDraft;
   onChange: (patch: Partial<LineDraft>) => void;
@@ -81,7 +82,13 @@ export function ServiceLineEditor({
   defaultDiscountId: string;
   disabled?: boolean;
   dispatch?: boolean;
+  // Paint required fields that are still empty in a light-red tint — a service
+  // line can't be Started until each is filled, so the gaps stand out.
+  highlightMissing?: boolean;
 }) {
+  // A required-but-empty field gets a light red wash (light + dark). Only when
+  // highlightMissing is on (the not-yet-started lines that gate the Start button).
+  const miss = (empty: boolean) => (highlightMissing && empty ? 'bg-red-200 dark:bg-red-900/50' : '');
   // Category drives the Service list: pick a category first, then only that
   // category's service groups show. No category yet → the Service picker is
   // disabled. Switching category clears the chosen service (see changeCategory).
@@ -220,22 +227,22 @@ export function ServiceLineEditor({
       </div>
       <div className="min-w-0">
         <Select items={groupOptions} value={draft.groupSel} onValueChange={changeGroup} disabled={disabled || !draft.categorySel}>
-          <SelectTrigger className="h-8 w-full"><SelectValue placeholder={draft.categorySel ? 'Service' : 'Pick category'} /></SelectTrigger>
+          <SelectTrigger className={`h-8 w-full ${miss(!draft.groupSel)}`}><SelectValue placeholder={draft.categorySel ? 'Service' : 'Pick category'} /></SelectTrigger>
           <SelectContent>{groupOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="min-w-0">
         <Select items={variantOptions} value={draft.svcId} onValueChange={changeSvc} disabled={disabled || !draft.groupSel}>
-          <SelectTrigger className="h-8 w-full"><SelectValue placeholder={draft.groupSel ? 'Duration' : '—'} /></SelectTrigger>
+          <SelectTrigger className={`h-8 w-full ${miss(!draft.svcId)}`}><SelectValue placeholder={draft.groupSel ? 'Duration' : '—'} /></SelectTrigger>
           <SelectContent>{variantOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="min-w-0">
-        <Input type="time" className="h-8 w-full" value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
+        <Input type="time" className={`h-8 w-full ${miss(!draft.start)}`} value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
       </div>
       <div className="min-w-0">
         <Select items={[{ value: NONE, label: 'Unassigned' }, ...(assignedOption ? [assignedOption] : []), ...allOptions]} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
-          <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+          <SelectTrigger className={`h-8 w-full ${miss(draft.therapistId === NONE)}`}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>Unassigned</SelectItem>
             {assignedOption && (
@@ -284,10 +291,10 @@ export function ServiceLineEditor({
       </div>
       <div className="min-w-0">
         {dispatch ? (
-          <Input type="text" className="h-8 w-full" value={draft.roomNo} onChange={(e) => onChange({ roomNo: e.target.value })} placeholder="Room no" disabled={disabled} />
+          <Input type="text" className={`h-8 w-full ${miss(!draft.roomNo.trim())}`} value={draft.roomNo} onChange={(e) => onChange({ roomNo: e.target.value })} placeholder="Room no" disabled={disabled} />
         ) : (
         <Select items={[...resItems, ...(assignedResOption ? [assignedResOption] : [])]} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
-          <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+          <SelectTrigger className={`h-8 w-full ${miss(draft.resourceId === NONE)}`}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>None</SelectItem>
             {assignedResOption && (

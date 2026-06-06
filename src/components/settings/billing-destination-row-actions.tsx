@@ -27,14 +27,16 @@ import { setBillingDestinationActive } from '@/app/(dashboard)/settings/billing-
 import {
   BillingDestinationFormDialog,
   type BillingDestinationItem,
+  type TxCodeOption,
 } from './billing-destination-form-dialog';
 
 interface Props {
   item: BillingDestinationItem & { active: boolean };
   paymentMethods: { id: string; code: string; display_name: string }[];
+  transactionCodes: TxCodeOption[];
 }
 
-export function BillingDestinationRowActions({ item, paymentMethods }: Props) {
+export function BillingDestinationRowActions({ item, paymentMethods, transactionCodes }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -86,6 +88,7 @@ export function BillingDestinationRowActions({ item, paymentMethods }: Props) {
         mode="edit"
         item={item}
         paymentMethods={paymentMethods}
+        transactionCodes={transactionCodes}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

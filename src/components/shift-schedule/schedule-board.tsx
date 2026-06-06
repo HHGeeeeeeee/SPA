@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand } from 'lucide-react';
+import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand, ExternalLink } from 'lucide-react';
 import {
   DndContext,
   type DragEndEvent,
@@ -23,8 +23,8 @@ import { Button } from '@/components/ui/button';
 import { cn, formatPHP } from '@/lib/utils';
 import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
-import { startOrderItem } from '@/app/(dashboard)/sales-orders/actions';
+import { moveScheduledOrderItem, assignTherapistToOrderItem, unassignOrderItem } from '@/app/(dashboard)/calendar/actions';
+import { startOrderItem, finishOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 
 export interface BoardBed {
   id: string;
@@ -120,6 +120,29 @@ export interface BoardStaffShift {
   branch?: string;
   startMin: number;
   endMin: number;
+}
+
+// Capacity / occupancy / utilization for the selected branch(es), computed
+// server-side. Two occupancies (station beds, therapists) drawn per-hour over
+// the ruler; one day-level utilization against the true bottleneck capacity
+// min(bed-hours, therapist-hours). `computable` is false when more than one
+// branch is selected and they aren't all in the same therapist share group —
+// pooling therapist capacity across non-sharing branches is meaningless.
+export interface BoardOccupancy {
+  computable: boolean;
+  note: string | null;
+  // One entry per ruler hour (same placed-hour ints as the axis). Pct is 0..1
+  // (can exceed 1 when overbooked); null when there's no capacity that hour.
+  perHour: { hour: number; stationPct: number | null; therapistPct: number | null }[];
+  bedHours: number;
+  therapistHours: number;
+  stationCount: number;      // active stations counted into bedHours
+  therapistCount: number;    // service therapists rostered into therapistHours
+  capacityHours: number;     // min(bedHours, therapistHours) — the real ceiling
+  actualHours: number;       // delivered service-hours (in_service elapsed + done + interrupted)
+  utilizationPct: number | null;   // actualHours / capacityHours
+  stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
+  therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
 }
 // Option data forwarded to NewReservationDialog for click-to-add.
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
@@ -514,7 +537,7 @@ function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, inde
 
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
-  axis = 'bed', subjectLabel = 'Station', assignBeds = [],
+  axis = 'bed', subjectLabel = 'Station', assignBeds = [], occupancy,
 }: {
   branchId: string;
   day: string;
@@ -534,6 +557,9 @@ export function ScheduleBoard({
   /** Candidate beds for the People popover's "Assign bed" picker (axis='person'
    *  only). Every active station in the share group with its busy windows. */
   assignBeds?: AssignBed[];
+  /** Capacity / occupancy / utilization summary for the selected branch(es).
+   *  Drives the day-total strip + the two per-hour occupancy bands. */
+  occupancy?: BoardOccupancy;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -564,6 +590,19 @@ export function ScheduleBoard({
   const lastHour = Math.ceil(windowEndMin / 60);
   const hours: number[] = [];
   for (let h = firstHour; h <= lastHour; h++) hours.push(h);
+
+  // Occupancy bands: per-hour station/therapist % keyed by the same placed-hour
+  // ints as the ruler, so the cells line up under their hour column.
+  const occByHour = new Map((occupancy?.perHour ?? []).map((p) => [p.hour, p]));
+  const occPct = (x: number | null | undefined) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+  const occHrs = (x: number) => `${Math.round(x * 10) / 10}`;
+  // Occupied → calm under half, primary past half, amber near full, red over.
+  const occTone = (p: number | null | undefined): string =>
+    p == null ? 'text-muted-foreground/50'
+    : p >= 1 ? 'bg-destructive/20 text-destructive font-bold'
+    : p >= 0.85 ? 'bg-amber-400/25 text-amber-900 dark:text-amber-200 font-bold'
+    : p >= 0.5 ? 'bg-primary/10 text-foreground font-semibold'
+    : 'text-muted-foreground font-semibold';
 
   const floating = blocks.filter((b) => b.bedId === null);
   // Rail sections: "no time yet" (untimed) vs "needs a bed" (timed but bedless),
@@ -654,9 +693,23 @@ export function ScheduleBoard({
     for (const b of blocks) if (b.therapistId) m.set(b.therapistId, (m.get(b.therapistId) ?? 0) + 1);
     return m;
   })();
+  // When "Available only" is on, the Staff rail follows the chosen time too:
+  // keep only therapists on shift at availAt who aren't already running a
+  // scheduled/in-service/confirmed block then (mirrors the hover popover's
+  // "free at this minute"). Off → the whole day's roster, as before.
+  const railStaffShifts = (() => {
+    if (!availableOnly) return staffShifts;
+    const t = availAt;
+    const busyTh = new Set(
+      blocks
+        .filter((b) => b.therapistId && (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed') && t >= b.startMin && t < b.endMin)
+        .map((b) => b.therapistId!),
+    );
+    return staffShifts.filter((s) => t >= s.startMin && t < s.endMin && !busyTh.has(s.id));
+  })();
   const staffGroups = (() => {
     const byPos = new Map<string, BoardStaffShift[]>();
-    for (const s of staffShifts) { const k = s.positionCode ?? '_other'; if (!byPos.has(k)) byPos.set(k, []); byPos.get(k)!.push(s); }
+    for (const s of railStaffShifts) { const k = s.positionCode ?? '_other'; if (!byPos.has(k)) byPos.set(k, []); byPos.get(k)!.push(s); }
     const order = [...POSITION_ORDER.filter((p) => byPos.has(p)), ...[...byPos.keys()].filter((p) => !POSITION_ORDER.includes(p))];
     return order.map((pos) => ({
       pos,
@@ -811,6 +864,16 @@ export function ScheduleBoard({
       else toast.error(r.error);
     });
   }
+  // Clear one assignment off a not-yet-started booking from the detail popover:
+  // the Station board strips the bed, the People board strips the therapist. The
+  // other assignment is kept; the line drops to this board's unallocated rail.
+  function doUnassign(refId: string, target: 'station' | 'therapist') {
+    startTransition(async () => {
+      const r = await unassignOrderItem({ item_id: refId, target });
+      if (r.ok) { toast.success(target === 'station' ? 'Station unassigned' : 'Therapist unassigned'); setDetail(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
   // Start a scheduled service straight from the board's detail popover. Reuses
   // startOrderItem so all the therapist/bed/shift checks (and their error
   // messages) are identical to starting from the order page.
@@ -818,6 +881,15 @@ export function ScheduleBoard({
     startTransition(async () => {
       const r = await startOrderItem(itemId, orderId);
       if (r.ok) { toast.success('Service started'); setDetail(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+  // Finish an in-service line straight from the board — stamps the end time, same
+  // action as the order page's Finish.
+  function doFinishFromBoard(itemId: string, orderId: string) {
+    startTransition(async () => {
+      const r = await finishOrderItem(itemId, orderId);
+      if (r.ok) { toast.success('Service finished'); setDetail(null); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -881,6 +953,37 @@ export function ScheduleBoard({
 
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={clearStaffDrag}>
+      {/* Day-total capacity strip: the headline Utilization against the true
+          bottleneck min(bed-hours, therapist-hours), with the two occupancies
+          alongside. Per-hour detail rides the bands under the ruler below. */}
+      {occupancy && (
+        <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2">
+          {occupancy.computable ? (
+            <div className="flex flex-wrap items-baseline gap-x-7 gap-y-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Utilization</span>
+                <span className={`text-lg font-extrabold tabular-nums ${occupancy.utilizationPct != null && occupancy.utilizationPct >= 0.85 ? 'text-primary' : 'text-foreground'}`}>{occPct(occupancy.utilizationPct)}</span>
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">({occHrs(occupancy.actualHours)} service hr)</span>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Therapist</span>
+                <span className="text-base font-extrabold tabular-nums text-foreground">{occPct(occupancy.therapistOccPct)}</span>
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">({occupancy.therapistCount} pax - {occHrs(occupancy.therapistHours)} available hr)</span>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Station</span>
+                <span className="text-base font-extrabold tabular-nums text-foreground">{occPct(occupancy.stationOccPct)}</span>
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">({occupancy.stationCount} st. - {occHrs(occupancy.bedHours)} available hr)</span>
+              </div>
+              <span className="w-full text-[11px] font-medium italic text-muted-foreground/80">
+                Utilization = Service Hour / min available hour between Therapist and Station
+              </span>
+            </div>
+          ) : (
+            <p className="text-xs font-semibold text-muted-foreground">Occupancy &amp; utilization unavailable — {occupancy.note}</p>
+          )}
+        </div>
+      )}
       <div className="flex items-start gap-3">
       {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
       <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
@@ -903,7 +1006,9 @@ export function ScheduleBoard({
           )}
           <div className="text-[11px] font-semibold text-muted-foreground">
             {axis === 'bed' && railMode === 'staff'
-              ? `${staffShifts.length} on shift · drag onto an unassigned service`
+              ? availableOnly
+                ? `${railStaffShifts.length} free at ${hhmm(availAt)} · drag onto an unassigned service`
+                : `${railStaffShifts.length} on shift · drag onto an unassigned service`
               : `${floating.length} to assign · drag onto a ${axis === 'person' ? 'person' : 'bed'}`}
           </div>
           {axis === 'bed' && railMode === 'staff' && (
@@ -918,8 +1023,10 @@ export function ScheduleBoard({
         </div>
         <div className="flex flex-col gap-3 p-2">
           {axis === 'bed' && railMode === 'staff' ? (
-            staffShifts.length === 0 ? (
-              <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No staff on shift</p>
+            railStaffShifts.length === 0 ? (
+              <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">
+                {availableOnly && staffShifts.length > 0 ? `No therapist free at ${hhmm(availAt)}` : 'No staff on shift'}
+              </p>
             ) : filteredStaffGroups.length === 0 ? (
               <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No therapist matches “{staffSearch.trim()}”</p>
             ) : (
@@ -1045,6 +1152,31 @@ export function ScheduleBoard({
             </div>
           </div>
 
+          {/* Per-hour occupancy bands — station beds then therapists, each cell
+              the % of that resource's capacity booked in the hour (occupancy
+              includes scheduled). Only shown when computable for the selection. */}
+          {occupancy?.computable && (['therapist', 'station'] as const).map((kind) => (
+            <div key={kind} className="flex border-b border-border bg-card">
+              <div className="w-40 shrink-0 px-2 py-1 flex items-center justify-between gap-1 sticky left-0 z-20 bg-card">
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">{kind === 'station' ? 'Station occ' : 'Therapist occ'}</span>
+                <span className="text-[10px] font-extrabold tabular-nums text-foreground/80">{occPct(kind === 'station' ? occupancy.stationOccPct : occupancy.therapistOccPct)}</span>
+              </div>
+              <div className="relative" style={{ height: 22, minWidth: trackWidth }}>
+                {hours.slice(0, -1).map((h) => {
+                  const p = occByHour.get(h);
+                  const v = kind === 'station' ? p?.stationPct : p?.therapistPct;
+                  return (
+                    <div key={h} className="absolute top-0 bottom-0 flex items-center justify-center border-l border-border/30" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN, width: PX_PER_HOUR }}>
+                      <span className={`flex h-[18px] min-w-[34px] items-center justify-center rounded px-1 text-[10px] tabular-nums ${occTone(v)}`}>
+                        {v == null ? '·' : `${Math.round(v * 100)}%`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
           {/* Per-hour pending demand (甲): how many timed bookings still need a
               bed in each hour. Aligned to the time axis; clears as they're placed. */}
           <div className="flex border-b border-border bg-amber-500/5">
@@ -1169,7 +1301,22 @@ export function ScheduleBoard({
                     b.guest,
                   ].filter(Boolean).join(' - ') || b.line1}
                 </span>
-                <button type="button" onClick={() => setDetail(null)} className="shrink-0 text-muted-foreground hover:text-foreground">✕</button>
+                <div className="flex shrink-0 items-center gap-3 pl-1">
+                  {/* Open the parent order — an icon up here instead of a footer button. */}
+                  {b.orderId && (
+                    <a
+                      href={`/sales-orders/${b.orderId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Open order in a new tab"
+                      aria-label="Open order in a new tab"
+                    >
+                      <ExternalLink className="size-4" />
+                    </a>
+                  )}
+                  <button type="button" onClick={() => setDetail(null)} className="text-muted-foreground hover:text-foreground" aria-label="Close">✕</button>
+                </div>
               </div>
               <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[13px]">
                 <dt className="font-medium text-muted-foreground">Status</dt>
@@ -1265,22 +1412,29 @@ export function ScheduleBoard({
                 );
               })()}
               <div className="mt-3 flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
-                {b.orderId && (
-                  <Button
-                    size="sm"
-                    variant={b.variant === 'scheduled' ? 'outline' : 'default'}
-                    onClick={() => router.push(`/sales-orders/${b.orderId}`)}
-                  >
-                    Open order
+                {/* Unassign — Station board strips the bed (only when one is set),
+                    People board strips the therapist. Sends the line back to this
+                    board's unallocated rail; the other assignment is kept. */}
+                {b.variant === 'scheduled' && b.orderId && b.draggable && (axis === 'bed' ? !b.bedUnassigned : !!b.therapistId) && (
+                  <Button size="sm" variant="outline" disabled={pending} onClick={() => doUnassign(b.refId, axis === 'bed' ? 'station' : 'therapist')}>
+                    Unassign
                   </Button>
                 )}
                 {/* Start a not-yet-started service inline. Same guards as the order
                     page (needs service picked, therapist/bed where required, an
-                    open shift) — errors surface as a toast. */}
-                {b.variant === 'scheduled' && b.orderId && (
+                    open shift) — errors surface as a toast. Hidden until the
+                    booking is complete: a therapist, a station/bed (on-site), and
+                    a booked start time. Incomplete blocks already paint red. */}
+                {b.variant === 'scheduled' && b.orderId && !b.needsAssignment && !b.bedUnassigned && !b.untimed && (
                   <Button size="sm" disabled={pending} onClick={() => doStartFromBoard(b.refId, b.orderId!)}>
                     Start
+                  </Button>
+                )}
+                {/* Finish an in-service line — stamps the end time, same as the
+                    order page's Finish. */}
+                {b.variant === 'in_service' && b.orderId && (
+                  <Button size="sm" disabled={pending} onClick={() => doFinishFromBoard(b.refId, b.orderId!)}>
+                    Finish
                   </Button>
                 )}
               </div>

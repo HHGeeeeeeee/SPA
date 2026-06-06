@@ -136,8 +136,12 @@ export interface BoardOccupancy {
   perHour: { hour: number; stationPct: number | null; therapistPct: number | null }[];
   bedHours: number;
   therapistHours: number;
+  stationCount: number;      // active stations counted into bedHours
+  therapistCount: number;    // service therapists rostered into therapistHours
   capacityHours: number;     // min(bedHours, therapistHours) — the real ceiling
   actualHours: number;       // delivered service-hours (in_service elapsed + done + interrupted)
+  revenueCents: number;      // net recognized revenue posted for the day (incl. adjustments)
+  revPathCents: number | null;     // RevPATH = revenue / capacityHours (cents per available hr)
   utilizationPct: number | null;   // actualHours / capacityHours
   stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
   therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
@@ -593,7 +597,7 @@ export function ScheduleBoard({
   // ints as the ruler, so the cells line up under their hour column.
   const occByHour = new Map((occupancy?.perHour ?? []).map((p) => [p.hour, p]));
   const occPct = (x: number | null | undefined) => (x == null ? '—' : `${Math.round(x * 100)}%`);
-  const occHrs = (x: number) => `${Math.round(x * 10) / 10}h`;
+  const occHrs = (x: number) => `${Math.round(x * 10) / 10}`;
   // Occupied → calm under half, primary past half, amber near full, red over.
   const occTone = (p: number | null | undefined): string =>
     p == null ? 'text-muted-foreground/50'
@@ -691,9 +695,23 @@ export function ScheduleBoard({
     for (const b of blocks) if (b.therapistId) m.set(b.therapistId, (m.get(b.therapistId) ?? 0) + 1);
     return m;
   })();
+  // When "Available only" is on, the Staff rail follows the chosen time too:
+  // keep only therapists on shift at availAt who aren't already running a
+  // scheduled/in-service/confirmed block then (mirrors the hover popover's
+  // "free at this minute"). Off → the whole day's roster, as before.
+  const railStaffShifts = (() => {
+    if (!availableOnly) return staffShifts;
+    const t = availAt;
+    const busyTh = new Set(
+      blocks
+        .filter((b) => b.therapistId && (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed') && t >= b.startMin && t < b.endMin)
+        .map((b) => b.therapistId!),
+    );
+    return staffShifts.filter((s) => t >= s.startMin && t < s.endMin && !busyTh.has(s.id));
+  })();
   const staffGroups = (() => {
     const byPos = new Map<string, BoardStaffShift[]>();
-    for (const s of staffShifts) { const k = s.positionCode ?? '_other'; if (!byPos.has(k)) byPos.set(k, []); byPos.get(k)!.push(s); }
+    for (const s of railStaffShifts) { const k = s.positionCode ?? '_other'; if (!byPos.has(k)) byPos.set(k, []); byPos.get(k)!.push(s); }
     const order = [...POSITION_ORDER.filter((p) => byPos.has(p)), ...[...byPos.keys()].filter((p) => !POSITION_ORDER.includes(p))];
     return order.map((pos) => ({
       pos,
@@ -943,18 +961,25 @@ export function ScheduleBoard({
       {occupancy && (
         <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2">
           {occupancy.computable ? (
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-7 gap-y-1">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Utilization</span>
                 <span className={`text-lg font-extrabold tabular-nums ${occupancy.utilizationPct != null && occupancy.utilizationPct >= 0.85 ? 'text-primary' : 'text-foreground'}`}>{occPct(occupancy.utilizationPct)}</span>
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">({occHrs(occupancy.actualHours)} service hr)</span>
               </div>
-              <div className="flex items-center gap-4 text-sm font-semibold">
-                <span className="text-muted-foreground">Therapist occ <span className="tabular-nums text-foreground">{occPct(occupancy.therapistOccPct)}</span></span>
-                <span className="text-muted-foreground">Station occ <span className="tabular-nums text-foreground">{occPct(occupancy.stationOccPct)}</span></span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Therapist</span>
+                <span className="text-base font-extrabold tabular-nums text-foreground">{occPct(occupancy.therapistOccPct)}</span>
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">({occupancy.therapistCount} pax - {occHrs(occupancy.therapistHours)} available hr)</span>
               </div>
-              <div className="text-xs font-medium text-muted-foreground">
-                Capacity = min(beds {occHrs(occupancy.bedHours)}, therapists {occHrs(occupancy.therapistHours)}) = <span className="font-bold text-foreground">{occHrs(occupancy.capacityHours)}</span> · actual {occHrs(occupancy.actualHours)}
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Station</span>
+                <span className="text-base font-extrabold tabular-nums text-foreground">{occPct(occupancy.stationOccPct)}</span>
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">({occupancy.stationCount} st. - {occHrs(occupancy.bedHours)} available hr)</span>
               </div>
+              <span className="text-[11px] font-medium italic text-muted-foreground/80">
+                Utilization = Service Hour / min available hour between Therapist and Station
+              </span>
             </div>
           ) : (
             <p className="text-xs font-semibold text-muted-foreground">Occupancy &amp; utilization unavailable — {occupancy.note}</p>
@@ -983,7 +1008,9 @@ export function ScheduleBoard({
           )}
           <div className="text-[11px] font-semibold text-muted-foreground">
             {axis === 'bed' && railMode === 'staff'
-              ? `${staffShifts.length} on shift · drag onto an unassigned service`
+              ? availableOnly
+                ? `${railStaffShifts.length} free at ${hhmm(availAt)} · drag onto an unassigned service`
+                : `${railStaffShifts.length} on shift · drag onto an unassigned service`
               : `${floating.length} to assign · drag onto a ${axis === 'person' ? 'person' : 'bed'}`}
           </div>
           {axis === 'bed' && railMode === 'staff' && (
@@ -998,8 +1025,10 @@ export function ScheduleBoard({
         </div>
         <div className="flex flex-col gap-3 p-2">
           {axis === 'bed' && railMode === 'staff' ? (
-            staffShifts.length === 0 ? (
-              <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No staff on shift</p>
+            railStaffShifts.length === 0 ? (
+              <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">
+                {availableOnly && staffShifts.length > 0 ? `No therapist free at ${hhmm(availAt)}` : 'No staff on shift'}
+              </p>
             ) : filteredStaffGroups.length === 0 ? (
               <p className="py-6 text-center text-[11px] font-semibold italic text-muted-foreground/70">No therapist matches “{staffSearch.trim()}”</p>
             ) : (

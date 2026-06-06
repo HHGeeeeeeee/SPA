@@ -343,9 +343,9 @@ export default async function CalendarPage({
   searchParams: Promise<{ branch?: string; view?: string; day?: string }>;
 }) {
   const sp = await searchParams;
-  // Station (live bed board) is the default; People is the same board keyed on
-  // therapists (rows = staff, shift hours as a faint band).
-  const view: CalendarView = sp.view === 'people' ? 'people' : 'station';
+  // People (therapist-keyed board) is the default; Station is the same board
+  // keyed on beds/stations.
+  const view: CalendarView = sp.view === 'station' ? 'station' : 'people';
   const day = sp.day || todayISO();
   const { branches, branchIds } = await fetchBranches(sp.branch);
   const branchId = branchIds[0];

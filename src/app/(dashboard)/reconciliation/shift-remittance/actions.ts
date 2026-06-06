@@ -143,6 +143,33 @@ export async function loadShiftRemittance(branchId: string, date: string): Promi
 /** The branch's currently-open shift, or null. This is the "home" a posting
  *  (revenue on Start, payment on takePayment) will bind to — the guard those
  *  paths use lands in a later step; for now it's just a read. */
+/** Cancelled orders (status='void') for this branch+date that still have a
+ *  non-zero balance (paid != 0 or total != 0). The desk should settle them. */
+export interface CancelledWithDue {
+  id: string;
+  order_no: string;
+  totalCents: number;
+  paidCents: number;
+}
+export async function loadCancelledWithDue(branchId: string, date: string): Promise<CancelledWithDue[]> {
+  const supabase = await createAuditedClient();
+  const { data } = await supabase
+    .from('orders')
+    .select('id, order_no, total_cents, paid_cents')
+    .eq('branch_id', branchId)
+    .eq('service_date', date)
+    .eq('status', 'void')
+    .is('deleted_at', null);
+  return (data ?? [])
+    .filter((o) => (o.total_cents ?? 0) !== 0 || (o.paid_cents ?? 0) !== 0)
+    .map((o) => ({
+      id: o.id,
+      order_no: o.order_no,
+      totalCents: o.total_cents ?? 0,
+      paidCents: o.paid_cents ?? 0,
+    }));
+}
+
 export async function getCurrentOpenShift(branchId: string): Promise<{ id: string; label: string } | null> {
   const supabase = await createAuditedClient();
   const { data } = await supabase

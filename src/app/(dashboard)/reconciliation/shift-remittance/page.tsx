@@ -1,11 +1,13 @@
 import { getAllowedBranches } from '@/lib/branch-access';
 import { currentSession, isManager } from '@/lib/auth';
+import Link from 'next/link';
+import { TriangleAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ReconDatePicker } from '@/components/reconciliation/recon-date-picker';
 import { ShiftCard } from '@/components/reconciliation/shift-card';
 import { OpenShiftControl } from '@/components/reconciliation/open-shift-control';
 import { RemittanceBranchPicker } from '@/components/reconciliation/remittance-branch-picker';
-import { loadShiftRemittance } from './actions';
+import { loadShiftRemittance, loadCancelledWithDue } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +27,9 @@ export default async function ShiftRemittancePage({
   const branchId = sp.branch && branches.some((b) => b.id === sp.branch) ? sp.branch : branches[0]?.id;
   const date = sp.date || todayPHT();
 
-  const shifts = branchId ? await loadShiftRemittance(branchId, date) : [];
+  const [shifts, cancelledDue] = branchId
+    ? await Promise.all([loadShiftRemittance(branchId, date), loadCancelledWithDue(branchId, date)])
+    : [[], []];
   const openShift = shifts.find((s) => s.shift?.status === 'open');
   // Only shifts actually opened (open or closed) get a card. The rest are just
   // choices in the "Open shift" picker — we don't pre-list empty shift cards.
@@ -46,6 +50,29 @@ export default async function ShiftRemittancePage({
       <div className="flex items-center justify-end">
         <ReconDatePicker basePath="/reconciliation/shift-remittance" branchId={branchId} date={date} />
       </div>
+
+      {cancelledDue.length > 0 && (
+        <Card className="border-destructive bg-destructive/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-bold text-destructive flex items-center gap-2">
+              <TriangleAlert className="size-4" />
+              {cancelledDue.length} cancelled order{cancelledDue.length > 1 ? 's' : ''} with outstanding balance
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {cancelledDue.map((o) => (
+              <div key={o.id} className="flex items-center gap-3 text-sm">
+                <Link href={`/sales-orders/${o.id}`} className="font-bold underline underline-offset-2">{o.order_no}</Link>
+                <span className="text-muted-foreground">Total {(o.totalCents / 100).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}</span>
+                <span className="text-muted-foreground">Paid {(o.paidCents / 100).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}</span>
+              </div>
+            ))}
+            <p className="text-xs font-medium text-muted-foreground pt-1">
+              These orders are cancelled but still have charges or payments on record. Please settle or refund them.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {!branchId ? (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">Create a branch first.</Card>

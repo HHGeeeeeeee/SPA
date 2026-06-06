@@ -156,7 +156,7 @@ export async function createBooking(input: unknown): Promise<ActionResult<{ orde
       scheduled_start: d.desired_service_start,
       duration_minutes: durationMin,
       resource_id: bedId,
-      therapist_id: d.therapist_id ?? null,
+      therapist_id: i === 0 ? (d.therapist_id ?? null) : null,
       external_room_no: d.service_location_type === 'external_hotel' ? (d.external_room_no ?? null) : null,
       discount_class_id: discountClassId,
       discount_amount_cents: 0,

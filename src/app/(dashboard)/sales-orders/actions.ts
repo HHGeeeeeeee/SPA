@@ -188,24 +188,40 @@ export async function createQuickDraft(): Promise<ActionResult<{ id: string }>> 
   });
 }
 
-export async function voidOrder(id: string, reason: string): Promise<ActionResult> {
+export async function cancelOrder(id: string, reason: string): Promise<ActionResult> {
   const session = await currentSession();
-  if (!isManager(session)) return { ok: false, error: 'Manager permission required to void' };
-  if (!reason || reason.trim().length < 3) return { ok: false, error: 'A reason is required to void' };
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required to cancel' };
+  if (!reason || reason.trim().length < 3) return { ok: false, error: 'A reason is required to cancel' };
   const supabase = await createAuditedClient();
   const { data: order } = await supabase.from('orders').select('status').eq('id', id).single();
   if (!order) return { ok: false, error: 'Order not found' };
   if (['closed', 'void'].includes(order.status)) {
-    return { ok: false, error: 'A closed or already-void order cannot be voided' };
+    return { ok: false, error: 'A closed or already-cancelled order cannot be cancelled' };
   }
 
-  // Voiding is a pure status flag - it does not touch the folio ledger. Any
-  // money owed back is a separate refund (an append-only kind=refund line).
+  // Block if any line is currently in service — must be completed or
+  // interrupted before the order can be cancelled.
+  const { data: items } = await supabase
+    .from('order_items').select('id, status').eq('order_id', id);
+  const inService = (items ?? []).filter((i) => i.status === 'in_service');
+  if (inService.length > 0) {
+    return { ok: false, error: `${inService.length} service(s) still in progress — complete or interrupt them before cancelling.` };
+  }
+
+  // Cancel all draft lines (scheduled but not yet started).
+  const draftIds = (items ?? []).filter((i) => i.status === 'draft').map((i) => i.id);
+  if (draftIds.length > 0) {
+    const { error: ie } = await supabase
+      .from('order_items').update({ status: 'cancelled' }).in('id', draftIds);
+    if (ie) return { ok: false, error: ie.message };
+  }
+
   const { error } = await supabase.from('orders').update({ status: 'void' }).eq('id', id);
   if (error) return { ok: false, error: error.message };
   await logStatus(id, order.status, 'void', reason.trim(), session!.staffUserId);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${id}`);
+  revalidatePath('/calendar');
   return { ok: true };
 }
 

@@ -15,7 +15,7 @@ export const SERVICE_LABEL: Record<string, string> = {
   in_service: 'In service',
   completed: 'Service done',
   closed: 'Closed',
-  void: 'Void',
+  void: 'Cancelled',
   posting: 'Posting',
   reserved: 'Reserved',
 };
@@ -32,7 +32,7 @@ const STAGE_DESC: Record<string, string> = {
   in_service: 'Service is in progress — revenue is booked.',
   completed: 'Service finished but not yet paid in full — check the payment badge for the balance due.',
   closed: 'Service finished and paid in full — the order is done.',
-  void: 'Voided — cancelled and excluded from all totals.',
+  void: 'Cancelled — all scheduled services cancelled, excluded from totals.',
   posting: 'Posting to the ledger…',
   reserved: 'Reservation.',
 };

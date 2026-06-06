@@ -570,9 +570,10 @@ export function ScheduleBoard({
   const [availableOnly, setAvailableOnly] = useState(false);
   // The minute the "available" check is evaluated at — a whole-day gap test is
   // useless (nearly everything has some gap), so availability is "free at this
-  // time". Defaults to now (clamped to the window), then the desk adjusts it.
+  // time". Defaults to the next 15-min mark (clamped to the window).
+  const nextQ = (m: number) => { const r = m % 15; return r === 0 ? m : m + (15 - r); };
   const [availAt, setAvailAt] = useState(() =>
-    Math.max(windowStartMin, Math.min(windowEndMin, nowMin ?? windowStartMin)),
+    Math.max(windowStartMin, Math.min(windowEndMin, nextQ(nowMin ?? windowStartMin))),
   );
   useEffect(() => {
     // Load after mount (not in a lazy initializer) so SSR markup stays stable.
@@ -636,10 +637,7 @@ export function ScheduleBoard({
     const rowBlocks = blocksByBed.get(bed.id) ?? [];
     if (axis === 'person') {
       if (bed.shiftStartMin == null || bed.shiftEndMin == null) return false;
-      if (!(t >= bed.shiftStartMin && t < bed.shiftEndMin)) return false; // off shift at t
-      const busy = rowBlocks.some((b) =>
-        !b.untimed && (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed') && t >= b.startMin && t < b.endMin);
-      return !busy;
+      return t >= bed.shiftStartMin && t < bed.shiftEndMin; // on shift at t
     }
     const busy = rowBlocks.some((b) => !b.untimed && t >= b.startMin - b.prepMin && t < b.endMin + b.cleanupMin);
     return !busy;
@@ -930,7 +928,10 @@ export function ScheduleBoard({
               <span className="text-xs font-bold text-muted-foreground">{subjectLabel}</span>
               <button
                 type="button"
-                onClick={() => setAvailableOnly((v) => !v)}
+                onClick={() => setAvailableOnly((v) => {
+                  if (!v) setAvailAt(Math.max(windowStartMin, Math.min(windowEndMin, nextQ(nowMin ?? windowStartMin))));
+                  return !v;
+                })}
                 aria-pressed={availableOnly}
                 title={`Show only ${subjectLabel.toLowerCase()}s that are free at the chosen time`}
                 className={`rounded-full border px-2 py-0.5 text-[10px] font-bold leading-tight transition-colors ${availableOnly ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground hover:bg-accent'}`}

@@ -57,7 +57,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_7rem_14rem_12rem_5.5rem_8.5rem_6rem_5.5rem_5.5rem_7rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_7rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -102,7 +102,7 @@ interface Opt { id: string; code: string; name: string; gender?: string | null; 
 interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
-interface ServiceVariant { id: string; name: string; group: string; categoryId: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
+interface ServiceVariant { id: string; name: string; group: string; categoryId: string; categoryName: string | null; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface PaymentRecord {
   id: string;
   amount_cents: number;
@@ -792,6 +792,7 @@ export function OrderWorkspace({
                 <div className="overflow-x-auto">
                   <div className="min-w-max">
                     <div className={`${SERVICE_GRID} border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground`}>
+                      <span>Category</span>
                       <span>Service</span>
                       <span>Duration</span>
                       <span>Start</span>
@@ -815,6 +816,7 @@ export function OrderWorkspace({
                           const d = effectiveDraft(it);
                           return (
                             <li key={it.id} className={`${SERVICE_GRID} py-1.5`}>
+                              <span className="text-xs font-medium text-muted-foreground truncate">{serviceItems.find((s) => s.group === d.groupSel)?.categoryName ?? serviceItems.find((s) => s.categoryId === it.service_category_id)?.categoryName ?? '—'}</span>
                               <ServiceLineEditor
                                 draft={d}
                                 onChange={(patch) => setDraft(it, patch)}
@@ -867,6 +869,7 @@ export function OrderWorkspace({
                           : '—';
                         return (
                           <li key={it.id} className={`${SERVICE_GRID} py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                            <span className="text-xs font-medium text-muted-foreground truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.categoryName ?? serviceItems.find((s) => s.categoryId === it.service_category_id)?.categoryName ?? '—'}</span>
                             <span className="font-semibold truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.group ?? it.service_name}</span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
@@ -928,6 +931,7 @@ export function OrderWorkspace({
                     <div className="min-w-max">
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
                       <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
+                        <span className="text-xs font-medium text-muted-foreground truncate">{serviceItems.find((s) => s.group === groupSel)?.categoryName ?? '—'}</span>
                         <ServiceLineEditor
                           draft={{ groupSel, svcId, start: addStart, therapistId, resourceId, roomNo: addRoomNo, discountId, discountOverride }}
                           onChange={(patch) => {

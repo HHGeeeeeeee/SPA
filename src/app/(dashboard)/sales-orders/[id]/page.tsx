@@ -65,7 +65,7 @@ async function fetchData(id: string) {
   const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
     supabase
       .from('service_items')
-      .select('id, code, name, service_group, service_category_id, duration_minutes, allowed_resource_types, service_item_prices ( price_cents, price_class, branch_id )')
+      .select('id, code, name, service_group, service_category_id, duration_minutes, allowed_resource_types, category:service_categories ( name ), service_item_prices ( price_cents, price_class, branch_id )')
       .eq('active', true)
       .order('service_group')
       .order('duration_minutes'),
@@ -208,6 +208,7 @@ async function fetchData(id: string) {
         name: s.name,
         group: s.service_group ?? s.name,
         categoryId: s.service_category_id as string,
+        categoryName: one(s.category)?.name ?? null,
         duration_minutes: s.duration_minutes,
         price_cents: normal?.price_cents ?? null,
         allowed_resource_types: s.allowed_resource_types ?? [],

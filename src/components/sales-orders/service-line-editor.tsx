@@ -20,6 +20,7 @@ const money0 = (cents: number | null) => (cents == null ? '—' : (cents / 100).
 // One not-yet-started service line's editable fields. Held by the parent (one
 // draft per line); price is derived server-side on save, never edited here.
 export interface LineDraft {
+  categorySel: string; // '' = none picked yet; gates the Service list
   groupSel: string;
   svcId: string;
   start: string; // HH:mm booked start, '' = none
@@ -30,7 +31,7 @@ export interface LineDraft {
   discountOverride: string;
 }
 
-interface ServiceVariant { id: string; name: string; group: string; categoryId: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
+interface ServiceVariant { id: string; name: string; group: string; categoryId: string; categoryName: string | null; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface Emp { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
@@ -76,7 +77,14 @@ export function ServiceLineEditor({
   disabled?: boolean;
   dispatch?: boolean;
 }) {
-  const groupOptions = [...new Set(serviceItems.map((s) => s.group))].sort().map((g) => ({ value: g, label: g }));
+  // Category drives the Service list: pick a category first, then only that
+  // category's service groups show. No category yet → the Service picker is
+  // disabled. Switching category clears the chosen service (see changeCategory).
+  const categoryOptions = [...new Map(serviceItems.map((s) => [s.categoryId, s.categoryName ?? s.categoryId])).entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const groupPool = draft.categorySel ? serviceItems.filter((s) => s.categoryId === draft.categorySel) : serviceItems;
+  const groupOptions = [...new Set(groupPool.map((s) => s.group))].sort().map((g) => ({ value: g, label: g }));
   const variantOptions = serviceItems
     .filter((s) => s.group === draft.groupSel)
     .map((s) => ({ value: s.id, label: `${s.duration_minutes} min · ${money0(s.price_cents)}` }));
@@ -147,11 +155,21 @@ export function ServiceLineEditor({
     : selectedDiscount.discount_amount_cents > 0 ? `-${money0(selectedDiscount.discount_amount_cents)}`
     : '—';
 
+  // Switching the category clears the chosen service (it belongs to the old
+  // category) and the skill-dependent therapist — the operator re-picks within
+  // the new category. Re-selecting the same category is a no-op.
+  const changeCategory = (v: string | null) => {
+    if (!v || v === draft.categorySel) return;
+    onChange({ categorySel: v, groupSel: '', svcId: '', therapistId: NONE });
+  };
   // Switching the service group can invalidate the therapist (skill) and the
   // station (required type) — drop those so the operator re-picks a valid one.
   const changeGroup = (v: string | null) => {
     if (!v) return;
     const patch: Partial<LineDraft> = { groupSel: v, svcId: '', therapistId: NONE };
+    // Keep the category cell in sync if the group was picked without one set.
+    const catId = serviceItems.find((s) => s.group === v)?.categoryId;
+    if (catId && catId !== draft.categorySel) patch.categorySel = catId;
     if (draft.resourceId !== NONE) {
       const newTypes = serviceItems.find((s) => s.group === v)?.allowed_resource_types ?? [];
       const cur = resources.find((r) => r.id === draft.resourceId);

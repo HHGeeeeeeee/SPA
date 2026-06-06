@@ -50,6 +50,16 @@ interface Props {
   firstOfDay: boolean;
 }
 
+// Group the integer part with thousand separators for display, leaving any
+// decimals (and a trailing dot mid-type) intact. The stored value stays a plain
+// separator-free numeric string, so Number() still parses it.
+function groupThousands(s: string): string {
+  if (s === '') return '';
+  const [int, dec] = s.split('.');
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return dec !== undefined ? `${grouped}.${dec}` : grouped;
+}
+
 // The whole Remittance block: a per-method table where the cash row's Declared
 // cell IS the count input (open) and Over/Short updates live, plus the revenue +
 // cash-drawer summary and the close / reopen action — no separate count field.
@@ -111,7 +121,20 @@ export function ShiftRemittancePanel({
                 <TableCell className="text-right font-semibold tabular-nums">{peso(r.expectedCents)}</TableCell>
                 <TableCell className="text-right">
                   {r.countable && open
-                    ? <Input type="number" min="0" step="0.01" value={actual} onChange={(e) => setActual(e.target.value)} className="ml-auto h-8 w-32 text-right" placeholder="Count…" />
+                    ? <Input
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        name="shift-cash-count"
+                        value={groupThousands(actual)}
+                        onChange={(e) => {
+                          // Strip the separators, keep digits + one decimal point.
+                          const raw = e.target.value.replace(/,/g, '');
+                          if (raw === '' || /^\d*\.?\d*$/.test(raw)) setActual(raw);
+                        }}
+                        className="ml-auto h-8 w-32 text-right tabular-nums"
+                        placeholder="Count…"
+                      />
                     : <span className="font-semibold tabular-nums">{declared[i] == null ? '—' : peso(declared[i])}</span>}
                 </TableCell>
                 <TableCell className="text-right">

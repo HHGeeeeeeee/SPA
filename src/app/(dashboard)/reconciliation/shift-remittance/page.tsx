@@ -1,5 +1,4 @@
 import { getAllowedBranches } from '@/lib/branch-access';
-import { currentSession, isManager } from '@/lib/auth';
 import { Card } from '@/components/ui/card';
 import { ShiftRemittanceList } from '@/components/reconciliation/shift-remittance-list';
 import { loadAllShifts, loadShiftLabelOptions } from './actions';
@@ -11,8 +10,6 @@ function todayPHT(): string {
 }
 
 export default async function ShiftRemittancePage() {
-  const session = await currentSession();
-  const canReopen = isManager(session);
   const branches = (await getAllowedBranches()) ?? [];
   const branchIds = branches.map((b) => b.id);
   const today = todayPHT();
@@ -38,7 +35,6 @@ export default async function ShiftRemittancePage() {
           branches={branches}
           shiftOptions={shiftOptions}
           today={today}
-          canReopen={canReopen}
         />
       )}
     </div>

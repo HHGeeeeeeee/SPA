@@ -188,6 +188,143 @@ export async function createQuickDraft(): Promise<ActionResult<{ id: string }>> 
   });
 }
 
+// One guest's service line in the direct create-order flow: a category (required)
+// and an optional concrete service (deferred + unpriced if omitted), plus the
+// guest's identity and any board-click pre-assignment (bed / therapist).
+const createOrderGuestSchema = z.object({
+  name: z.string().max(120).optional().nullable(),
+  phone: z.string().max(40).optional().nullable(),
+  gender: z.string().max(20).optional().nullable(),
+  service_category_id: z.string().uuid(),
+  service_item_id: z.string().uuid().optional().nullable(),
+  duration_minutes: z.coerce.number().int().positive().optional().nullable(),
+  therapist_id: z.string().uuid().optional().nullable(),
+  resource_id: z.string().uuid().optional().nullable(),
+});
+const createOrderDirectSchema = z.object({
+  branch_id: z.string().uuid(),
+  source_id: z.string().uuid().optional().nullable(),
+  service_date: z.string().min(1),
+  // Booked start (ISO, +08:00) applied to every line — the calendar passes the
+  // clicked time; the standalone button can leave it null (untimed).
+  scheduled_start: z.string().optional().nullable(),
+  note: z.string().max(500).optional().nullable(),
+  guests: z.array(createOrderGuestSchema).min(1, 'Add at least one guest'),
+});
+
+/**
+ * Build a draft order in one shot from the calendar's "Create Order" dialog:
+ * one order_customer + one order_item per guest, each line carrying its own
+ * category / (optional) service / duration. Discount defaults to DIS-00 (no
+ * discount); billing + phone policy follow the customer source. Returns the new
+ * order id so the dialog can jump straight into the order screen.
+ */
+export async function createOrderDirect(input: unknown): Promise<ActionResult<{ orderId: string }>> {
+  const parsed = createOrderDirectSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+
+  const supabase = await createAuditedClient();
+
+  const { data: branch, error: be } = await supabase
+    .from('branches')
+    .select('branch_business_units ( business_unit_id )')
+    .eq('id', d.branch_id)
+    .single();
+  if (be || !branch) return { ok: false, error: 'Branch not found' };
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (await isBusinessDayClosed(d.branch_id, d.service_date)) {
+    return { ok: false, error: 'The business day is closed for this branch — no new orders can post to this date.' };
+  }
+  // Branch hosting exactly one unit → attribute it automatically (mirrors createDraftOrder).
+  const branchUnitIds = (branch.branch_business_units ?? []).map((r) => r.business_unit_id);
+  const businessUnitId = branchUnitIds.length === 1 ? branchUnitIds[0] : null;
+
+  // Billing destination + phone requirement follow the customer source.
+  let billingToId: string | null = null;
+  let phoneRequired = false;
+  if (d.source_id) {
+    const { data: src } = await supabase
+      .from('customer_sources')
+      .select('default_billing_to_id, phone_required')
+      .eq('id', d.source_id)
+      .maybeSingle();
+    if (!src) return { ok: false, error: 'Customer source not found' };
+    billingToId = src.default_billing_to_id ?? null;
+    phoneRequired = !!src.phone_required;
+  }
+  if (phoneRequired && !d.guests[0]?.phone?.trim()) {
+    return { ok: false, error: 'A guest phone is required for this source' };
+  }
+
+  // Default discount class: DIS-00 (no discount) for every line.
+  const { data: dis0 } = await supabase.from('discount_classes').select('id').eq('code', 'DIS-00').maybeSingle();
+  const discountClassId = dis0?.id ?? null;
+  if (!discountClassId) return { ok: false, error: 'No default discount class configured' };
+
+  const order_no = await nextOrderNo(supabase, d.service_date);
+  const { data: order, error: oe } = await supabase
+    .from('orders')
+    .insert({
+      order_no,
+      branch_id: d.branch_id,
+      business_unit_id: businessUnitId,
+      source_id: d.source_id || null,
+      billing_to_id: billingToId,
+      order_type: 'walk_in',
+      service_date: d.service_date,
+      note: d.note || null,
+      status: 'draft',
+    })
+    .select('id')
+    .single();
+  if (oe || !order) return { ok: false, error: oe?.message ?? 'Could not create order' };
+
+  // One customer per guest, in form order (seq_no 1..N; blank names → "Guest N").
+  const { data: customers, error: ce } = await supabase
+    .from('order_customers')
+    .insert(
+      d.guests.map((g, i) => ({
+        order_id: order.id,
+        customer_name: g.name?.trim() || `Guest ${i + 1}`,
+        customer_phone: g.phone?.trim() || null,
+        gender: g.gender || null,
+        seq_no: i + 1,
+      })),
+    )
+    .select('id, seq_no');
+  if (ce) return { ok: false, error: ce.message };
+  const sorted = [...(customers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
+
+  // One service line per guest. buildLineWrite handles both shapes: a concrete
+  // service → full pricing; category-only → an unpriced deferred line.
+  for (let i = 0; i < d.guests.length; i++) {
+    const g = d.guests[i];
+    const lw = await buildLineWrite(supabase, {
+      order_id: order.id,
+      service_item_id: g.service_item_id ?? null,
+      service_category_id: g.service_category_id,
+      duration_minutes: g.duration_minutes ?? null,
+      therapist_id: g.therapist_id ?? null,
+      resource_id: g.resource_id ?? null,
+      discount_class_id: discountClassId,
+    });
+    if ('error' in lw) return { ok: false, error: lw.error };
+    const { error: ie } = await supabase.from('order_items').insert({
+      order_id: order.id,
+      order_customer_id: sorted[i].id,
+      ...lw.patch,
+      scheduled_start: d.scheduled_start ?? null,
+    });
+    if (ie) return { ok: false, error: ie.message };
+  }
+
+  await recomputeTotals(order.id);
+  revalidatePath('/calendar');
+  revalidatePath('/sales-orders');
+  return { ok: true, data: { orderId: order.id } };
+}
+
 export async function cancelOrder(id: string, reason: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required to cancel' };

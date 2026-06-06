@@ -20,8 +20,9 @@ import {
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
+import { cn, formatPHP } from '@/lib/utils';
+import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
+import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
 import { startOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 
@@ -51,6 +52,15 @@ export interface BoardBlock {
   external?: boolean;
   guest?: string; // booking guest name — shown at the top of the block
   pax?: number;   // group size, shown next to the guest
+  /** Parent order number (SO-YYMMDD-NNNN). The detail popover's header shows its
+   *  last 4 chars (the daily sequence) ahead of the guest. */
+  orderNo?: string;
+  /** Guest's per-order sequence (order_customers.seq_no) — the "3" in "Guest 3".
+   *  Shown as the guest id in the detail popover's header. */
+  guestSeq?: number | null;
+  /** Total guests on the parent order (order_customers count). The popover header
+   *  shows the guest as "seq/total" (which guest of how many). */
+  guestTotal?: number | null;
   line1: string;
   line2?: string;
   startMin: number;
@@ -68,6 +78,9 @@ export interface BoardBlock {
   /** The order still has a balance (total ≠ paid) — drawn as a red dot on the
    *  block so the desk can spot unsettled bookings at a glance. */
   owing?: boolean;
+  /** Order's outstanding balance in cents (total − paid). Shown in the detail
+   *  popover, painted red whenever it isn't zero. */
+  balanceCents?: number;
   editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
   /** Therapist on this block. Used by the hover popup to mark staff busy at
    *  a hovered minute (block's own variant decides if it actually occupies
@@ -865,21 +878,6 @@ export function ScheduleBoard({
 
   const addStartIso = add ? makeIso(day, add.min) : '';
   const addRow = add ? beds.find((b) => b.id === add.bedId) : undefined;
-  const synthetic: ReservationItem | undefined = add
-    ? {
-        id: 'prefill', branch_id: branchId, source_id: null, service_category_ids: [],
-        guest_name: '', guest_phone: null, pax: 1, gender_preference: null,
-        service_location_type: 'on_site', note: null,
-        desired_service_start: addStartIso,
-        desired_service_end: new Date(Date.parse(addStartIso) + 60 * 60000).toISOString(),
-        // Bed axis pins the clicked bed; person axis pre-assigns the clicked
-        // therapist and leaves the bed to be picked later.
-        resource_ids: axis === 'person' ? [] : [add.bedId],
-        seat_together: false, service_item_id: null,
-        therapist_id: axis === 'person' ? add.bedId : null,
-        therapist_name: axis === 'person' ? (addRow?.name ?? null) : null,
-      }
-    : undefined;
 
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={clearStaffDrag}>
@@ -1130,18 +1128,17 @@ export function ScheduleBoard({
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-500/70 bg-zinc-400/25" /> Prep / cleanup</span>
       </div>
 
-      {add && synthetic && (
-        <NewReservationDialog
+      {add && (
+        <CreateOrderDialog
           key={addKey}
-          branches={dialog.branches}
-          sources={dialog.sources}
-          serviceCategories={dialog.serviceCategories}
-          serviceItems={dialog.serviceItems}
-          reservation={synthetic}
-          prefillConfirmed
-          // Pass the bed's resource_type so the dialog auto-checks the
-          // matching Service Type (Bed #1 → Massage, Hair Chair A → Hair, etc.).
-          lockedBed={axis === 'person' ? undefined : (() => { const b = beds.find((x) => x.id === add.bedId); return { name: b?.name ?? 'Bed', type: b?.type }; })()}
+          dialog={dialog}
+          initialBranchId={branchId}
+          prefillStartIso={addStartIso}
+          // Bed axis pins the clicked bed on the first guest's line; person axis
+          // pre-assigns the clicked therapist and leaves the bed to be picked later.
+          prefillResourceId={axis === 'person' ? null : add.bedId}
+          prefillTherapistId={axis === 'person' ? add.bedId : null}
+          prefillLabel={addRow?.name ?? null}
           open
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
         />
@@ -1160,28 +1157,43 @@ export function ScheduleBoard({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-2 border-b border-border pb-1.5 mb-2">
-                <span className="font-bold text-sm truncate">{b.guest || b.line1}</span>
+                {/* Header: order# last 4 (daily seq) - guest seq/total - guest name.
+                    The middle shows which guest of how many on the order (e.g.
+                    "2/3"); falls back to the service when there's no number/guest. */}
+                <span className="font-bold text-sm truncate">
+                  {[
+                    b.orderNo ? b.orderNo.slice(-4) : null,
+                    b.guestSeq != null
+                      ? (b.guestTotal != null ? `${b.guestSeq}/${b.guestTotal}` : String(b.guestSeq))
+                      : null,
+                    b.guest,
+                  ].filter(Boolean).join(' - ') || b.line1}
+                </span>
                 <button type="button" onClick={() => setDetail(null)} className="shrink-0 text-muted-foreground hover:text-foreground">✕</button>
               </div>
               <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[13px]">
-                {b.guest && (
-                  <>
-                    <dt className="font-medium text-muted-foreground">Guest</dt>
-                    <dd className="font-semibold truncate">{b.guest}{b.pax && b.pax > 1 ? ` · ${b.pax} pax` : ''}</dd>
-                  </>
-                )}
-                <dt className="font-medium text-muted-foreground">Service</dt>
-                <dd className="font-semibold truncate">{b.line1}</dd>
+                <dt className="font-medium text-muted-foreground">Status</dt>
+                <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[b.variant] ?? b.variant}</dd>
                 {b.line2 && (
                   <>
                     <dt className="font-medium text-muted-foreground">{axis === 'person' ? 'Detail' : 'Therapist'}</dt>
                     <dd className="font-semibold truncate">{b.line2}</dd>
                   </>
                 )}
+                <dt className="font-medium text-muted-foreground">Service</dt>
+                <dd className="font-semibold truncate">{b.line1}</dd>
                 <dt className="font-medium text-muted-foreground">Time</dt>
                 <dd className="font-semibold tabular-nums">{b.untimed ? 'No time yet' : `${hhmm(b.startMin)}–${hhmm(b.endMin)}`}</dd>
-                <dt className="font-medium text-muted-foreground">Status</dt>
-                <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[b.variant] ?? b.variant}</dd>
+                {/* Outstanding balance (total − paid). Red whenever it isn't zero
+                    so the desk can spot an unsettled order at a glance. */}
+                {b.balanceCents != null && (
+                  <>
+                    <dt className="font-medium text-muted-foreground">Balance</dt>
+                    <dd className={cn('font-semibold tabular-nums', b.balanceCents !== 0 && 'text-red-600 dark:text-red-400')}>
+                      {formatPHP(b.balanceCents)}
+                    </dd>
+                  </>
+                )}
               </dl>
               {axis === 'bed' && b.draggable && !b.therapistId && staffShifts.length > 0 && (
                 <div className="mt-3 border-t border-border pt-2">

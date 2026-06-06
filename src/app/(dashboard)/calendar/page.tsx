@@ -70,7 +70,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
-      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
     // Pull the full roster (with employee identity + position) instead of bare
@@ -84,7 +84,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     // rail. No resource filter (they have none); branch/day filtered in the loop.
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
+      .select('id, status, therapist_id, scheduled_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
       .eq('status', 'draft').is('resource_id', null),
   ]);
 
@@ -116,12 +116,15 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: it.resource_id,
       guest: one(it.guest)?.customer_name ?? undefined, pax,
+      orderNo: ord.order_no ?? undefined, guestSeq: one(it.guest)?.seq_no ?? null,
+      guestTotal: (ord as unknown as { order_customers?: { id: string }[] }).order_customers?.length ?? null,
       line1: fmtSvc(one(it.service)?.name), line2: one(it.therapist)?.name ?? undefined,
       startMin, endMin, durationMin: dur,
       prepMin: one(it.service)?.prep_before_minutes ?? 0,
       cleanupMin: one(it.service)?.cleanup_after_minutes ?? 0,
       variant, draggable, orderId: ord.id,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
+      balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
       therapistId: it.therapist_id ?? null,
       // On a bed already; red only when it still lacks a therapist.
       needsAssignment: it.status === 'draft' && !it.therapist_id,
@@ -142,6 +145,8 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: null,
       guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
+      orderNo: ord.order_no ?? undefined, guestSeq: one(it.guest)?.seq_no ?? null,
+      guestTotal: (ord as unknown as { order_customers?: { id: string }[] }).order_customers?.length ?? null,
       line1: fmtSvc(one(it.service)?.name ?? one(it.category)?.name),
       line2: one(it.therapist)?.name ?? undefined,
       startMin, endMin, durationMin: dur,
@@ -149,6 +154,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       cleanupMin: one(it.service)?.cleanup_after_minutes ?? 0,
       variant: 'scheduled', draggable: true, orderId: ord.id,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
+      balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
       therapistId: it.therapist_id ?? null,
       untimed: !timed,
       // Bedless rail card: red unless it's a dispatch (never needs a bed) that
@@ -234,7 +240,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
+      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
     // Every active station in the share group — candidates for the People
     // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
@@ -349,12 +355,15 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: therapistId,
       guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
+      orderNo: ord.order_no ?? undefined, guestSeq: one(it.guest)?.seq_no ?? null,
+      guestTotal: (ord as unknown as { order_customers?: { id: string }[] }).order_customers?.length ?? null,
       line1: fmtSvc(svc?.name ?? cat?.name),
       line2,
       startMin, endMin, durationMin: dur, prepMin: 0, cleanupMin: 0,
       variant, draggable: it.status === 'draft',
       orderId: ord.id, therapistId, untimed,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
+      balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
       bedUnassigned, allowedResourceTypes,
       // Red "needs assignment" when a not-yet-started booking lacks a therapist
       // or (on-site) a bed.

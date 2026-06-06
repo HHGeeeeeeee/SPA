@@ -7,7 +7,7 @@ import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble, Receip
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { TopBarPortal } from '@/components/layout/topbar-portal';
-import { NewReservationDialog } from '@/components/reservations/new-reservation-dialog';
+import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
 import type { BoardDialogData } from '@/components/shift-schedule/schedule-board';
 
 type CalendarView = 'station' | 'people';
@@ -62,12 +62,9 @@ export function ShiftControls({ branches, branchId, selected, day, view, dialog 
       {/* Create Order — opens the booking dialog standalone (no pre-picked bed),
           defaulting to the branch currently on the board. Leftmost so it reads as
           the primary action on the calendar. */}
-      <NewReservationDialog
-        branches={dialog.branches}
-        sources={dialog.sources}
-        serviceCategories={dialog.serviceCategories}
-        serviceItems={dialog.serviceItems}
-        initial={{ branchId }}
+      <CreateOrderDialog
+        dialog={dialog}
+        initialBranchId={branchId}
         trigger={
           <Button size="sm" className="gap-1.5 font-bold">
             <Plus className="size-4" /> Create Order

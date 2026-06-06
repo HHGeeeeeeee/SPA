@@ -121,6 +121,27 @@ export interface BoardStaffShift {
   startMin: number;
   endMin: number;
 }
+
+// Capacity / occupancy / utilization for the selected branch(es), computed
+// server-side. Two occupancies (station beds, therapists) drawn per-hour over
+// the ruler; one day-level utilization against the true bottleneck capacity
+// min(bed-hours, therapist-hours). `computable` is false when more than one
+// branch is selected and they aren't all in the same therapist share group —
+// pooling therapist capacity across non-sharing branches is meaningless.
+export interface BoardOccupancy {
+  computable: boolean;
+  note: string | null;
+  // One entry per ruler hour (same placed-hour ints as the axis). Pct is 0..1
+  // (can exceed 1 when overbooked); null when there's no capacity that hour.
+  perHour: { hour: number; stationPct: number | null; therapistPct: number | null }[];
+  bedHours: number;
+  therapistHours: number;
+  capacityHours: number;     // min(bedHours, therapistHours) — the real ceiling
+  actualHours: number;       // delivered service-hours (in_service elapsed + done + interrupted)
+  utilizationPct: number | null;   // actualHours / capacityHours
+  stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
+  therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
+}
 // Option data forwarded to NewReservationDialog for click-to-add.
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
 interface SourceOpt { id: string; code: string; name: string; phone_required: boolean }
@@ -514,7 +535,7 @@ function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, inde
 
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
-  axis = 'bed', subjectLabel = 'Station', assignBeds = [],
+  axis = 'bed', subjectLabel = 'Station', assignBeds = [], occupancy,
 }: {
   branchId: string;
   day: string;
@@ -534,6 +555,9 @@ export function ScheduleBoard({
   /** Candidate beds for the People popover's "Assign bed" picker (axis='person'
    *  only). Every active station in the share group with its busy windows. */
   assignBeds?: AssignBed[];
+  /** Capacity / occupancy / utilization summary for the selected branch(es).
+   *  Drives the day-total strip + the two per-hour occupancy bands. */
+  occupancy?: BoardOccupancy;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -564,6 +588,19 @@ export function ScheduleBoard({
   const lastHour = Math.ceil(windowEndMin / 60);
   const hours: number[] = [];
   for (let h = firstHour; h <= lastHour; h++) hours.push(h);
+
+  // Occupancy bands: per-hour station/therapist % keyed by the same placed-hour
+  // ints as the ruler, so the cells line up under their hour column.
+  const occByHour = new Map((occupancy?.perHour ?? []).map((p) => [p.hour, p]));
+  const occPct = (x: number | null | undefined) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+  const occHrs = (x: number) => `${Math.round(x * 10) / 10}h`;
+  // Occupied → calm under half, primary past half, amber near full, red over.
+  const occTone = (p: number | null | undefined): string =>
+    p == null ? 'text-muted-foreground/50'
+    : p >= 1 ? 'bg-destructive/20 text-destructive font-bold'
+    : p >= 0.85 ? 'bg-amber-400/25 text-amber-900 dark:text-amber-200 font-bold'
+    : p >= 0.5 ? 'bg-primary/10 text-foreground font-semibold'
+    : 'text-muted-foreground font-semibold';
 
   const floating = blocks.filter((b) => b.bedId === null);
   // Rail sections: "no time yet" (untimed) vs "needs a bed" (timed but bedless),
@@ -900,6 +937,30 @@ export function ScheduleBoard({
 
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={clearStaffDrag}>
+      {/* Day-total capacity strip: the headline Utilization against the true
+          bottleneck min(bed-hours, therapist-hours), with the two occupancies
+          alongside. Per-hour detail rides the bands under the ruler below. */}
+      {occupancy && (
+        <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2">
+          {occupancy.computable ? (
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Utilization</span>
+                <span className={`text-lg font-extrabold tabular-nums ${occupancy.utilizationPct != null && occupancy.utilizationPct >= 0.85 ? 'text-primary' : 'text-foreground'}`}>{occPct(occupancy.utilizationPct)}</span>
+              </div>
+              <div className="flex items-center gap-4 text-sm font-semibold">
+                <span className="text-muted-foreground">Therapist occ <span className="tabular-nums text-foreground">{occPct(occupancy.therapistOccPct)}</span></span>
+                <span className="text-muted-foreground">Station occ <span className="tabular-nums text-foreground">{occPct(occupancy.stationOccPct)}</span></span>
+              </div>
+              <div className="text-xs font-medium text-muted-foreground">
+                Capacity = min(beds {occHrs(occupancy.bedHours)}, therapists {occHrs(occupancy.therapistHours)}) = <span className="font-bold text-foreground">{occHrs(occupancy.capacityHours)}</span> · actual {occHrs(occupancy.actualHours)}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs font-semibold text-muted-foreground">Occupancy &amp; utilization unavailable — {occupancy.note}</p>
+          )}
+        </div>
+      )}
       <div className="flex items-start gap-3">
       {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
       <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
@@ -1063,6 +1124,31 @@ export function ScheduleBoard({
               )}
             </div>
           </div>
+
+          {/* Per-hour occupancy bands — station beds then therapists, each cell
+              the % of that resource's capacity booked in the hour (occupancy
+              includes scheduled). Only shown when computable for the selection. */}
+          {occupancy?.computable && (['therapist', 'station'] as const).map((kind) => (
+            <div key={kind} className="flex border-b border-border bg-card">
+              <div className="w-40 shrink-0 px-2 py-1 flex items-center justify-between gap-1 sticky left-0 z-20 bg-card">
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">{kind === 'station' ? 'Station occ' : 'Therapist occ'}</span>
+                <span className="text-[10px] font-extrabold tabular-nums text-foreground/80">{occPct(kind === 'station' ? occupancy.stationOccPct : occupancy.therapistOccPct)}</span>
+              </div>
+              <div className="relative" style={{ height: 22, minWidth: trackWidth }}>
+                {hours.slice(0, -1).map((h) => {
+                  const p = occByHour.get(h);
+                  const v = kind === 'station' ? p?.stationPct : p?.therapistPct;
+                  return (
+                    <div key={h} className="absolute top-0 bottom-0 flex items-center justify-center border-l border-border/30" style={{ left: (h * 60 - windowStartMin) * PX_PER_MIN, width: PX_PER_HOUR }}>
+                      <span className={`flex h-[18px] min-w-[34px] items-center justify-center rounded px-1 text-[10px] tabular-nums ${occTone(v)}`}>
+                        {v == null ? '·' : `${Math.round(v * 100)}%`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
 
           {/* Per-hour pending demand (甲): how many timed bookings still need a
               bed in each hour. Aligned to the time axis; clears as they're placed. */}

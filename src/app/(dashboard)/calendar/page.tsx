@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
-import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift, type AssignBed } from '@/components/shift-schedule/schedule-board';
+import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift, type AssignBed, type BoardOccupancy } from '@/components/shift-schedule/schedule-board';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
@@ -37,14 +37,15 @@ function tsToMin(iso: string): number {
 // Service names bake the duration in as "… 90min"; show it compactly as "(90)".
 const fmtSvc = (name: string | null | undefined): string => (name ?? 'Service').replace(/\s*(\d+)\s*min\b/i, ' ($1)');
 
-async function fetchStationBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
+async function fetchStationBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; occupancy: BoardOccupancy }> {
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
+  const nowMin = day === todayISO() ? tsToMin(new Date().toISOString()) : null;
   // Board window = this branch's business hours. A close at/before open means it
   // trades past midnight, so the window extends past 1440 and the bookings in
   // 00:00..close (next clock day, same business day) are shifted by +1440.
-  const { data: brHoursAll } = await supabase.from('branches').select('id, open_time, close_time').in('id', branchIds);
+  const { data: brHoursAll } = await supabase.from('branches').select('id, open_time, close_time, therapist_share_group').in('id', branchIds);
   const brHours = (brHoursAll ?? []).find((b) => b.id === branchId) ?? null;
   // Window spans ALL selected branches' hours (union): earliest open to latest
   // close, so an earlier-opening branch's morning shifts don't wrap to next day.
@@ -190,7 +191,56 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     .filter((w): w is BoardStaffShift =>
       w.startMin != null && w.endMin != null && isServicePosition(w.positionCode)
       && !staffSeen.has(w.id) && (staffSeen.add(w.id), true));
-  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts };
+
+  // ── Occupancy / utilization ──────────────────────────────────────────────
+  // Therapist capacity = the service therapists actually rostered AT these
+  // branches today (staffShifts already filters branch + service position, so it
+  // includes cross-branch loaned-in and excludes loaned-out). Bed capacity =
+  // active station count. Demand windows come from the same items above.
+  const placedNow = nowMin != null ? place(nowMin) : null;
+  const bedBusy: OccWin[] = [];
+  const therBusy: OccWin[] = [];
+  const actual: OccWin[] = [];
+  const collect = (rows: typeof itemsRes.data, allowBedless: boolean) => {
+    for (const it of rows ?? []) {
+      const ord = one(it.order);
+      if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
+      const r = it as { status: string; resource_id?: string | null; therapist_id?: string | null; scheduled_start?: string | null; service_start?: string | null; slot_start?: string | null; actual_start?: string | null; actual_end?: string | null; duration_minutes?: number | null };
+      const dur = r.duration_minutes ?? 60;
+      let s: number;
+      let occEnd: number;
+      if (r.status === 'draft') {
+        const sIso = r.scheduled_start ?? r.service_start ?? r.slot_start;
+        if (!sIso) continue; // untimed → can't attribute to an hour
+        s = place(tsToMin(sIso)); occEnd = s + dur;
+      } else {
+        if (!r.actual_start) continue;
+        s = place(tsToMin(r.actual_start));
+        occEnd = r.actual_end ? place(tsToMin(r.actual_end)) : s + dur;
+        const actEnd = r.actual_end ? place(tsToMin(r.actual_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
+        actual.push({ s, e: actEnd });
+      }
+      if (r.resource_id) bedBusy.push({ s, e: occEnd });
+      else if (!allowBedless) continue;
+      if (r.therapist_id) therBusy.push({ s, e: occEnd });
+    }
+  };
+  collect(itemsRes.data, true);
+  collect(unassignedRes.data as typeof itemsRes.data, true);
+  const sg = shareGroupComputable((brHoursAll ?? []).map((b) => (b as { therapist_share_group?: string | null }).therapist_share_group ?? null));
+  const occupancy = buildOccupancy({
+    computable: sg.ok,
+    note: sg.note,
+    windowStartMin,
+    windowEndMin,
+    stationCount: beds.length,
+    shifts: staffShifts.map((w) => ({ s: w.startMin, e: w.endMin })),
+    bedBusy,
+    therBusy,
+    actual,
+  });
+
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, occupancy };
 }
 
 // Per-person board (15-min): therapist rows, each painted with its on-shift
@@ -198,15 +248,16 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
 // while bookings with no therapist yet ride the left "Unallocated" rail. Drag a
 // rail card onto a person to pre-assign them. Mirrors fetchStationBoard but keyed
 // on therapist_id instead of resource_id.
-async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[] }> {
+async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[]; occupancy: BoardOccupancy }> {
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
+  const nowClockMin = day === todayISO() ? tsToMin(new Date().toISOString()) : null;
   // Branch hours for the selected branches. The window opens at the earliest open
   // (lowered below if shifts start before open) and closes at the latest close;
   // place() folds genuine after-midnight times — before a midnight-crossing
   // branch's close — to the next day, NOT pre-open morning hours.
-  const { data: brHoursAll } = await supabase.from('branches').select('open_time, close_time').in('id', branchIds);
+  const { data: brHoursAll } = await supabase.from('branches').select('id, open_time, close_time, therapist_share_group').in('id', branchIds);
   const branchHours = (brHoursAll ?? []).map((b) => ({ open: timeToMin(b.open_time ?? '10:00') ?? 600, close: timeToMin(b.close_time ?? '02:00') ?? 120 }));
   const branchOpen = Math.min(...branchHours.map((h) => h.open).concat([600]));
   const crossingCloses = branchHours.filter((h) => h.close <= h.open).map((h) => h.close);
@@ -236,7 +287,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     // has their shift at the OTHER branch, so shifts can't be filtered by branchIds.
     supabase
       .from('employee_shifts')
-      .select('employee_id, branch_id, shift_start, shift_end')
+      .select('employee_id, branch_id, shift_start, shift_end, employees:employee_id ( position:positions ( code ) )')
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
@@ -376,7 +427,62 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     id: bd.id, name: bd.resource_name, branch: branchCodeById.get(bd.branch_id) ?? '—',
     type: bd.resource_type, zone: bd.location_zone ?? null, busy: bedBusy.get(bd.id) ?? [],
   }));
-  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds };
+
+  // ── Occupancy / utilization ──────────────────────────────────────────────
+  // Therapist capacity = service therapists rostered AT the selected branches
+  // today (employee_shifts.branch_id ∈ selection + a service position): includes
+  // loaned-in cross-branch, excludes loaned-out. Bed capacity = active stations.
+  // Demand windows reuse the items already fetched (scheduled + live + done).
+  const placedNow = nowClockMin != null ? place(nowClockMin) : null;
+  const capByEmp = new Map<string, OccWin>();
+  for (const s of shiftRes.data ?? []) {
+    if (!brSet.has(s.branch_id)) continue;
+    const emp = one(s.employees);
+    const code = emp ? one(emp.position)?.code ?? null : null;
+    if (!isServicePosition(code)) continue;
+    const ss = timeToMin(s.shift_start); const se = timeToMin(s.shift_end);
+    if (ss == null || se == null) continue;
+    const st = place(ss); const en = place(se);
+    const prev = capByEmp.get(s.employee_id);
+    capByEmp.set(s.employee_id, prev ? { s: Math.min(prev.s, st), e: Math.max(prev.e, en) } : { s: st, e: en });
+  }
+  const occBedBusy: OccWin[] = [];
+  const occTherBusy: OccWin[] = [];
+  const occActual: OccWin[] = [];
+  for (const it of itemsRes.data ?? []) {
+    const ord = one(it.order);
+    if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
+    const dur = it.duration_minutes ?? 60;
+    let s: number;
+    let occEnd: number;
+    if (it.status === 'draft') {
+      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      if (!sIso) continue;
+      s = place(tsToMin(sIso)); occEnd = s + dur;
+    } else {
+      if (!it.actual_start) continue;
+      s = place(tsToMin(it.actual_start));
+      occEnd = it.actual_end ? place(tsToMin(it.actual_end)) : s + dur;
+      const actEnd = it.actual_end ? place(tsToMin(it.actual_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
+      occActual.push({ s, e: actEnd });
+    }
+    if (it.resource_id) occBedBusy.push({ s, e: occEnd });
+    if (it.therapist_id) occTherBusy.push({ s, e: occEnd });
+  }
+  const sg = shareGroupComputable((brHoursAll ?? []).map((b) => b.therapist_share_group ?? null));
+  const occupancy = buildOccupancy({
+    computable: sg.ok,
+    note: sg.note,
+    windowStartMin,
+    windowEndMin,
+    stationCount: (bedsRes.data ?? []).length,
+    shifts: [...capByEmp.values()],
+    bedBusy: occBedBusy,
+    therBusy: occTherBusy,
+    actual: occActual,
+  });
+
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds, occupancy };
 }
 // Option lists for the board's click-to-add (reuses NewReservationDialog).
 async function fetchBoardDialogData(): Promise<BoardDialogData> {
@@ -405,6 +511,78 @@ async function fetchBoardDialogData(): Promise<BoardDialogData> {
 
 function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
+}
+
+// Minutes of overlap between [a,b) and [c,d).
+function overlap(a: number, b: number, c: number, d: number): number {
+  return Math.max(0, Math.min(b, d) - Math.max(a, c));
+}
+
+// Occupancy/utilization is only meaningful when the selected branches pool the
+// same therapist labour. One branch is always fine; multiple are poolable only
+// when they share one (non-null) therapist_share_group.
+function shareGroupComputable(groups: (string | null)[]): { ok: boolean; note: string | null } {
+  if (groups.length <= 1) return { ok: true, note: null };
+  if (groups.some((g) => !g) || new Set(groups).size > 1) {
+    return { ok: false, note: 'selected branches are not in one therapist share group' };
+  }
+  return { ok: true, note: null };
+}
+
+type OccWin = { s: number; e: number };
+
+// Turn prepared capacity/demand windows (already in board-minute space) into the
+// per-hour occupancies + the day-level utilization against min(beds, therapists).
+function buildOccupancy(p: {
+  computable: boolean;
+  note: string | null;
+  windowStartMin: number;
+  windowEndMin: number;
+  stationCount: number;
+  shifts: OccWin[];   // service-therapist shifts rostered AT the selected branches
+  bedBusy: OccWin[];  // bed-holding bookings (scheduled + live + done)
+  therBusy: OccWin[]; // therapist-holding bookings (scheduled + live + done)
+  actual: OccWin[];   // delivered service windows (utilization numerator)
+}): BoardOccupancy {
+  if (!p.computable) {
+    return { computable: false, note: p.note, perHour: [], bedHours: 0, therapistHours: 0, capacityHours: 0, actualHours: 0, utilizationPct: null, stationOccPct: null, therapistOccPct: null };
+  }
+  const ws = p.windowStartMin;
+  const we = p.windowEndMin;
+  const firstHour = Math.floor(ws / 60);
+  const lastHour = Math.ceil(we / 60);
+  const perHour: BoardOccupancy['perHour'] = [];
+  for (let h = firstHour; h < lastHour; h++) {
+    const hs = h * 60;
+    const he = hs + 60;
+    const bedCapMin = p.stationCount * overlap(hs, he, ws, we);
+    const therCapMin = p.shifts.reduce((s, w) => s + overlap(hs, he, w.s, w.e), 0);
+    const bedOccMin = p.bedBusy.reduce((s, w) => s + overlap(hs, he, w.s, w.e), 0);
+    const therOccMin = p.therBusy.reduce((s, w) => s + overlap(hs, he, w.s, w.e), 0);
+    perHour.push({
+      hour: h,
+      stationPct: bedCapMin > 0 ? bedOccMin / bedCapMin : null,
+      therapistPct: therCapMin > 0 ? therOccMin / therCapMin : null,
+    });
+  }
+  const bedHours = (p.stationCount * (we - ws)) / 60;
+  const therapistHours = p.shifts.reduce((s, w) => s + overlap(ws, we, w.s, w.e), 0) / 60;
+  const capacityHours = Math.min(bedHours, therapistHours);
+  const actualHours = p.actual.reduce((s, w) => s + overlap(ws, we, w.s, w.e), 0) / 60;
+  const bedOccHours = p.bedBusy.reduce((s, w) => s + overlap(ws, we, w.s, w.e), 0) / 60;
+  const therOccHours = p.therBusy.reduce((s, w) => s + overlap(ws, we, w.s, w.e), 0) / 60;
+  return {
+    computable: true,
+    note: null,
+    perHour,
+    bedHours,
+    therapistHours,
+    capacityHours,
+    actualHours,
+    utilizationPct: capacityHours > 0 ? actualHours / capacityHours : null,
+    stationOccPct: bedHours > 0 ? bedOccHours / bedHours : null,
+    therapistOccPct: therapistHours > 0 ? therOccHours / therapistHours : null,
+  };
 }
 
 async function fetchBranches(branchParam?: string): Promise<{ branches: { id: string; code: string; name: string }[]; branchIds: string[] }> {
@@ -468,6 +646,7 @@ export default async function CalendarPage({
           staffShifts={stationBoard.staffShifts}
           nowMin={day === todayISO() ? tsToMin(new Date().toISOString()) : null}
           dialog={boardDialog!}
+          occupancy={stationBoard.occupancy}
         />
       ) : peopleBoard ? (
         <ScheduleBoard
@@ -484,6 +663,7 @@ export default async function CalendarPage({
           axis="person"
           subjectLabel="Therapist"
           assignBeds={peopleBoard.assignBeds}
+          occupancy={peopleBoard.occupancy}
         />
       ) : (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">

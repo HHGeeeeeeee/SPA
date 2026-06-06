@@ -140,9 +140,127 @@ export async function loadShiftRemittance(branchId: string, date: string): Promi
   });
 }
 
+export interface ShiftListItem {
+  id: string;
+  branchId: string;
+  branchCode: string;
+  businessDate: string;
+  label: string;
+  status: 'open' | 'closed';
+  openedByName: string | null;
+  openedAt: string | null;
+  closedAt: string | null;
+  openingFloatCents: number;
+  closingCountCents: number | null;
+  varianceCents: number | null;
+  varianceReason: string | null;
+  revenueCents: number;
+  cashCents: number;
+  nonCashCents: number;
+  expectedCashCents: number;
+  firstOfDay: boolean;
+}
+
+/** Flat list of shifts across the given branches (no date filter) for the
+ *  Remittance list view — newest first, capped so it can't grow unbounded.
+ *  Carries the opener's name + per-shift folio totals. */
+export async function loadAllShifts(branchIds: string[]): Promise<ShiftListItem[]> {
+  if (branchIds.length === 0) return [];
+  const supabase = await createAuditedClient();
+  const { data: rows } = await supabase
+    .from('shifts')
+    .select('id, branch_id, business_date, label, status, opened_at, closed_at, opening_float_cents, closing_count_cents, variance_cents, variance_reason, opener:staff_users!shifts_opened_by_fkey ( display_name, email ), branch:branches!shifts_branch_id_fkey ( code )')
+    .in('branch_id', branchIds)
+    .order('business_date', { ascending: false })
+    .order('opened_at', { ascending: false })
+    .limit(200);
+
+  // Folio aggregates per shift (revenue + tips, cash vs non-cash payments).
+  const ids = (rows ?? []).map((r) => r.id);
+  const agg = new Map<string, { revenue: number; cash: number; nonCash: number }>();
+  if (ids.length > 0) {
+    const { data: lines } = await supabase
+      .from('folio_lines')
+      .select('shift_id, kind, amount_cents, method:payment_methods!folio_lines_payment_method_id_fkey ( code )')
+      .in('shift_id', ids);
+    for (const l of lines ?? []) {
+      const a = agg.get(l.shift_id) ?? { revenue: 0, cash: 0, nonCash: 0 };
+      if (l.kind === 'revenue' || l.kind === 'tip') a.revenue += l.amount_cents;
+      else if (l.kind === 'payment') {
+        if ((one(l.method)?.code ?? '').toLowerCase() === 'cash') a.cash += l.amount_cents;
+        else a.nonCash += l.amount_cents;
+      }
+      agg.set(l.shift_id, a);
+    }
+  }
+
+  // First shift of a (branch, day) carries no handover float. Rows are sorted
+  // opened_at DESC, so the LAST row seen for a key is the earliest = first.
+  const firstByDay = new Map<string, string>();
+  for (const r of rows ?? []) firstByDay.set(`${r.branch_id}|${r.business_date}`, r.id);
+
+  return (rows ?? []).map((r) => {
+    const a = agg.get(r.id) ?? { revenue: 0, cash: 0, nonCash: 0 };
+    const opener = one(r.opener);
+    return {
+      id: r.id,
+      branchId: r.branch_id,
+      branchCode: one(r.branch)?.code ?? '—',
+      businessDate: r.business_date,
+      label: r.label,
+      status: r.status as 'open' | 'closed',
+      openedByName: opener?.display_name ?? opener?.email ?? null,
+      openedAt: r.opened_at,
+      closedAt: r.closed_at,
+      openingFloatCents: r.opening_float_cents,
+      closingCountCents: r.closing_count_cents,
+      varianceCents: r.variance_cents,
+      varianceReason: r.variance_reason,
+      revenueCents: a.revenue,
+      cashCents: a.cash,
+      nonCashCents: a.nonCash,
+      expectedCashCents: r.opening_float_cents + a.cash,
+      firstOfDay: firstByDay.get(`${r.branch_id}|${r.business_date}`) === r.id,
+    };
+  });
+}
+
+/** Configured shift labels per branch, for the "Open shift" dialog's pickers. */
+export async function loadShiftLabelOptions(branchIds: string[]): Promise<{ branchId: string; labels: string[] }[]> {
+  const cfgs = await Promise.all(branchIds.map((id) => getBranchShiftConfig(id)));
+  return branchIds.map((branchId, i) => ({ branchId, labels: cfgs[i].shifts.map((s) => s.name) }));
+}
+
 /** The branch's currently-open shift, or null. This is the "home" a posting
  *  (revenue on Start, payment on takePayment) will bind to — the guard those
  *  paths use lands in a later step; for now it's just a read. */
+/** Cancelled orders (status='void') for this branch+date that still have a
+ *  non-zero balance (paid != 0 or total != 0). The desk should settle them. */
+export interface CancelledWithDue {
+  id: string;
+  order_no: string;
+  totalCents: number;
+  paidCents: number;
+}
+export async function loadCancelledWithDue(branchId: string, date: string): Promise<CancelledWithDue[]> {
+  const supabase = await createAuditedClient();
+  const { data } = await supabase
+    .from('orders')
+    .select('id, order_no, total_cents, paid_cents')
+    .eq('branch_id', branchId)
+    .eq('service_date', date)
+    .eq('status', 'void')
+    .is('deleted_at', null);
+  return (data ?? [])
+    .filter((o) => (o.total_cents ?? 0) !== 0 || (o.paid_cents ?? 0) !== 0)
+    .map((o) => ({
+      id: o.id,
+      order_no: o.order_no,
+      totalCents: o.total_cents ?? 0,
+      paidCents: o.paid_cents ?? 0,
+    }));
+}
+
 export async function getCurrentOpenShift(branchId: string): Promise<{ id: string; label: string } | null> {
   const supabase = await createAuditedClient();
   const { data } = await supabase

@@ -2862,6 +2862,7 @@ export type Database = {
           id: string
           name: string
           required_resource_type: string | null
+          required_resource_types: string[]
           revenue_account: string | null
           tip_applicable: boolean
           updated_at: string
@@ -2876,6 +2877,7 @@ export type Database = {
           id?: string
           name: string
           required_resource_type?: string | null
+          required_resource_types?: string[]
           revenue_account?: string | null
           tip_applicable?: boolean
           updated_at?: string
@@ -2890,6 +2892,7 @@ export type Database = {
           id?: string
           name?: string
           required_resource_type?: string | null
+          required_resource_types?: string[]
           revenue_account?: string | null
           tip_applicable?: boolean
           updated_at?: string

@@ -22,16 +22,9 @@ import {
 } from '@/components/ui/table';
 import { type ResourceItem, type ResourceType } from '@/components/settings/resource-form-dialog';
 import { ResourceRowActions } from '@/components/settings/resource-row-actions';
+import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
 const ALL = '__all__';
-
-const TYPE_LABEL: Record<string, string> = {
-  massage_bed: 'Massage Bed',
-  rest_room: 'Rest Room',
-  hair_chair: 'Hair Chair',
-  nail_station: 'Nail Station',
-  steam_room: 'Steam Room',
-};
 
 function statusBadge(status: string) {
   if (status === 'active') return <Badge className="font-bold">Active</Badge>;
@@ -158,7 +151,7 @@ export function ResourcesExplorer({ rows, branches, allBusinessUnits }: Props) {
                   <TableRow key={r.id}>
                     <TableCell className="font-semibold">{r.resource_name}</TableCell>
                     <TableCell className="font-medium">
-                      {TYPE_LABEL[r.resource_type] ?? r.resource_type}
+                      {RESOURCE_TYPE_LABEL[r.resource_type] ?? r.resource_type}
                     </TableCell>
                     <TableCell className="font-mono font-bold">
                       {r.branch_code ?? '—'}

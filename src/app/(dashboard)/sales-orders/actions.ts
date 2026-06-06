@@ -188,24 +188,177 @@ export async function createQuickDraft(): Promise<ActionResult<{ id: string }>> 
   });
 }
 
-export async function voidOrder(id: string, reason: string): Promise<ActionResult> {
+// One guest's service line in the direct create-order flow: a category (required)
+// and an optional concrete service (deferred + unpriced if omitted), plus the
+// guest's identity and any board-click pre-assignment (bed / therapist).
+const createOrderGuestSchema = z.object({
+  name: z.string().max(120).optional().nullable(),
+  phone: z.string().max(40).optional().nullable(),
+  gender: z.string().max(20).optional().nullable(),
+  service_category_id: z.string().uuid(),
+  service_item_id: z.string().uuid().optional().nullable(),
+  duration_minutes: z.coerce.number().int().positive().optional().nullable(),
+  therapist_id: z.string().uuid().optional().nullable(),
+  resource_id: z.string().uuid().optional().nullable(),
+});
+const createOrderDirectSchema = z.object({
+  branch_id: z.string().uuid(),
+  source_id: z.string().uuid().optional().nullable(),
+  service_date: z.string().min(1),
+  // Booked start (ISO, +08:00) applied to every line — the calendar passes the
+  // clicked time; the standalone button can leave it null (untimed).
+  scheduled_start: z.string().optional().nullable(),
+  note: z.string().max(500).optional().nullable(),
+  guests: z.array(createOrderGuestSchema).min(1, 'Add at least one guest'),
+});
+
+/**
+ * Build a draft order in one shot from the calendar's "Create Order" dialog:
+ * one order_customer + one order_item per guest, each line carrying its own
+ * category / (optional) service / duration. Discount defaults to DIS-00 (no
+ * discount); billing + phone policy follow the customer source. Returns the new
+ * order id so the dialog can jump straight into the order screen.
+ */
+export async function createOrderDirect(input: unknown): Promise<ActionResult<{ orderId: string }>> {
+  const parsed = createOrderDirectSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+
+  const supabase = await createAuditedClient();
+
+  const { data: branch, error: be } = await supabase
+    .from('branches')
+    .select('branch_business_units ( business_unit_id )')
+    .eq('id', d.branch_id)
+    .single();
+  if (be || !branch) return { ok: false, error: 'Branch not found' };
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (await isBusinessDayClosed(d.branch_id, d.service_date)) {
+    return { ok: false, error: 'The business day is closed for this branch — no new orders can post to this date.' };
+  }
+  // Branch hosting exactly one unit → attribute it automatically (mirrors createDraftOrder).
+  const branchUnitIds = (branch.branch_business_units ?? []).map((r) => r.business_unit_id);
+  const businessUnitId = branchUnitIds.length === 1 ? branchUnitIds[0] : null;
+
+  // Billing destination + phone requirement follow the customer source.
+  let billingToId: string | null = null;
+  let phoneRequired = false;
+  if (d.source_id) {
+    const { data: src } = await supabase
+      .from('customer_sources')
+      .select('default_billing_to_id, phone_required')
+      .eq('id', d.source_id)
+      .maybeSingle();
+    if (!src) return { ok: false, error: 'Customer source not found' };
+    billingToId = src.default_billing_to_id ?? null;
+    phoneRequired = !!src.phone_required;
+  }
+  if (phoneRequired && !d.guests[0]?.phone?.trim()) {
+    return { ok: false, error: 'A guest phone is required for this source' };
+  }
+
+  // Default discount class: DIS-00 (no discount) for every line.
+  const { data: dis0 } = await supabase.from('discount_classes').select('id').eq('code', 'DIS-00').maybeSingle();
+  const discountClassId = dis0?.id ?? null;
+  if (!discountClassId) return { ok: false, error: 'No default discount class configured' };
+
+  const order_no = await nextOrderNo(supabase, d.service_date);
+  const { data: order, error: oe } = await supabase
+    .from('orders')
+    .insert({
+      order_no,
+      branch_id: d.branch_id,
+      business_unit_id: businessUnitId,
+      source_id: d.source_id || null,
+      billing_to_id: billingToId,
+      order_type: 'walk_in',
+      service_date: d.service_date,
+      note: d.note || null,
+      status: 'draft',
+    })
+    .select('id')
+    .single();
+  if (oe || !order) return { ok: false, error: oe?.message ?? 'Could not create order' };
+
+  // One customer per guest, in form order (seq_no 1..N; blank names → "Guest N").
+  const { data: customers, error: ce } = await supabase
+    .from('order_customers')
+    .insert(
+      d.guests.map((g, i) => ({
+        order_id: order.id,
+        customer_name: g.name?.trim() || `Guest ${i + 1}`,
+        customer_phone: g.phone?.trim() || null,
+        gender: g.gender || null,
+        seq_no: i + 1,
+      })),
+    )
+    .select('id, seq_no');
+  if (ce) return { ok: false, error: ce.message };
+  const sorted = [...(customers ?? [])].sort((a, b) => a.seq_no - b.seq_no);
+
+  // One service line per guest. buildLineWrite handles both shapes: a concrete
+  // service → full pricing; category-only → an unpriced deferred line.
+  for (let i = 0; i < d.guests.length; i++) {
+    const g = d.guests[i];
+    const lw = await buildLineWrite(supabase, {
+      order_id: order.id,
+      service_item_id: g.service_item_id ?? null,
+      service_category_id: g.service_category_id,
+      duration_minutes: g.duration_minutes ?? null,
+      therapist_id: g.therapist_id ?? null,
+      resource_id: g.resource_id ?? null,
+      discount_class_id: discountClassId,
+    });
+    if ('error' in lw) return { ok: false, error: lw.error };
+    const { error: ie } = await supabase.from('order_items').insert({
+      order_id: order.id,
+      order_customer_id: sorted[i].id,
+      ...lw.patch,
+      scheduled_start: d.scheduled_start ?? null,
+    });
+    if (ie) return { ok: false, error: ie.message };
+  }
+
+  await recomputeTotals(order.id);
+  revalidatePath('/calendar');
+  revalidatePath('/sales-orders');
+  return { ok: true, data: { orderId: order.id } };
+}
+
+export async function cancelOrder(id: string, reason: string): Promise<ActionResult> {
   const session = await currentSession();
-  if (!isManager(session)) return { ok: false, error: 'Manager permission required to void' };
-  if (!reason || reason.trim().length < 3) return { ok: false, error: 'A reason is required to void' };
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required to cancel' };
+  if (!reason || reason.trim().length < 3) return { ok: false, error: 'A reason is required to cancel' };
   const supabase = await createAuditedClient();
   const { data: order } = await supabase.from('orders').select('status').eq('id', id).single();
   if (!order) return { ok: false, error: 'Order not found' };
   if (['closed', 'void'].includes(order.status)) {
-    return { ok: false, error: 'A closed or already-void order cannot be voided' };
+    return { ok: false, error: 'A closed or already-cancelled order cannot be cancelled' };
   }
 
-  // Voiding is a pure status flag - it does not touch the folio ledger. Any
-  // money owed back is a separate refund (an append-only kind=refund line).
+  // Block if any line is currently in service — must be completed or
+  // interrupted before the order can be cancelled.
+  const { data: items } = await supabase
+    .from('order_items').select('id, status').eq('order_id', id);
+  const inService = (items ?? []).filter((i) => i.status === 'in_service');
+  if (inService.length > 0) {
+    return { ok: false, error: `${inService.length} service(s) still in progress — complete or interrupt them before cancelling.` };
+  }
+
+  // Cancel all draft lines (scheduled but not yet started).
+  const draftIds = (items ?? []).filter((i) => i.status === 'draft').map((i) => i.id);
+  if (draftIds.length > 0) {
+    const { error: ie } = await supabase
+      .from('order_items').update({ status: 'cancelled' }).in('id', draftIds);
+    if (ie) return { ok: false, error: ie.message };
+  }
+
   const { error } = await supabase.from('orders').update({ status: 'void' }).eq('id', id);
   if (error) return { ok: false, error: error.message };
   await logStatus(id, order.status, 'void', reason.trim(), session!.staffUserId);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${id}`);
+  revalidatePath('/calendar');
   return { ok: true };
 }
 
@@ -935,7 +1088,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group ), resource:resources!order_items_resource_id_fkey ( branch_id )')
     .eq('id', itemId)
     .single();
 
@@ -948,9 +1101,17 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // Revenue posts to the folio the moment a service starts, so an open cash
   // shift must exist to receive it.
   const { data: ordForShift } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
-  const openShift = ordForShift?.branch_id ? await getCurrentOpenShift(ordForShift.branch_id) : null;
+  // Revenue follows the STATION's branch: a service posts to the open shift of the
+  // branch where its station physically sits, so a cross-branch booking lands in
+  // that branch's shift, not the order's. A line with no station (dispatch / rest)
+  // falls back to the order branch. You can therefore only start a service whose
+  // branch has an open shift — i.e. your own branch's work.
+  const itemResource = Array.isArray(item?.resource) ? item?.resource[0] : item?.resource;
+  const stationBranchId = item?.resource_id ? itemResource?.branch_id ?? null : null;
+  const shiftBranchId = stationBranchId ?? ordForShift?.branch_id ?? null;
+  const openShift = shiftBranchId ? await getCurrentOpenShift(shiftBranchId) : null;
   if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this branch - open one on the Sales Remittance page before starting a service.' };
+    return { ok: false, error: 'No cash shift is open for this service’s branch — open one on the Sales Remittance page before starting it.' };
   }
 
   // Can't start a hands-on service with nobody to do it, or a service that needs

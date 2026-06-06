@@ -3,7 +3,7 @@
 import { History } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import type { AuditEntry } from '@/lib/order-audit-trail';
+import type { AuditEntry, AuditNameMap } from '@/lib/order-audit-trail';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Format helpers
@@ -80,8 +80,9 @@ const SKIP_FIELDS = new Set([
 ]);
 
 /** Best-effort value formatter — keeps the rendering pure so the diff is
- *  side-effect free and consistent across before/after. */
-function formatValue(key: string, v: unknown): string {
+ *  side-effect free and consistent across before/after. `names` resolves FK
+ *  UUIDs to human labels (e.g. therapist_id → "Maria"). */
+function formatValue(key: string, v: unknown, names: AuditNameMap): string {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (typeof v === 'number') {
@@ -96,9 +97,9 @@ function formatValue(key: string, v: unknown): string {
     }
     // Bare date
     if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-    // UUID — too noisy to show in full, but useful to know "a uuid changed"
+    // UUID — resolve via name map first, else show truncated id
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)) {
-      return v.slice(0, 8) + '…';
+      return names[v] ?? v.slice(0, 8) + '…';
     }
     return v;
   }
@@ -191,7 +192,7 @@ function fmtTime(iso: string): string {
   });
 }
 
-export function AuditTrail({ entries }: { entries: AuditEntry[] }) {
+export function AuditTrail({ entries, names = {} }: { entries: AuditEntry[]; names?: AuditNameMap }) {
   if (entries.length === 0) {
     return (
       <p className="text-sm font-medium text-muted-foreground px-1 py-4">
@@ -240,18 +241,18 @@ export function AuditTrail({ entries }: { entries: AuditEntry[] }) {
                   {diffs.length > 0 ? (
                     <ul className="flex flex-col gap-1.5">
                       {diffs.map((d) => (
-                        <li key={d.field} className="flex items-baseline flex-wrap gap-2">
-                          <span className="font-semibold text-muted-foreground min-w-32">
+                        <li key={d.field} className="flex items-baseline flex-wrap gap-2 min-w-0">
+                          <span className="font-semibold text-muted-foreground shrink-0">
                             {titleCaseKey(d.field)}:
                           </span>
                           {d.display === 'changed' && (
                             <>
                               <span className="rounded bg-destructive/10 text-destructive line-through px-1.5 py-0.5 text-xs font-bold tabular">
-                                {formatValue(d.field, d.before)}
+                                {formatValue(d.field, d.before, names)}
                               </span>
                               <span className="text-muted-foreground">→</span>
                               <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 text-xs font-bold tabular">
-                                {formatValue(d.field, d.after)}
+                                {formatValue(d.field, d.after, names)}
                               </span>
                             </>
                           )}
@@ -260,14 +261,14 @@ export function AuditTrail({ entries }: { entries: AuditEntry[] }) {
                               <span className="text-muted-foreground text-xs">—</span>
                               <span className="text-muted-foreground">→</span>
                               <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 text-xs font-bold tabular">
-                                {formatValue(d.field, d.after)}
+                                {formatValue(d.field, d.after, names)}
                               </span>
                             </>
                           )}
                           {d.display === 'removed' && (
                             <>
                               <span className="rounded bg-destructive/10 text-destructive line-through px-1.5 py-0.5 text-xs font-bold tabular">
-                                {formatValue(d.field, d.before)}
+                                {formatValue(d.field, d.before, names)}
                               </span>
                               <span className="text-muted-foreground">→</span>
                               <span className="text-muted-foreground text-xs">—</span>

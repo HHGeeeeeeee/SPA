@@ -1,6 +1,7 @@
 'use client';
 
-import { Bell, PanelLeftOpen, Search } from 'lucide-react';
+import { Bell, CalendarClock, PanelLeftOpen, Search } from 'lucide-react';
+import Link from 'next/link';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useSidebar } from '@/components/layout/sidebar-context';
@@ -41,6 +42,13 @@ export function TopBar({ title, userName }: TopBarProps) {
             <PanelLeftOpen className="size-5" strokeWidth={1.75} />
           </button>
         )}
+        <Link
+          href="/calendar"
+          aria-label="Calendar"
+          className="grid size-9 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <CalendarClock className="size-5" strokeWidth={1.75} />
+        </Link>
         {title && <h1 className="text-lg font-semibold tracking-tight">{title}</h1>}
       </div>
 

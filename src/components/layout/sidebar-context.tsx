@@ -8,9 +8,8 @@ import { createContext, useContext, useEffect, useState } from 'react';
  * collapsed). State persists to localStorage so the user's choice survives
  * navigation and page reloads.
  *
- * Default = expanded. The desktop POS is the primary form factor; collapse
- * is opt-in for when the operator needs more horizontal room (long order
- * tables, dense schedule grids, etc.).
+ * Default = collapsed. The POS screen favours horizontal room for the
+ * schedule board and order tables; the user can expand on demand.
  */
 
 interface SidebarContextValue {
@@ -20,7 +19,7 @@ interface SidebarContextValue {
 }
 
 const SidebarContext = createContext<SidebarContextValue>({
-  collapsed: false,
+  collapsed: true,
   toggle: () => {},
   setCollapsed: () => {},
 });
@@ -28,18 +27,18 @@ const SidebarContext = createContext<SidebarContextValue>({
 const STORAGE_KEY = 'hhg-spa:sidebar:collapsed';
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  // Start expanded on first render to match SSR output (localStorage isn't
+  // Start collapsed on first render to match SSR output (localStorage isn't
   // available server-side). The effect below picks up the stored choice on
   // mount; a brief flash on first load is acceptable vs. shipping the wrong
   // initial markup.
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored === '1') setCollapsed(true);
+      if (stored === '0') setCollapsed(false);
     } catch {
-      // localStorage can throw in privacy mode / iframes — silent fallback to expanded.
+      // localStorage can throw in privacy mode / iframes — silent fallback to collapsed.
     }
   }, []);
 

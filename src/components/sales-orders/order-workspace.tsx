@@ -57,12 +57,13 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[8.5rem_5.5rem_7rem_14rem_12rem_5.5rem_8.5rem_6rem_5.5rem_5.5rem_7rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_7rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
   order_customer_id: string;
   service_item_id: string | null;
+  service_category_id: string | null;
   discount_class_id: string | null;
   service_name: string;
   therapist_name: string | null;
@@ -101,7 +102,7 @@ interface Opt { id: string; code: string; name: string; gender?: string | null; 
 interface BorrowOpt { id: string; code: string; name: string; gender?: string | null; homeBranchCode: string | null }
 interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
+interface ServiceVariant { id: string; name: string; group: string; categoryId: string; categoryName: string | null; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface PaymentRecord {
   id: string;
   amount_cents: number;
@@ -147,10 +148,12 @@ interface Props {
    *  legacy `history` prop stays for the curated status-only narrative
    *  (status_log + edit_log entries) that the tab still optionally shows. */
   auditTrail: import('@/lib/order-audit-trail').AuditEntry[];
+  auditNames: Record<string, string>;
   serviceItems: ServiceVariant[];
   employees: Opt[];
   borrowableEmployees: BorrowOpt[];
   busyTherapistIds: string[];
+  busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
@@ -265,10 +268,12 @@ export function OrderWorkspace({
   folioLines,
   history,
   auditTrail,
+  auditNames,
   serviceItems,
   employees,
   borrowableEmployees,
   busyTherapistIds,
+  busyTherapistEndMap,
   busyResourceIds,
   resources,
   discountClasses,
@@ -297,6 +302,7 @@ export function OrderWorkspace({
   // add item (per customer) — two-step: group → duration variant. This panel only
   // ADDS new lines now; existing not-yet-started lines edit inline (per row).
   const [activeCustomer, setActiveCustomer] = useState<string | null>(null);
+  const [addCategory, setAddCategory] = useState('');
   const [groupSel, setGroupSel] = useState('');
   const [svcId, setSvcId] = useState('');
   const [therapistId, setTherapistId] = useState(NONE);
@@ -319,7 +325,11 @@ export function OrderWorkspace({
   // values, so after a save (+ refresh) the cleared draft shows the fresh data.
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const draftFromItem = (it: OrderItem): LineDraft => ({
-    groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group ?? '',
+    categorySel: it.service_category_id
+      ?? serviceItems.find((s) => s.id === it.service_item_id)?.categoryId
+      ?? '',
+    groupSel: serviceItems.find((s) => s.id === it.service_item_id)?.group
+      ?? (it.service_category_id ? serviceItems.find((s) => s.categoryId === it.service_category_id)?.group ?? '' : ''),
     svcId: it.service_item_id ?? '',
     start: toHHmm(it.scheduled_start),
     therapistId: it.therapist_id ?? NONE,
@@ -359,6 +369,18 @@ export function OrderWorkspace({
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
   const canRunService = ['draft', 'in_service'].includes(order.status);
+  // A draft line is "cross-branch" when its station sits in another branch — its
+  // revenue would post to that branch's shift, not this order's. "Start all" can't
+  // span branches, so it's hidden when any draft line is cross-branch; those lines
+  // are started one by one instead (each checks its own branch's open shift). We
+  // compare the line's station branch to the order branch (derived from the
+  // order-branch station list), falling back to "station not in the order-branch
+  // list" when the order branch has no active stations to read a code from.
+  const orderBranchCode = resources.find((r) => r.branchCode)?.branchCode ?? null;
+  const orderBranchResIds = new Set(resources.map((r) => r.id));
+  const hasCrossBranchDraft = items.some((i) =>
+    i.status === 'draft' && i.resource_id != null
+    && (orderBranchCode != null ? i.station_branch_code !== orderBranchCode : !orderBranchResIds.has(i.resource_id)));
   // Whole order dispatched to a hotel → services use a room no, not an in-house station.
   const dispatch = order.service_location_type === 'external_hotel';
 
@@ -415,7 +437,7 @@ export function OrderWorkspace({
   function closeItemForm() {
     setActiveCustomer(null);
     setAddStart(''); setAddRoomNo('');
-    setSvcId(''); setGroupSel(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
+    setSvcId(''); setGroupSel(''); setAddCategory(''); setDiscountId(defaultDiscountId); setDiscountOverride('');
     setTherapistId(NONE); setResourceId(NONE);
   }
 
@@ -702,11 +724,11 @@ export function OrderWorkspace({
             </div>
           )}
         </div>
-        {canRunService && items.some((i) => i.status === 'draft') ? (
+        {canRunService && items.some((i) => i.status === 'draft') && !hasCrossBranchDraft ? (
           <Button
             onClick={doStartAll}
             disabled={pending}
-            className="bg-blue-600 font-bold text-white shadow-sm hover:bg-blue-700 focus-visible:ring-blue-500/40 dark:bg-blue-600 dark:hover:bg-blue-700"
+            className="font-bold shadow-sm"
           >
             <Play className="size-4 fill-current" /> Start all
           </Button>
@@ -786,6 +808,7 @@ export function OrderWorkspace({
                 <div className="overflow-x-auto">
                   <div className="min-w-max">
                     <div className={`${SERVICE_GRID} border-b border-border pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground`}>
+                      <span>Category</span>
                       <span>Service</span>
                       <span>Duration</span>
                       <span>Start</span>
@@ -816,9 +839,11 @@ export function OrderWorkspace({
                                 employees={employees}
                                 borrowableEmployees={borrowableEmployees}
                                 resources={resources}
+                                assignedResource={it.resource_id ? { id: it.resource_id, name: it.station_name, branchCode: it.station_branch_code } : undefined}
                                 discountClasses={discountClasses}
                                 capabilityByEmployee={capabilityByEmployee}
                                 busyTherapistIds={busyTherapistIds}
+                                busyTherapistEndMap={busyTherapistEndMap}
                                 busyResourceIds={busyResourceIds}
                                 guestGender={guestGenderOf(c)}
                                 sourceDiscountLocked={sourceDiscountLocked}
@@ -860,6 +885,7 @@ export function OrderWorkspace({
                           : '—';
                         return (
                           <li key={it.id} className={`${SERVICE_GRID} py-2 text-sm ${it.status === 'cancelled' ? 'opacity-60' : ''}`}>
+                            <span className="text-xs font-medium text-muted-foreground truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.categoryName ?? serviceItems.find((s) => s.categoryId === it.service_category_id)?.categoryName ?? '—'}</span>
                             <span className="font-semibold truncate">{serviceItems.find((s) => s.id === it.service_item_id)?.group ?? it.service_name}</span>
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
@@ -922,8 +948,9 @@ export function OrderWorkspace({
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Add service</div>
                       <div className={`${SERVICE_GRID} rounded-lg border border-dashed border-border px-2 py-1.5`}>
                         <ServiceLineEditor
-                          draft={{ groupSel, svcId, start: addStart, therapistId, resourceId, roomNo: addRoomNo, discountId, discountOverride }}
+                          draft={{ categorySel: addCategory, groupSel, svcId, start: addStart, therapistId, resourceId, roomNo: addRoomNo, discountId, discountOverride }}
                           onChange={(patch) => {
+                            if (patch.categorySel !== undefined) setAddCategory(patch.categorySel);
                             if (patch.groupSel !== undefined) setGroupSel(patch.groupSel);
                             if (patch.svcId !== undefined) setSvcId(patch.svcId);
                             if (patch.start !== undefined) setAddStart(patch.start);
@@ -940,6 +967,7 @@ export function OrderWorkspace({
                           discountClasses={discountClasses}
                           capabilityByEmployee={capabilityByEmployee}
                           busyTherapistIds={busyTherapistIds}
+                          busyTherapistEndMap={busyTherapistEndMap}
                           busyResourceIds={busyResourceIds}
                           guestGender={guestGenderOf(c)}
                           sourceDiscountLocked={sourceDiscountLocked}
@@ -1110,7 +1138,7 @@ export function OrderWorkspace({
             )}
             <Card>
               <CardContent>
-                <AuditTrail entries={auditTrail} />
+                <AuditTrail entries={auditTrail} names={auditNames} />
               </CardContent>
             </Card>
           </div>

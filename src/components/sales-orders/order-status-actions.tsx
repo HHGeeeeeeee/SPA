@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ReasonDialog } from '@/components/sales-orders/reason-dialog';
 import {
-  voidOrder,
+  cancelOrder,
   reopenOrder,
   requestOrderAdjustment,
   setOrderStatus,
@@ -21,19 +21,19 @@ interface Props {
   hasPayments: boolean;
 }
 
-// The order's primary status-advance action plus Void, lifted into the page
+// The order's primary status-advance action plus Cancel, lifted into the page
 // header next to the status badge. Reason-gated transitions keep their dialogs.
 export function OrderStatusActions({ orderId, status, canManage, itemCount, hasPayments }: Props) {
   const [pending, startTransition] = useTransition();
   const router = useRouter();
-  const [voidOpen, setVoidOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
 
-  function doVoid(reason: string) {
+  function doCancel(reason: string) {
     startTransition(async () => {
-      const r = await voidOrder(orderId, reason);
-      if (r.ok) { toast.success('Order voided'); setVoidOpen(false); router.refresh(); }
+      const r = await cancelOrder(orderId, reason);
+      if (r.ok) { toast.success('Order cancelled'); setCancelOpen(false); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -77,22 +77,22 @@ export function OrderStatusActions({ orderId, status, canManage, itemCount, hasP
         <Button size="sm" variant="outline" onClick={() => setAdjustOpen(true)} disabled={pending}>Request Adjustment</Button>
       )}
       {!['closed', 'void'].includes(status) && canManage && (
-        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setVoidOpen(true)} disabled={pending}>Void</Button>
+        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setCancelOpen(true)} disabled={pending}>Cancel</Button>
       )}
 
       <ReasonDialog
-        open={voidOpen}
-        onOpenChange={setVoidOpen}
-        title="Void this order?"
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        title="Cancel this order?"
         description={
           hasPayments
-            ? 'This order has recorded payment(s) — voiding reverses them and any tips (stored-value redemptions are refunded to the card). A tip that is already settled will block the void. The order is then locked.'
-            : 'The order is cancelled and locked. Past activity is kept.'
+            ? 'This order has recorded payment(s) — cancelling reverses them and any tips (stored-value redemptions are refunded to the card). A tip that is already settled will block the cancellation. The order is then locked.'
+            : 'All scheduled services will be cancelled and the order is locked. Past activity is kept.'
         }
-        confirmLabel="Void order"
+        confirmLabel="Cancel order"
         destructive
         pending={pending}
-        onConfirm={doVoid}
+        onConfirm={doCancel}
       />
       <ReasonDialog
         open={reopenOpen}

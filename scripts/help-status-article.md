@@ -20,7 +20,7 @@ An order only walks forward. It never steps back on its own — only a manager c
 | **Completed** | Every service is finished or cancelled | ❌ No | Final bill, waiting to be paid |
 | **Paid** | The guest has paid in full at the counter | ❌ No | Cash is in; waiting for the daily Revenue Confirm |
 | **Closed** | Locked by the daily Revenue Confirm | ❌ No | Revenue is booked. This is the end of the line. |
-| **Void** | The whole order was cancelled | ❌ No | Zeroed out — nothing owed, nothing earned |
+| **Cancelled** | The whole order was cancelled — all scheduled services are automatically cancelled | ❌ No | Zeroed out — nothing owed, nothing earned |
 
 > The order turns **In service** automatically the moment you press **Start** on its first service, and turns **Completed** automatically once no service is still waiting or running.
 

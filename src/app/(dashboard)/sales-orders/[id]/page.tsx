@@ -48,9 +48,10 @@ async function fetchData(id: string) {
       feedback ( order_item_id, score ),
       order_items (
         id, order_customer_id, list_price_cents, discount_amount_cents, final_amount_cents, status,
-        service_item_id, discount_class_id,
+        service_item_id, service_category_id, discount_class_id,
         therapist_id, resource_id, external_room_no, duration_minutes, scheduled_start, actual_start, actual_end, bed_released_at, interruption_reason,
         service:service_items ( name, prep_before_minutes, cleanup_after_minutes ),
+        category:service_categories ( name ),
         therapist:employees ( name, home_branch:branches!employees_home_branch_id_fkey ( code ) ),
         resource:resources ( resource_name, branch:branches!resources_branch_id_fkey ( code ) )
       )
@@ -64,7 +65,7 @@ async function fetchData(id: string) {
   const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
     supabase
       .from('service_items')
-      .select('id, code, name, service_group, duration_minutes, allowed_resource_types, service_item_prices ( price_cents, price_class, branch_id )')
+      .select('id, code, name, service_group, service_category_id, duration_minutes, allowed_resource_types, category:service_categories ( name ), service_item_prices ( price_cents, price_class, branch_id )')
       .eq('active', true)
       .order('service_group')
       .order('duration_minutes'),
@@ -72,15 +73,15 @@ async function fetchData(id: string) {
     supabase.from('resources').select('id, resource_name, resource_type, branch:branches!resources_branch_id_fkey ( code )').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description, discount_percent, discount_amount_cents').eq('active', true).order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
-    // Therapists with a working shift at this branch on the service date.
+    // Therapists with a working shift on the service date — fetched for ALL
+    // branches so we can show the full share-group pool with availability.
     supabase
       .from('employee_shifts')
-      .select('employee_id')
-      .eq('branch_id', order.branch_id)
+      .select('employee_id, branch_id')
       .eq('shift_date', order.service_date)
       .in('shift_type', ['regular', 'cross_branch', 'on_call']),
     // Branches + their sharing group (to limit borrowing to the same pool).
-    supabase.from('branches').select('id, therapist_share_group').eq('active', true),
+    supabase.from('branches').select('id, code, therapist_share_group').eq('active', true),
     // All customer sources / billing destinations — for the inline Source /
     // Billing editor on the order detail panel.
     supabase.from('customer_sources').select('id, code, name, default_billing_to_id').order('code'),
@@ -105,11 +106,26 @@ async function fetchData(id: string) {
   }
 
   // Therapists / stations currently mid-service anywhere (started, not finished).
+  // For busy therapists, also grab scheduled_start + duration so we can show
+  // an estimated "free at" time in the picker.
   const busy = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id')
+    .select('therapist_id, resource_id, scheduled_start, actual_start, duration_minutes')
     .eq('status', 'in_service');
   const busyTherapistIds = [...new Set((busy.data ?? []).map((b) => b.therapist_id).filter(Boolean) as string[])];
+  // therapist_id → estimated end time (ISO string)
+  const busyTherapistEndMap: Record<string, string> = {};
+  for (const b of busy.data ?? []) {
+    if (!b.therapist_id) continue;
+    const startIso = b.actual_start ?? b.scheduled_start;
+    if (!startIso) continue;
+    const endMs = Date.parse(startIso) + (b.duration_minutes ?? 60) * 60_000;
+    const endIso = new Date(endMs).toISOString();
+    // Keep the latest end if a therapist somehow has multiple in-service lines.
+    if (!busyTherapistEndMap[b.therapist_id] || endIso > busyTherapistEndMap[b.therapist_id]) {
+      busyTherapistEndMap[b.therapist_id] = endIso;
+    }
+  }
 
   // Beds still inside their post-service cleanup buffer are occupied too — a
   // finished line holds its bed for cleanup_after_minutes unless released early.
@@ -133,7 +149,15 @@ async function fetchData(id: string) {
     ...cleaningResourceIds,
   ])];
 
-  const scheduledIds = new Set((shifts.data ?? []).map((s) => s.employee_id));
+  // Employee shift data keyed by employee_id. Includes shifts at any branch.
+  const scheduledHere = new Set(
+    (shifts.data ?? []).filter((s) => s.branch_id === order.branch_id).map((s) => s.employee_id),
+  );
+  const scheduledAnywhere = new Set((shifts.data ?? []).map((s) => s.employee_id));
+  // Which branch each employee is rostered at today (for share-group label).
+  const shiftBranchOf = new Map<string, string>();
+  for (const s of shifts.data ?? []) shiftBranchOf.set(s.employee_id, s.branch_id);
+
   const allEmployees = (emp.data ?? []).map((e) => ({
     id: e.id,
     code: e.employee_code,
@@ -148,20 +172,30 @@ async function fetchData(id: string) {
   const shareBranchIds = new Set(
     myGroup ? (brs.data ?? []).filter((b) => b.therapist_share_group === myGroup).map((b) => b.id) : [],
   );
+  const branchCodeById = new Map((brs.data ?? []).map((b) => [b.id, b.code]));
 
-  // Only therapists actually rostered here today are normally selectable —
-  // someone off-shift shouldn't be assignable. Same-sharing-group staff not
-  // rostered here are offered separately as a manual "borrow" (auto-assign skips
-  // them). With no sharing group set, nothing is borrowable.
-  const rosteredHere = (e: { id: string }) => scheduledIds.has(e.id);
+  // Therapists rostered at this branch today.
   const thisBranchEmployees = allEmployees
-    .filter(rosteredHere)
-    // visiting = on a cross-branch shift here but home is elsewhere; auto-assign
-    // prefers home therapists over these.
+    .filter((e) => scheduledHere.has(e.id))
     .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, visiting: e.homeBranchId !== order.branch_id }));
+  // Share-group therapists NOT rostered at this branch — show with their
+  // rostered branch code so the desk knows where they are.
   const borrowableEmployees = allEmployees
-    .filter((e) => !rosteredHere(e) && e.homeBranchId !== order.branch_id && e.homeBranchId !== null && shareBranchIds.has(e.homeBranchId))
-    .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, homeBranchCode: e.homeBranchCode }));
+    .filter((e) => !scheduledHere.has(e.id) && scheduledAnywhere.has(e.id) && shareBranchIds.has(shiftBranchOf.get(e.id) ?? ''))
+    .map((e) => ({ id: e.id, code: e.code, name: e.name, gender: e.gender, homeBranchCode: branchCodeById.get(shiftBranchOf.get(e.id) ?? '') ?? e.homeBranchCode }));
+  // Therapists already assigned to this order's items must always be in the
+  // employee lists — even when they have no shift today (assigned earlier,
+  // shift removed, etc.). Without this the ServiceLineEditor can't resolve
+  // their name and shows a raw UUID in the dropdown trigger.
+  const knownIds = new Set([...thisBranchEmployees.map((e) => e.id), ...borrowableEmployees.map((e) => e.id)]);
+  const assignedIds = new Set(
+    (order.order_items ?? []).map((it) => it.therapist_id).filter((id): id is string => !!id),
+  );
+  for (const e of allEmployees) {
+    if (assignedIds.has(e.id) && !knownIds.has(e.id)) {
+      borrowableEmployees.push({ id: e.id, code: e.code, name: e.name, gender: e.gender, homeBranchCode: e.homeBranchCode });
+    }
+  }
 
   const allowedBranchIds = await getAllowedBranchIds();
 
@@ -173,6 +207,8 @@ async function fetchData(id: string) {
         id: s.id,
         name: s.name,
         group: s.service_group ?? s.name,
+        categoryId: s.service_category_id as string,
+        categoryName: one(s.category)?.name ?? null,
         duration_minutes: s.duration_minutes,
         price_cents: normal?.price_cents ?? null,
         allowed_resource_types: s.allowed_resource_types ?? [],
@@ -181,6 +217,7 @@ async function fetchData(id: string) {
     employees: thisBranchEmployees,
     borrowableEmployees,
     busyTherapistIds,
+    busyTherapistEndMap,
     busyResourceIds,
     resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null, branchCode: one(r.branch)?.code ?? null })),
     discountClasses: disc.data ?? [],
@@ -213,7 +250,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -286,14 +323,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const feedbackByItem = new Map((order.feedback ?? []).map((f) => [f.order_item_id, f.score]));
   const items = (order.order_items ?? []).map((it) => {
     const svc = one(it.service);
+    const cat = one(it.category);
     const th = one(it.therapist);
     const resource = one(it.resource);
     return {
       id: it.id,
       order_customer_id: it.order_customer_id,
       service_item_id: it.service_item_id,
+      service_category_id: it.service_category_id ?? null,
       discount_class_id: it.discount_class_id,
-      service_name: svc?.name ?? 'Service',
+      service_name: svc?.name ?? cat?.name ?? 'Service',
       therapist_name: th?.name ?? null,
       therapist_home_branch_code: th ? one(th.home_branch)?.code ?? null : null,
       therapist_id: it.therapist_id,
@@ -369,13 +408,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // Full audit trail — every row change on the order + child entities (items,
   // customers, payments, tips, feedback) with field-level diffs. Powers the
   // rich timeline UI in the Change History tab.
-  const auditTrail = await loadOrderAuditTrail(id);
+  const { entries: auditTrail, names: auditNames } = await loadOrderAuditTrail(id);
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/sales-orders" className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="size-3" /> Sales Orders
+        <Link href="/calendar" className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
+          <ChevronLeft className="size-3" /> Calendar
         </Link>
         <div className="flex items-center gap-3 mt-1 flex-wrap">
           <h2 className="text-3xl font-bold tracking-tight font-mono">{order.order_no}</h2>
@@ -497,10 +536,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         folioLines={folioLines}
         history={history}
         auditTrail={auditTrail}
+        auditNames={auditNames}
         serviceItems={serviceItems}
         employees={employees}
         borrowableEmployees={borrowableEmployees}
         busyTherapistIds={busyTherapistIds}
+        busyTherapistEndMap={busyTherapistEndMap}
         busyResourceIds={busyResourceIds}
         resources={resources}
         discountClasses={discountClasses}

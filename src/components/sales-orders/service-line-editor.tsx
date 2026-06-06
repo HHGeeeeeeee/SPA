@@ -20,6 +20,7 @@ const money0 = (cents: number | null) => (cents == null ? '—' : (cents / 100).
 // One not-yet-started service line's editable fields. Held by the parent (one
 // draft per line); price is derived server-side on save, never edited here.
 export interface LineDraft {
+  categorySel: string; // '' = none picked yet; gates the Service list
   groupSel: string;
   svcId: string;
   start: string; // HH:mm booked start, '' = none
@@ -30,7 +31,7 @@ export interface LineDraft {
   discountOverride: string;
 }
 
-interface ServiceVariant { id: string; name: string; group: string; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
+interface ServiceVariant { id: string; name: string; group: string; categoryId: string; categoryName: string | null; duration_minutes: number; price_cents: number | null; allowed_resource_types: string[] }
 interface ResourceOpt { id: string; name: string; resource_type: string | null; branchCode: string | null }
 interface DiscountOpt { id: string; code: string; description: string; discount_percent: number; discount_amount_cents: number }
 interface Emp { id: string; code: string; name: string; gender?: string | null; visiting?: boolean }
@@ -48,9 +49,11 @@ export function ServiceLineEditor({
   employees,
   borrowableEmployees,
   resources,
+  assignedResource,
   discountClasses,
   capabilityByEmployee,
   busyTherapistIds,
+  busyTherapistEndMap,
   busyResourceIds,
   guestGender,
   sourceDiscountLocked,
@@ -64,9 +67,14 @@ export function ServiceLineEditor({
   employees: Emp[];
   borrowableEmployees: BorrowEmp[];
   resources: ResourceOpt[];
+  // The line's currently-assigned station, carried so a cross-branch station
+  // (not in `resources`, which is order-branch only) still shows its real name
+  // instead of a raw id. Display-only — it can't be picked again from the list.
+  assignedResource?: { id: string; name: string | null; branchCode: string | null };
   discountClasses: DiscountOpt[];
   capabilityByEmployee: Record<string, string[]>;
   busyTherapistIds: string[];
+  busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
   guestGender: string;
   sourceDiscountLocked: boolean;
@@ -74,7 +82,14 @@ export function ServiceLineEditor({
   disabled?: boolean;
   dispatch?: boolean;
 }) {
-  const groupOptions = [...new Set(serviceItems.map((s) => s.group))].sort().map((g) => ({ value: g, label: g }));
+  // Category drives the Service list: pick a category first, then only that
+  // category's service groups show. No category yet → the Service picker is
+  // disabled. Switching category clears the chosen service (see changeCategory).
+  const categoryOptions = [...new Map(serviceItems.map((s) => [s.categoryId, s.categoryName ?? s.categoryId])).entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const groupPool = draft.categorySel ? serviceItems.filter((s) => s.categoryId === draft.categorySel) : serviceItems;
+  const groupOptions = [...new Set(groupPool.map((s) => s.group))].sort().map((g) => ({ value: g, label: g }));
   const variantOptions = serviceItems
     .filter((s) => s.group === draft.groupSel)
     .map((s) => ({ value: s.id, label: `${s.duration_minutes} min · ${money0(s.price_cents)}` }));
@@ -83,29 +98,38 @@ export function ServiceLineEditor({
   const canDoGroup = (id: string) => canPerformGroup(capabilityByEmployee[id] ?? [], draft.groupSel || null);
   const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
   const matchGender = (id: string) => matchesGender(genderOf.get(id), guestGender);
-  const thisBranchOptions = employees
-    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
-  const borrowOptions = borrowableEmployees
-    .filter((e) => canDoGroup(e.id) && matchGender(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}${busy.has(e.id) ? ' · in service' : ''}`, disabled: busy.has(e.id) }));
+  const freeAtLabel = (id: string) => {
+    const iso = busyTherapistEndMap[id];
+    if (!iso) return 'in service';
+    const d = new Date(iso);
+    return `free ~${d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false })}`;
+  };
+  const eligible = (e: { id: string }) => canDoGroup(e.id) && matchGender(e.id);
+  // This branch: available vs in-service
+  const thisBranchAvailable = employees
+    .filter((e) => eligible(e) && !busy.has(e.id))
+    .map((e) => ({ value: e.id, label: e.name, disabled: false }));
+  const thisBranchBusy = employees
+    .filter((e) => eligible(e) && busy.has(e.id))
+    .map((e) => ({ value: e.id, label: `${e.name} · ${freeAtLabel(e.id)}`, disabled: false }));
+  // Share-group: available vs in-service
+  const borrowAvailable = borrowableEmployees
+    .filter((e) => eligible(e) && !busy.has(e.id))
+    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}`, disabled: false }));
+  const borrowBusy = borrowableEmployees
+    .filter((e) => eligible(e) && busy.has(e.id))
+    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''} · ${freeAtLabel(e.id)}`, disabled: false }));
   // Keep the line's currently-assigned therapist on the list even if today's
   // skill/gender/busy filters would drop them (a share-group loan, or the
   // service group changed after assignment). Without this the trigger can't
   // resolve the name and shows a raw id.
+  const allOptions = [...thisBranchAvailable, ...thisBranchBusy, ...borrowAvailable, ...borrowBusy];
   const empById = new Map([...employees, ...borrowableEmployees].map((e) => [e.id, e] as const));
-  const assignedInList = draft.therapistId !== NONE
-    && (thisBranchOptions.some((o) => o.value === draft.therapistId) || borrowOptions.some((o) => o.value === draft.therapistId));
+  const assignedInList = draft.therapistId !== NONE && allOptions.some((o) => o.value === draft.therapistId);
   const assignedEmp = draft.therapistId !== NONE && !assignedInList ? empById.get(draft.therapistId) : null;
   const assignedOption = assignedEmp
     ? { value: assignedEmp.id, label: `${assignedEmp.name}${'homeBranchCode' in assignedEmp && assignedEmp.homeBranchCode ? ` · ${assignedEmp.homeBranchCode}` : ''}` }
     : null;
-  const empItems = [
-    { value: NONE, label: 'Unassigned' },
-    ...(assignedOption ? [assignedOption] : []),
-    ...thisBranchOptions,
-    ...borrowOptions,
-  ];
 
   const busyRes = new Set(busyResourceIds);
   const svcSelected = serviceItems.find((s) => s.id === draft.svcId);
@@ -122,6 +146,21 @@ export function ServiceLineEditor({
   }
   const resLabel = (r: ResourceOpt) => `${r.branchCode ? `${r.branchCode} · ` : ''}${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`;
   const resItems = [{ value: NONE, label: 'None' }, ...eligibleResources.map((r) => ({ value: r.id, label: resLabel(r) }))];
+  // The assigned station may not be in the eligible list — it lives at another
+  // branch (resources is order-branch only), or a service swap left a now-wrong
+  // type. Resolve its label from the order-branch list, else the passed-in
+  // assignedResource, so the trigger shows a name rather than a raw id.
+  const assignedResInList = draft.resourceId !== NONE && eligibleResources.some((r) => r.id === draft.resourceId);
+  const assignedResFallback = !assignedResInList && draft.resourceId !== NONE
+    ? resources.find((r) => r.id === draft.resourceId)
+    : null;
+  const assignedResOption = assignedResInList || draft.resourceId === NONE
+    ? null
+    : assignedResFallback
+      ? { value: assignedResFallback.id, label: resLabel(assignedResFallback) }
+      : assignedResource && assignedResource.id === draft.resourceId
+        ? { value: assignedResource.id, label: `${assignedResource.branchCode ? `${assignedResource.branchCode} · ` : ''}${assignedResource.name ?? 'Station'}` }
+        : null;
 
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
   const effectiveDiscountId = sourceDiscountLocked ? defaultDiscountId : draft.discountId;
@@ -136,11 +175,21 @@ export function ServiceLineEditor({
     : selectedDiscount.discount_amount_cents > 0 ? `-${money0(selectedDiscount.discount_amount_cents)}`
     : '—';
 
+  // Switching the category clears the chosen service (it belongs to the old
+  // category) and the skill-dependent therapist — the operator re-picks within
+  // the new category. Re-selecting the same category is a no-op.
+  const changeCategory = (v: string | null) => {
+    if (!v || v === draft.categorySel) return;
+    onChange({ categorySel: v, groupSel: '', svcId: '', therapistId: NONE });
+  };
   // Switching the service group can invalidate the therapist (skill) and the
   // station (required type) — drop those so the operator re-picks a valid one.
   const changeGroup = (v: string | null) => {
     if (!v) return;
     const patch: Partial<LineDraft> = { groupSel: v, svcId: '', therapistId: NONE };
+    // Keep the category cell in sync if the group was picked without one set.
+    const catId = serviceItems.find((s) => s.group === v)?.categoryId;
+    if (catId && catId !== draft.categorySel) patch.categorySel = catId;
     if (draft.resourceId !== NONE) {
       const newTypes = serviceItems.find((s) => s.group === v)?.allowed_resource_types ?? [];
       const cur = resources.find((r) => r.id === draft.resourceId);
@@ -164,8 +213,14 @@ export function ServiceLineEditor({
   return (
     <>
       <div className="min-w-0">
-        <Select items={groupOptions} value={draft.groupSel} onValueChange={changeGroup} disabled={disabled}>
-          <SelectTrigger className="h-8 w-full"><SelectValue placeholder="Service" /></SelectTrigger>
+        <Select items={categoryOptions} value={draft.categorySel} onValueChange={changeCategory} disabled={disabled}>
+          <SelectTrigger className="h-8 w-full"><SelectValue placeholder="Category" /></SelectTrigger>
+          <SelectContent>{categoryOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-0">
+        <Select items={groupOptions} value={draft.groupSel} onValueChange={changeGroup} disabled={disabled || !draft.categorySel}>
+          <SelectTrigger className="h-8 w-full"><SelectValue placeholder={draft.categorySel ? 'Service' : 'Pick category'} /></SelectTrigger>
           <SelectContent>{groupOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
@@ -179,7 +234,7 @@ export function ServiceLineEditor({
         <Input type="time" className="h-8 w-full" value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
       </div>
       <div className="min-w-0">
-        <Select items={empItems} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
+        <Select items={[{ value: NONE, label: 'Unassigned' }, ...(assignedOption ? [assignedOption] : []), ...allOptions]} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>Unassigned</SelectItem>
@@ -189,21 +244,39 @@ export function ServiceLineEditor({
                 <SelectItem value={assignedOption.value}>{assignedOption.label}</SelectItem>
               </SelectGroup>
             )}
-            <SelectGroup>
-              <SelectLabel>At this branch</SelectLabel>
-              {thisBranchOptions.length === 0 ? (
+            {thisBranchAvailable.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Available</SelectLabel>
+                {thisBranchAvailable.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectGroup>
+            )}
+            {thisBranchBusy.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>In service</SelectLabel>
+                {thisBranchBusy.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectGroup>
+            )}
+            {thisBranchAvailable.length === 0 && thisBranchBusy.length === 0 && (
+              <SelectGroup>
+                <SelectLabel>At this branch</SelectLabel>
                 <SelectItem value="__nobody__" disabled>{draft.groupSel ? `No therapist here can do ${draft.groupSel}` : 'No therapist rostered here'}</SelectItem>
-              ) : (
-                thisBranchOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)
-              )}
-            </SelectGroup>
-            {borrowOptions.length > 0 && (
+              </SelectGroup>
+            )}
+            {(borrowAvailable.length > 0 || borrowBusy.length > 0) && (
               <>
                 <SelectSeparator />
-                <SelectGroup>
-                  <SelectLabel>Borrow from other branch</SelectLabel>
-                  {borrowOptions.map((o) => <SelectItem key={o.value} value={o.value} disabled={o.disabled}>{o.label}</SelectItem>)}
-                </SelectGroup>
+                {borrowAvailable.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Other branches · available</SelectLabel>
+                    {borrowAvailable.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectGroup>
+                )}
+                {borrowBusy.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Other branches · in service</SelectLabel>
+                    {borrowBusy.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectGroup>
+                )}
               </>
             )}
           </SelectContent>
@@ -213,10 +286,16 @@ export function ServiceLineEditor({
         {dispatch ? (
           <Input type="text" className="h-8 w-full" value={draft.roomNo} onChange={(e) => onChange({ roomNo: e.target.value })} placeholder="Room no" disabled={disabled} />
         ) : (
-        <Select items={resItems} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
+        <Select items={[...resItems, ...(assignedResOption ? [assignedResOption] : [])]} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>None</SelectItem>
+            {assignedResOption && (
+              <SelectGroup>
+                <SelectLabel>Assigned</SelectLabel>
+                <SelectItem value={assignedResOption.value}>{assignedResOption.label}</SelectItem>
+              </SelectGroup>
+            )}
             {eligibleResources.length === 0 ? (
               <SelectItem value="__nomatch__" disabled>{neededTypes.length ? `No ${neededTypes.map((t) => RESOURCE_TYPE_LABEL[t] ?? t).join(' / ')} here` : 'No stations'}</SelectItem>
             ) : (

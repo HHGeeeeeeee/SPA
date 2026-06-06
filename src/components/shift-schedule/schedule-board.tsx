@@ -20,8 +20,9 @@ import {
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { NewReservationDialog, type ReservationItem } from '@/components/reservations/new-reservation-dialog';
+import { cn, formatPHP } from '@/lib/utils';
+import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
+import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
 import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
 import { startOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 
@@ -51,6 +52,15 @@ export interface BoardBlock {
   external?: boolean;
   guest?: string; // booking guest name — shown at the top of the block
   pax?: number;   // group size, shown next to the guest
+  /** Parent order number (SO-YYMMDD-NNNN). The detail popover's header shows its
+   *  last 4 chars (the daily sequence) ahead of the guest. */
+  orderNo?: string;
+  /** Guest's per-order sequence (order_customers.seq_no) — the "3" in "Guest 3".
+   *  Shown as the guest id in the detail popover's header. */
+  guestSeq?: number | null;
+  /** Total guests on the parent order (order_customers count). The popover header
+   *  shows the guest as "seq/total" (which guest of how many). */
+  guestTotal?: number | null;
   line1: string;
   line2?: string;
   startMin: number;
@@ -68,11 +78,34 @@ export interface BoardBlock {
   /** The order still has a balance (total ≠ paid) — drawn as a red dot on the
    *  block so the desk can spot unsettled bookings at a glance. */
   owing?: boolean;
+  /** Order's outstanding balance in cents (total − paid). Shown in the detail
+   *  popover, painted red whenever it isn't zero. */
+  balanceCents?: number;
   editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
   /** Therapist on this block. Used by the hover popup to mark staff busy at
    *  a hovered minute (block's own variant decides if it actually occupies
    *  the therapist — completed / interrupted don't). */
   therapistId?: string | null;
+  /** On-site booking that still has no bed (resource_id null). Drives the red
+   *  "not assigned" hint and unlocks the People popover's "Assign bed" picker. */
+  bedUnassigned?: boolean;
+  /** Not-yet-started booking missing a therapist and/or a station — the block
+   *  paints in the red "needs assignment" scheme so the desk can spot it. */
+  needsAssignment?: boolean;
+  /** Station types this service may use (service item's allowed types, else the
+   *  category's required type). Empty = any bed. Filters the bed picker. */
+  allowedResourceTypes?: string[];
+}
+/** A candidate bed for the People board's "Assign bed" picker: every active
+ *  station in the share group, carrying its busy windows so the popover can
+ *  offer only the ones free during the booking. */
+export interface AssignBed {
+  id: string;
+  name: string;
+  branch: string;
+  type: string;
+  zone: string | null;
+  busy: { s: number; e: number }[];
 }
 export interface BoardStaffShift {
   id: string;
@@ -236,6 +269,11 @@ const VARIANT_CLASS: Record<BlockVariant, string> = {
   in_service: 'bg-blue-500/80 text-white',
   completed: 'bg-zinc-400/70 text-white line-through dark:bg-zinc-500/70',
 };
+// A not-yet-started booking still missing a therapist and/or a station paints
+// red regardless of variant, so unassigned work stands out on either board.
+const NEEDS_ASSIGN_CLASS = 'border border-dashed border-red-500/80 bg-red-500/25 text-red-950 dark:text-red-100';
+// The block's colour: red when it needs an assignment, else its variant scheme.
+const blockClass = (b: BoardBlock) => (b.needsAssignment ? NEEDS_ASSIGN_CLASS : VARIANT_CLASS[b.variant]);
 
 function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: BoardBlock; windowStartMin: number; onOpen: (b: BoardBlock, e: React.MouseEvent) => void; assignMode?: boolean }) {
   const { attributes, listeners, setNodeRef: dragRef, transform, isDragging } = useDraggable({
@@ -266,7 +304,7 @@ function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: Board
       {...attributes}
       onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
-      className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]} ${assignMode && canAssign ? (isOver ? 'ring-2 ring-primary ring-offset-1' : 'ring-2 ring-primary/40') : ''}`}
+      className={`absolute rounded px-1.5 flex flex-col justify-center overflow-hidden text-[10px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${blockClass(block)} ${assignMode && canAssign ? (isOver ? 'ring-2 ring-primary ring-offset-1' : 'ring-2 ring-primary/40') : ''}`}
       title={`${block.guest ? `${block.guest}${block.pax && block.pax > 1 ? ` · ${block.pax} pax` : ''} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''} · ${hhmm(block.startMin)}–${hhmm(block.endMin)}${block.owing ? ' · balance due' : ''}`}
     >
       {/* Balance-due flag: a red dot on any order block that isn't paid in full
@@ -279,9 +317,18 @@ function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: Board
       <span className="truncate font-semibold">
         {block.guest ? `${block.guest} · ` : ''}{block.line1}
       </span>
-      {block.therapistId
-        ? (block.line2 && <span className="truncate font-medium opacity-80">{block.line2}</span>)
-        : <span className="truncate font-extrabold text-red-600 dark:text-red-400">Not assigned</span>}
+      {block.bedUnassigned
+        ? <span className="truncate font-medium">
+            {/* "<branch> · not assigned" — branch faint, the bedless part red so
+                an unbeded booking stands out on the People board. */}
+            <span className="opacity-80">{block.line2?.replace(/·.*$/, '· ')}</span>
+            <span className="font-extrabold text-red-600 dark:text-red-400">not assigned</span>
+          </span>
+        : block.line2
+          ? <span className="truncate font-medium opacity-80">{block.line2}</span>
+          : !block.therapistId
+            ? <span className="truncate font-extrabold text-red-600 dark:text-red-400">Not assigned</span>
+            : null}
     </div>
   );
 }
@@ -389,7 +436,7 @@ function RailCard({ block, onOpen }: { block: BoardBlock; onOpen: (b: BoardBlock
       {...attributes}
       onClick={(e) => { e.stopPropagation(); onOpen(block, e); }}
       style={style}
-      className={`rounded px-2 py-1.5 flex flex-col gap-0.5 overflow-hidden text-[11px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${VARIANT_CLASS[block.variant]}`}
+      className={`rounded px-2 py-1.5 flex flex-col gap-0.5 overflow-hidden text-[11px] leading-tight ${block.draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} ${blockClass(block)}`}
       title={`${block.guest ? `${block.guest} · ` : ''}${block.line1}${block.line2 ? ` · ${block.line2}` : ''}${block.untimed ? '' : ` · ${hhmm(block.startMin)}`}`}
     >
       {block.guest && (
@@ -467,7 +514,7 @@ function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, inde
 
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
-  axis = 'bed', subjectLabel = 'Station',
+  axis = 'bed', subjectLabel = 'Station', assignBeds = [],
 }: {
   branchId: string;
   day: string;
@@ -484,6 +531,9 @@ export function ScheduleBoard({
    *  bedId to the row id (resource_id for bed, therapist_id for person). */
   axis?: 'bed' | 'person';
   subjectLabel?: string;
+  /** Candidate beds for the People popover's "Assign bed" picker (axis='person'
+   *  only). Every active station in the share group with its busy windows. */
+  assignBeds?: AssignBed[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -563,6 +613,26 @@ export function ScheduleBoard({
   useEffect(() => {
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsedTypes])); } catch { /* defensive */ }
   }, [collapsedTypes, STORAGE_KEY]);
+  // "Available only" filter: hide rows that can't take a booking in the viewed
+  // window — off-shift (person) / inactive, OR fully occupied (no free gap).
+  // Persisted per branch + axis so each board remembers its own state.
+  const AVAIL_KEY = `hhg-spa:schedule-board:availableOnly:${branchId}:${axis}`;
+  const [availableOnly, setAvailableOnly] = useState(false);
+  // The minute the "available" check is evaluated at — a whole-day gap test is
+  // useless (nearly everything has some gap), so availability is "free at this
+  // time". Defaults to the next 15-min mark (clamped to the window).
+  const nextQ = (m: number) => { const r = m % 15; return r === 0 ? m : m + (15 - r); };
+  const [availAt, setAvailAt] = useState(() =>
+    Math.max(windowStartMin, Math.min(windowEndMin, nextQ(nowMin ?? windowStartMin))),
+  );
+  useEffect(() => {
+    // Load after mount (not in a lazy initializer) so SSR markup stays stable.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    try { setAvailableOnly(window.localStorage.getItem(AVAIL_KEY) === '1'); } catch { /* defensive */ }
+  }, [AVAIL_KEY]);
+  useEffect(() => {
+    try { window.localStorage.setItem(AVAIL_KEY, availableOnly ? '1' : '0'); } catch { /* defensive */ }
+  }, [availableOnly, AVAIL_KEY]);
   // On open, jump the horizontal scroll to ~2h before "now" so the desk lands on
   // the live part of the 24h board instead of at 00:00. Only when viewing today
   // (nowMin set); other days stay at the start.
@@ -608,12 +678,28 @@ export function ScheduleBoard({
   const groupIcon = (t: string): React.ComponentType<{ className?: string }> =>
     axis === 'person' ? Users : (STATION_GROUP_ICON[t] ?? BedDouble);
 
+  // A row is "available" if it can take a booking AT `availAt`. Mirrors the
+  // hover popover's "who's free at this minute": a station is busy if a block
+  // overlaps [start − prep, end + cleanup]; a person must be on shift at that
+  // minute and not running a scheduled/in-service/confirmed block then.
+  function isFreeAt(bed: BoardBed): boolean {
+    const t = availAt;
+    const rowBlocks = blocksByBed.get(bed.id) ?? [];
+    if (axis === 'person') {
+      if (bed.shiftStartMin == null || bed.shiftEndMin == null) return false;
+      return t >= bed.shiftStartMin && t < bed.shiftEndMin; // on shift at t
+    }
+    const busy = rowBlocks.some((b) => !b.untimed && t >= b.startMin - b.prepMin && t < b.endMin + b.cleanupMin);
+    return !busy;
+  }
+  const visibleBeds = availableOnly ? beds.filter(isFreeAt) : beds;
+
   // Bed board nesting: Branch > Type > Zone > Station. STATION_ORDER orders the
   // types; branches + zones sort alphabetically. (The person board keeps the flat
   // position grouping above.)
   const groupTree = (() => {
     const byBranch = new Map<string, BoardBed[]>();
-    for (const b of beds) { const k = b.branch ?? '—'; if (!byBranch.has(k)) byBranch.set(k, []); byBranch.get(k)!.push(b); }
+    for (const b of visibleBeds) { const k = b.branch ?? '—'; if (!byBranch.has(k)) byBranch.set(k, []); byBranch.get(k)!.push(b); }
     return [...byBranch.keys()].sort().map((branch) => {
       const rows = byBranch.get(branch)!;
       const byType = new Map<string, BoardBed[]>();
@@ -714,6 +800,17 @@ export function ScheduleBoard({
       else toast.error(r.error);
     });
   }
+  // Pin a bed to a bedless booking from the People popover. Reuses
+  // moveScheduledOrderItem (the Station drag's action): it sets resource_id and
+  // re-stamps the booked time, leaving therapist_id untouched, and runs the same
+  // bed-conflict + resource-type guards server-side.
+  function doAssignBed(refId: string, bedId: string, startMin: number, name?: string) {
+    startTransition(async () => {
+      const r = await moveScheduledOrderItem({ item_id: refId, bed_id: bedId, start_min: startMin, day });
+      if (r.ok) { toast.success(name ? `Assigned ${name}` : 'Bed assigned'); setDetail(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
   // Start a scheduled service straight from the board's detail popover. Reuses
   // startOrderItem so all the therapist/bed/shift checks (and their error
   // messages) are identical to starting from the order page.
@@ -781,21 +878,6 @@ export function ScheduleBoard({
 
   const addStartIso = add ? makeIso(day, add.min) : '';
   const addRow = add ? beds.find((b) => b.id === add.bedId) : undefined;
-  const synthetic: ReservationItem | undefined = add
-    ? {
-        id: 'prefill', branch_id: branchId, source_id: null, service_category_ids: [],
-        guest_name: '', guest_phone: null, pax: 1, gender_preference: null,
-        service_location_type: 'on_site', note: null,
-        desired_service_start: addStartIso,
-        desired_service_end: new Date(Date.parse(addStartIso) + 60 * 60000).toISOString(),
-        // Bed axis pins the clicked bed; person axis pre-assigns the clicked
-        // therapist and leaves the bed to be picked later.
-        resource_ids: axis === 'person' ? [] : [add.bedId],
-        seat_together: false, service_item_id: null,
-        therapist_id: axis === 'person' ? add.bedId : null,
-        therapist_name: axis === 'person' ? (addRow?.name ?? null) : null,
-      }
-    : undefined;
 
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={clearStaffDrag}>
@@ -888,7 +970,33 @@ export function ScheduleBoard({
         >
           {/* hour + 15-min ruler */}
           <div className="flex border-b border-border sticky top-0 z-30 bg-muted">
-            <div className="w-40 shrink-0 p-2 flex items-center justify-center text-center text-xs font-bold text-muted-foreground sticky left-0 z-40 bg-muted">{subjectLabel}</div>
+            <div className="w-40 shrink-0 p-2 flex flex-col items-center justify-center gap-1 text-center sticky left-0 z-40 bg-muted">
+              <span className="text-xs font-bold text-muted-foreground">{subjectLabel}</span>
+              <button
+                type="button"
+                onClick={() => setAvailableOnly((v) => {
+                  if (!v) setAvailAt(Math.max(windowStartMin, Math.min(windowEndMin, nextQ(nowMin ?? windowStartMin))));
+                  return !v;
+                })}
+                aria-pressed={availableOnly}
+                title={`Show only ${subjectLabel.toLowerCase()}s that are free at the chosen time`}
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-bold leading-tight transition-colors ${availableOnly ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground hover:bg-accent'}`}
+              >
+                Available only
+              </button>
+              {availableOnly && (
+                <input
+                  type="time"
+                  value={hhmm(Math.max(windowStartMin, Math.min(windowEndMin, availAt)))}
+                  onChange={(e) => {
+                    const [h, m] = e.target.value.split(':').map(Number);
+                    if (!Number.isNaN(h) && !Number.isNaN(m)) setAvailAt(h * 60 + m);
+                  }}
+                  title="Free at this time"
+                  className="w-full rounded border border-input bg-background px-1 py-0.5 text-[10px] font-bold tabular"
+                />
+              )}
+            </div>
             <div className="relative h-12" style={{ minWidth: trackWidth }}>
               {/* top tier: the hour, centered over its band */}
               {hours.slice(0, -1).map((h) => (
@@ -957,8 +1065,12 @@ export function ScheduleBoard({
             </div>
           </div>
 
-          {beds.length === 0 ? (
-            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">{axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}</div>
+          {visibleBeds.length === 0 ? (
+            <div className="p-8 text-center text-sm font-semibold text-muted-foreground">
+              {availableOnly && beds.length > 0
+                ? `No ${axis === 'person' ? 'staff' : 'stations'} free at ${hhmm(availAt)} — change the time or turn off “Available only”.`
+                : axis === 'person' ? 'No staff on shift this day.' : 'No active stations for this branch.'}
+            </div>
           ) : (
             groupTree.map((bg) => {
               const bKey = `b:${bg.branch}`;
@@ -1016,18 +1128,17 @@ export function ScheduleBoard({
         <span className="inline-flex items-center gap-1"><span className="size-3 rounded border border-dashed border-zinc-500/70 bg-zinc-400/25" /> Prep / cleanup</span>
       </div>
 
-      {add && synthetic && (
-        <NewReservationDialog
+      {add && (
+        <CreateOrderDialog
           key={addKey}
-          branches={dialog.branches}
-          sources={dialog.sources}
-          serviceCategories={dialog.serviceCategories}
-          serviceItems={dialog.serviceItems}
-          reservation={synthetic}
-          prefillConfirmed
-          // Pass the bed's resource_type so the dialog auto-checks the
-          // matching Service Type (Bed #1 → Massage, Hair Chair A → Hair, etc.).
-          lockedBed={axis === 'person' ? undefined : (() => { const b = beds.find((x) => x.id === add.bedId); return { name: b?.name ?? 'Bed', type: b?.type }; })()}
+          dialog={dialog}
+          initialBranchId={branchId}
+          prefillStartIso={addStartIso}
+          // Bed axis pins the clicked bed on the first guest's line; person axis
+          // pre-assigns the clicked therapist and leaves the bed to be picked later.
+          prefillResourceId={axis === 'person' ? null : add.bedId}
+          prefillTherapistId={axis === 'person' ? add.bedId : null}
+          prefillLabel={addRow?.name ?? null}
           open
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
         />
@@ -1046,28 +1157,43 @@ export function ScheduleBoard({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-2 border-b border-border pb-1.5 mb-2">
-                <span className="font-bold text-sm truncate">{b.guest || b.line1}</span>
+                {/* Header: order# last 4 (daily seq) - guest seq/total - guest name.
+                    The middle shows which guest of how many on the order (e.g.
+                    "2/3"); falls back to the service when there's no number/guest. */}
+                <span className="font-bold text-sm truncate">
+                  {[
+                    b.orderNo ? b.orderNo.slice(-4) : null,
+                    b.guestSeq != null
+                      ? (b.guestTotal != null ? `${b.guestSeq}/${b.guestTotal}` : String(b.guestSeq))
+                      : null,
+                    b.guest,
+                  ].filter(Boolean).join(' - ') || b.line1}
+                </span>
                 <button type="button" onClick={() => setDetail(null)} className="shrink-0 text-muted-foreground hover:text-foreground">✕</button>
               </div>
               <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[13px]">
-                {b.guest && (
-                  <>
-                    <dt className="font-medium text-muted-foreground">Guest</dt>
-                    <dd className="font-semibold truncate">{b.guest}{b.pax && b.pax > 1 ? ` · ${b.pax} pax` : ''}</dd>
-                  </>
-                )}
-                <dt className="font-medium text-muted-foreground">Service</dt>
-                <dd className="font-semibold truncate">{b.line1}</dd>
+                <dt className="font-medium text-muted-foreground">Status</dt>
+                <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[b.variant] ?? b.variant}</dd>
                 {b.line2 && (
                   <>
                     <dt className="font-medium text-muted-foreground">{axis === 'person' ? 'Detail' : 'Therapist'}</dt>
                     <dd className="font-semibold truncate">{b.line2}</dd>
                   </>
                 )}
+                <dt className="font-medium text-muted-foreground">Service</dt>
+                <dd className="font-semibold truncate">{b.line1}</dd>
                 <dt className="font-medium text-muted-foreground">Time</dt>
                 <dd className="font-semibold tabular-nums">{b.untimed ? 'No time yet' : `${hhmm(b.startMin)}–${hhmm(b.endMin)}`}</dd>
-                <dt className="font-medium text-muted-foreground">Status</dt>
-                <dd className="font-semibold">{({ pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_service: 'In service', completed: 'Completed' } as Record<string, string>)[b.variant] ?? b.variant}</dd>
+                {/* Outstanding balance (total − paid). Red whenever it isn't zero
+                    so the desk can spot an unsettled order at a glance. */}
+                {b.balanceCents != null && (
+                  <>
+                    <dt className="font-medium text-muted-foreground">Balance</dt>
+                    <dd className={cn('font-semibold tabular-nums', b.balanceCents !== 0 && 'text-red-600 dark:text-red-400')}>
+                      {formatPHP(b.balanceCents)}
+                    </dd>
+                  </>
+                )}
               </dl>
               {axis === 'bed' && b.draggable && !b.therapistId && staffShifts.length > 0 && (
                 <div className="mt-3 border-t border-border pt-2">
@@ -1085,6 +1211,59 @@ export function ScheduleBoard({
                   </select>
                 </div>
               )}
+              {/* People board: a bedless booking can be pinned to a bed here. The
+                  options are the share group's beds that are type-compatible AND
+                  free for this booking's window — the server re-checks on submit. */}
+              {axis === 'person' && b.draggable && b.bedUnassigned && !b.untimed && (() => {
+                const free = assignBeds.filter((bed) => {
+                  const typeOk = !b.allowedResourceTypes?.length || b.allowedResourceTypes.includes(bed.type);
+                  const busy = bed.busy.some((w) => b.startMin < w.e && w.s < b.endMin);
+                  return typeOk && !busy;
+                });
+                // Nest the options Branch > Type > Area > Station (mirrors the
+                // Station board's tree). A native <select> can't nest <optgroup>,
+                // so each leaf group carries the full path as its label.
+                const typeRank = (t: string) => { const i = STATION_ORDER.indexOf(t as typeof STATION_ORDER[number]); return i === -1 ? STATION_ORDER.length : i; };
+                const groups = new Map<string, { branch: string; type: string; zone: string; beds: AssignBed[] }>();
+                for (const bed of free) {
+                  const zone = bed.zone ?? '';
+                  const key = `${bed.branch}|${bed.type}|${zone}`;
+                  if (!groups.has(key)) groups.set(key, { branch: bed.branch, type: bed.type, zone, beds: [] });
+                  groups.get(key)!.beds.push(bed);
+                }
+                const ordered = [...groups.values()].sort((a, c) =>
+                  a.branch.localeCompare(c.branch)
+                  || typeRank(a.type) - typeRank(c.type) || a.type.localeCompare(c.type)
+                  || a.zone.localeCompare(c.zone));
+                for (const g of ordered) g.beds.sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
+                return (
+                  <div className="mt-3 border-t border-border pt-2">
+                    <label className="text-[11px] font-semibold text-muted-foreground">Assign bed</label>
+                    {free.length === 0 ? (
+                      <p className="mt-1 text-[12px] font-medium text-muted-foreground">No bed free for this time.</p>
+                    ) : (
+                      <select
+                        className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5 text-sm"
+                        defaultValue=""
+                        onChange={(e) => {
+                          const bed = free.find((x) => x.id === e.target.value);
+                          if (bed) doAssignBed(b.refId, bed.id, b.startMin, `${bed.branch} · ${bed.name}`);
+                        }}
+                      >
+                        <option value="" disabled>Pick a bed…</option>
+                        {ordered.map((g) => (
+                          <optgroup
+                            key={`${g.branch}/${g.type}/${g.zone}`}
+                            label={[g.branch, STATION_GROUP_LABEL[g.type] ?? g.type.replace(/_/g, ' '), g.zone].filter(Boolean).join(' · ')}
+                          >
+                            {g.beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="mt-3 flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
                 {b.orderId && (

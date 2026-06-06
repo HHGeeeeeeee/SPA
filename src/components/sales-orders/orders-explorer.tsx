@@ -50,7 +50,7 @@ const SERVICE_OPTIONS: { value: string; label: string; match: (s: string) => boo
   { value: 'in_service', label: 'In service', match: (s) => s === 'in_service' },
   { value: 'done', label: 'Service done', match: (s) => s === 'completed' },
   { value: 'closed', label: 'Closed', match: (s) => s === 'closed' },
-  { value: 'void', label: 'Void', match: (s) => s === 'void' },
+  { value: 'void', label: 'Cancelled', match: (s) => s === 'void' },
 ];
 // Payment axis. "Owing" (unpaid OR partial) is the one a manager reaches for.
 const PAYMENT_OPTIONS: { value: string; label: string }[] = [

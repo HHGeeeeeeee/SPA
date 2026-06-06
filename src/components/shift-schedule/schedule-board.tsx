@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand } from 'lucide-react';
+import { Users, ChevronDown, ChevronRight, BedDouble, Scissors, Hand, ExternalLink, Unlink } from 'lucide-react';
 import {
   DndContext,
   type DragEndEvent,
@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { cn, formatPHP } from '@/lib/utils';
 import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { moveScheduledOrderItem, assignTherapistToOrderItem } from '@/app/(dashboard)/calendar/actions';
+import { moveScheduledOrderItem, assignTherapistToOrderItem, unassignOrderItem } from '@/app/(dashboard)/calendar/actions';
 import { startOrderItem } from '@/app/(dashboard)/sales-orders/actions';
 
 export interface BoardBed {
@@ -811,6 +811,16 @@ export function ScheduleBoard({
       else toast.error(r.error);
     });
   }
+  // Clear one assignment off a not-yet-started booking from the detail popover:
+  // the Station board strips the bed, the People board strips the therapist. The
+  // other assignment is kept; the line drops to this board's unallocated rail.
+  function doUnassign(refId: string, target: 'station' | 'therapist') {
+    startTransition(async () => {
+      const r = await unassignOrderItem({ item_id: refId, target });
+      if (r.ok) { toast.success(target === 'station' ? 'Station unassigned' : 'Therapist unassigned'); setDetail(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
   // Start a scheduled service straight from the board's detail popover. Reuses
   // startOrderItem so all the therapist/bed/shift checks (and their error
   // messages) are identical to starting from the order page.
@@ -1169,7 +1179,21 @@ export function ScheduleBoard({
                     b.guest,
                   ].filter(Boolean).join(' - ') || b.line1}
                 </span>
-                <button type="button" onClick={() => setDetail(null)} className="shrink-0 text-muted-foreground hover:text-foreground">✕</button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {/* Open the parent order — an icon up here instead of a footer button. */}
+                  {b.orderId && (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/sales-orders/${b.orderId}`)}
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Open order"
+                      aria-label="Open order"
+                    >
+                      <ExternalLink className="size-4" />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setDetail(null)} className="text-muted-foreground hover:text-foreground" aria-label="Close">✕</button>
+                </div>
               </div>
               <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[13px]">
                 <dt className="font-medium text-muted-foreground">Status</dt>
@@ -1265,15 +1289,21 @@ export function ScheduleBoard({
                 );
               })()}
               <div className="mt-3 flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
-                {b.orderId && (
-                  <Button
-                    size="sm"
-                    variant={b.variant === 'scheduled' ? 'outline' : 'default'}
-                    onClick={() => router.push(`/sales-orders/${b.orderId}`)}
-                  >
-                    Open order
-                  </Button>
+                {/* Unassign — Station board strips the bed (only when one is set),
+                    People board strips the therapist. Sends the line back to this
+                    board's unallocated rail; the other assignment is kept. */}
+                {b.variant === 'scheduled' && b.orderId && b.draggable && (
+                  axis === 'bed'
+                    ? !b.bedUnassigned && (
+                        <Button size="sm" variant="outline" disabled={pending} onClick={() => doUnassign(b.refId, 'station')}>
+                          <Unlink className="size-4" /> Unassign station
+                        </Button>
+                      )
+                    : b.therapistId && (
+                        <Button size="sm" variant="outline" disabled={pending} onClick={() => doUnassign(b.refId, 'therapist')}>
+                          <Unlink className="size-4" /> Unassign therapist
+                        </Button>
+                      )
                 )}
                 {/* Start a not-yet-started service inline. Same guards as the order
                     page (needs service picked, therapist/bed where required, an

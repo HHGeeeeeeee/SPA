@@ -369,6 +369,18 @@ export function OrderWorkspace({
   const due = Math.max(0, order.total_cents - order.paid_cents);
   const totalTips = payments.reduce((s, p) => s + p.tip_cents, 0);
   const canRunService = ['draft', 'in_service'].includes(order.status);
+  // A draft line is "cross-branch" when its station sits in another branch — its
+  // revenue would post to that branch's shift, not this order's. "Start all" can't
+  // span branches, so it's hidden when any draft line is cross-branch; those lines
+  // are started one by one instead (each checks its own branch's open shift). We
+  // compare the line's station branch to the order branch (derived from the
+  // order-branch station list), falling back to "station not in the order-branch
+  // list" when the order branch has no active stations to read a code from.
+  const orderBranchCode = resources.find((r) => r.branchCode)?.branchCode ?? null;
+  const orderBranchResIds = new Set(resources.map((r) => r.id));
+  const hasCrossBranchDraft = items.some((i) =>
+    i.status === 'draft' && i.resource_id != null
+    && (orderBranchCode != null ? i.station_branch_code !== orderBranchCode : !orderBranchResIds.has(i.resource_id)));
   // Whole order dispatched to a hotel → services use a room no, not an in-house station.
   const dispatch = order.service_location_type === 'external_hotel';
 
@@ -712,7 +724,7 @@ export function OrderWorkspace({
             </div>
           )}
         </div>
-        {canRunService && items.some((i) => i.status === 'draft') ? (
+        {canRunService && items.some((i) => i.status === 'draft') && !hasCrossBranchDraft ? (
           <Button
             onClick={doStartAll}
             disabled={pending}
@@ -827,6 +839,7 @@ export function OrderWorkspace({
                                 employees={employees}
                                 borrowableEmployees={borrowableEmployees}
                                 resources={resources}
+                                assignedResource={it.resource_id ? { id: it.resource_id, name: it.station_name, branchCode: it.station_branch_code } : undefined}
                                 discountClasses={discountClasses}
                                 capabilityByEmployee={capabilityByEmployee}
                                 busyTherapistIds={busyTherapistIds}

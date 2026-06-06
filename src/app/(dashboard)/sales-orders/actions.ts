@@ -951,7 +951,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group ), resource:resources!order_items_resource_id_fkey ( branch_id )')
     .eq('id', itemId)
     .single();
 
@@ -964,9 +964,17 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // Revenue posts to the folio the moment a service starts, so an open cash
   // shift must exist to receive it.
   const { data: ordForShift } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
-  const openShift = ordForShift?.branch_id ? await getCurrentOpenShift(ordForShift.branch_id) : null;
+  // Revenue follows the STATION's branch: a service posts to the open shift of the
+  // branch where its station physically sits, so a cross-branch booking lands in
+  // that branch's shift, not the order's. A line with no station (dispatch / rest)
+  // falls back to the order branch. You can therefore only start a service whose
+  // branch has an open shift — i.e. your own branch's work.
+  const itemResource = Array.isArray(item?.resource) ? item?.resource[0] : item?.resource;
+  const stationBranchId = item?.resource_id ? itemResource?.branch_id ?? null : null;
+  const shiftBranchId = stationBranchId ?? ordForShift?.branch_id ?? null;
+  const openShift = shiftBranchId ? await getCurrentOpenShift(shiftBranchId) : null;
   if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this branch - open one on the Sales Remittance page before starting a service.' };
+    return { ok: false, error: 'No cash shift is open for this service’s branch — open one on the Sales Remittance page before starting it.' };
   }
 
   // Can't start a hands-on service with nobody to do it, or a service that needs

@@ -49,6 +49,7 @@ export function ServiceLineEditor({
   employees,
   borrowableEmployees,
   resources,
+  assignedResource,
   discountClasses,
   capabilityByEmployee,
   busyTherapistIds,
@@ -66,6 +67,10 @@ export function ServiceLineEditor({
   employees: Emp[];
   borrowableEmployees: BorrowEmp[];
   resources: ResourceOpt[];
+  // The line's currently-assigned station, carried so a cross-branch station
+  // (not in `resources`, which is order-branch only) still shows its real name
+  // instead of a raw id. Display-only — it can't be picked again from the list.
+  assignedResource?: { id: string; name: string | null; branchCode: string | null };
   discountClasses: DiscountOpt[];
   capabilityByEmployee: Record<string, string[]>;
   busyTherapistIds: string[];
@@ -141,6 +146,21 @@ export function ServiceLineEditor({
   }
   const resLabel = (r: ResourceOpt) => `${r.branchCode ? `${r.branchCode} · ` : ''}${r.name}${busyRes.has(r.id) ? ' · in use' : ''}`;
   const resItems = [{ value: NONE, label: 'None' }, ...eligibleResources.map((r) => ({ value: r.id, label: resLabel(r) }))];
+  // The assigned station may not be in the eligible list — it lives at another
+  // branch (resources is order-branch only), or a service swap left a now-wrong
+  // type. Resolve its label from the order-branch list, else the passed-in
+  // assignedResource, so the trigger shows a name rather than a raw id.
+  const assignedResInList = draft.resourceId !== NONE && eligibleResources.some((r) => r.id === draft.resourceId);
+  const assignedResFallback = !assignedResInList && draft.resourceId !== NONE
+    ? resources.find((r) => r.id === draft.resourceId)
+    : null;
+  const assignedResOption = assignedResInList || draft.resourceId === NONE
+    ? null
+    : assignedResFallback
+      ? { value: assignedResFallback.id, label: resLabel(assignedResFallback) }
+      : assignedResource && assignedResource.id === draft.resourceId
+        ? { value: assignedResource.id, label: `${assignedResource.branchCode ? `${assignedResource.branchCode} · ` : ''}${assignedResource.name ?? 'Station'}` }
+        : null;
 
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
   const effectiveDiscountId = sourceDiscountLocked ? defaultDiscountId : draft.discountId;
@@ -266,10 +286,16 @@ export function ServiceLineEditor({
         {dispatch ? (
           <Input type="text" className="h-8 w-full" value={draft.roomNo} onChange={(e) => onChange({ roomNo: e.target.value })} placeholder="Room no" disabled={disabled} />
         ) : (
-        <Select items={resItems} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
+        <Select items={[...resItems, ...(assignedResOption ? [assignedResOption] : [])]} value={draft.resourceId} onValueChange={(v) => onChange({ resourceId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>None</SelectItem>
+            {assignedResOption && (
+              <SelectGroup>
+                <SelectLabel>Assigned</SelectLabel>
+                <SelectItem value={assignedResOption.value}>{assignedResOption.label}</SelectItem>
+              </SelectGroup>
+            )}
             {eligibleResources.length === 0 ? (
               <SelectItem value="__nomatch__" disabled>{neededTypes.length ? `No ${neededTypes.map((t) => RESOURCE_TYPE_LABEL[t] ?? t).join(' / ')} here` : 'No stations'}</SelectItem>
             ) : (

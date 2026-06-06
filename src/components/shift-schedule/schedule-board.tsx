@@ -88,6 +88,7 @@ export interface AssignBed {
   name: string;
   branch: string;
   type: string;
+  zone: string | null;
   busy: { s: number; e: number }[];
 }
 export interface BoardStaffShift {
@@ -1199,6 +1200,22 @@ export function ScheduleBoard({
                   const busy = bed.busy.some((w) => b.startMin < w.e && w.s < b.endMin);
                   return typeOk && !busy;
                 });
+                // Nest the options Branch > Type > Area > Station (mirrors the
+                // Station board's tree). A native <select> can't nest <optgroup>,
+                // so each leaf group carries the full path as its label.
+                const typeRank = (t: string) => { const i = STATION_ORDER.indexOf(t as typeof STATION_ORDER[number]); return i === -1 ? STATION_ORDER.length : i; };
+                const groups = new Map<string, { branch: string; type: string; zone: string; beds: AssignBed[] }>();
+                for (const bed of free) {
+                  const zone = bed.zone ?? '';
+                  const key = `${bed.branch}|${bed.type}|${zone}`;
+                  if (!groups.has(key)) groups.set(key, { branch: bed.branch, type: bed.type, zone, beds: [] });
+                  groups.get(key)!.beds.push(bed);
+                }
+                const ordered = [...groups.values()].sort((a, c) =>
+                  a.branch.localeCompare(c.branch)
+                  || typeRank(a.type) - typeRank(c.type) || a.type.localeCompare(c.type)
+                  || a.zone.localeCompare(c.zone));
+                for (const g of ordered) g.beds.sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
                 return (
                   <div className="mt-3 border-t border-border pt-2">
                     <label className="text-[11px] font-semibold text-muted-foreground">Assign bed</label>
@@ -1210,12 +1227,17 @@ export function ScheduleBoard({
                         defaultValue=""
                         onChange={(e) => {
                           const bed = free.find((x) => x.id === e.target.value);
-                          if (bed) doAssignBed(b.refId, bed.id, b.startMin, bed.name);
+                          if (bed) doAssignBed(b.refId, bed.id, b.startMin, `${bed.branch} · ${bed.name}`);
                         }}
                       >
                         <option value="" disabled>Pick a bed…</option>
-                        {free.map((bed) => (
-                          <option key={bed.id} value={bed.id}>{bed.branch} · {bed.name}</option>
+                        {ordered.map((g) => (
+                          <optgroup
+                            key={`${g.branch}/${g.type}/${g.zone}`}
+                            label={[g.branch, STATION_GROUP_LABEL[g.type] ?? g.type.replace(/_/g, ' '), g.zone].filter(Boolean).join(' · ')}
+                          >
+                            {g.beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name}</option>)}
+                          </optgroup>
                         ))}
                       </select>
                     )}

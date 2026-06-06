@@ -217,7 +217,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
     // Every active station in the share group — candidates for the People
     // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
-    supabase.from('resources').select('id, resource_name, resource_type, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
+    supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
   ]);
 
   // Open the window early enough to cover shifts that start before the branch
@@ -322,7 +322,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   const beds = [...rowsById.values()];
   const assignBeds: AssignBed[] = (bedsRes.data ?? []).map((bd) => ({
     id: bd.id, name: bd.resource_name, branch: branchCodeById.get(bd.branch_id) ?? '—',
-    type: bd.resource_type, busy: bedBusy.get(bd.id) ?? [],
+    type: bd.resource_type, zone: bd.location_zone ?? null, busy: bedBusy.get(bd.id) ?? [],
   }));
   return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds };
 }

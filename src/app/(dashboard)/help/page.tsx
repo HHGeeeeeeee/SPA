@@ -2,21 +2,11 @@ import { BookOpen } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isAdmin } from '@/lib/auth';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { NewArticleDialog } from '@/components/help/new-article-dialog';
-import { Markdown } from '@/components/help/markdown';
+import { HelpBrowser } from '@/components/help/help-browser';
 
 export const dynamic = 'force-dynamic';
-
-const CATEGORY_LABEL: Record<string, string> = {
-  getting_started: 'Getting started',
-  daily_ops: 'Daily ops',
-  reconciliation: 'Reconciliation',
-  master_data: 'Master data',
-  troubleshooting: 'Troubleshooting',
-  api_integration: 'API / integration',
-};
 
 export default async function HelpPage() {
   const supabase = createServiceClient();
@@ -28,13 +18,6 @@ export default async function HelpPage() {
     .order('category')
     .order('order_index');
   const articles = data ?? [];
-
-  const byCategory = new Map<string, typeof articles>();
-  for (const a of articles) {
-    const arr = byCategory.get(a.category) ?? [];
-    arr.push(a);
-    byCategory.set(a.category, arr);
-  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -56,22 +39,7 @@ export default async function HelpPage() {
           </CardContent>
         </Card>
       ) : (
-        [...byCategory.entries()].map(([cat, arts]) => (
-          <div key={cat} className="flex flex-col gap-3">
-            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-[0.12em]">{CATEGORY_LABEL[cat] ?? cat}</h3>
-            {arts.map((a) => (
-              <Card key={a.id}>
-                <CardHeader className="pb-2 flex-row items-center gap-2">
-                  <CardTitle className="text-base font-bold">{a.title}</CardTitle>
-                  <Badge variant="secondary" className="font-bold capitalize">{CATEGORY_LABEL[a.category] ?? a.category}</Badge>
-                </CardHeader>
-                <CardContent>
-                  <Markdown>{a.content_markdown}</Markdown>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ))
+        <HelpBrowser articles={articles} />
       )}
     </div>
   );

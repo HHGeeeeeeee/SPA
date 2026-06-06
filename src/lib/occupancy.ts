@@ -20,7 +20,9 @@ export interface DayOccupancy {
   stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
   therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
   // One entry per operating hour (placed-hour ints; >24 after midnight).
-  perHour: { hour: number; stationPct: number | null; therapistPct: number | null; utilizationPct: number | null }[];
+  // revenueCents = service revenue recognised in that hour (delivered services'
+  // list price, by start hour) — drawn as a background area on the chart.
+  perHour: { hour: number; stationPct: number | null; therapistPct: number | null; utilizationPct: number | null; revenueCents: number }[];
 }
 
 type Win = { s: number; e: number };
@@ -66,7 +68,7 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, duration_minutes, resource_id, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
+      .select('id, status, duration_minutes, list_price_cents, resource_id, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
   ]);
 
@@ -119,6 +121,9 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
   const bedBusy: Win[] = [];
   const therBusy: Win[] = [];
   const actual: Win[] = [];
+  // Revenue recognised per placed-hour = delivered services' list price booked at
+  // the hour the service started (revenue posts at in_service).
+  const revByHour = new Map<number, number>();
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
     if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
@@ -135,6 +140,8 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
       occEnd = it.actual_end ? place(tsToMin(it.actual_end)) : s + dur;
       const actEnd = it.actual_end ? place(tsToMin(it.actual_end)) : (nowMin != null ? Math.max(s, nowMin) : s + dur);
       actual.push({ s, e: actEnd });
+      const h = Math.floor(s / 60);
+      revByHour.set(h, (revByHour.get(h) ?? 0) + (it.list_price_cents ?? 0));
     }
     if (it.resource_id) bedBusy.push({ s, e: occEnd });
     if (it.therapist_id) therBusy.push({ s, e: occEnd });
@@ -161,6 +168,7 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
       stationPct: bedCap > 0 ? span(bedBusy, hs, he) / bedCap : null,
       therapistPct: therCap > 0 ? span(therBusy, hs, he) / therCap : null,
       utilizationPct: cap > 0 ? span(actual, hs, he) / cap : null,
+      revenueCents: revByHour.get(h) ?? 0,
     });
   }
 

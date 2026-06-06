@@ -4,7 +4,9 @@ import { loadReconStatus } from '@/lib/recon-status';
 import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
 import { DashboardBranchPicker } from '@/components/dashboard/dashboard-branch-picker';
 import { DashboardUtilization } from '@/components/dashboard/dashboard-utilization';
+import { DashboardCommission, type CommRow } from '@/components/dashboard/dashboard-commission';
 import { computeDayOccupancy } from '@/lib/occupancy';
+import { loadCommissionGroups } from '@/app/(dashboard)/reconciliation/commission/actions';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
@@ -34,28 +36,70 @@ async function fetchData(branchIds: string[]) {
 
   const { data: todayOrders } = await supabase
     .from('orders')
-    .select('id, total_cents, discount_cents, status, order_customers ( id )')
+    .select('id, subtotal_cents, discount_cents, status, order_customers ( id ), order_items ( status, duration_minutes )')
     .eq('service_date', today)
     .is('deleted_at', null)
     .neq('status', 'void')
     .in('branch_id', branchIds);
 
   const orders = todayOrders ?? [];
-  const bookings = orders.length;
+  // Footfall = every guest on the day (any status). Financial figures are on the
+  // closed-order basis (matches the commission engine, which only counts closed
+  // orders) so Net = Revenue − Discount − Commission stays coherent. Revenue is
+  // GROSS (subtotal, pre-discount) so the subtraction isn't double-counted.
   const pax = orders.reduce((s, o) => s + (o.order_customers?.length ?? 0), 0);
-  const revenue = orders.filter((o) => o.status === 'closed').reduce((s, o) => s + o.total_cents, 0);
-  const discount = orders.reduce((s, o) => s + o.discount_cents, 0);
+  const closed = orders.filter((o) => o.status === 'closed');
+  const revenue = closed.reduce((s, o) => s + (o.subtotal_cents ?? 0), 0);
+  const discount = closed.reduce((s, o) => s + (o.discount_cents ?? 0), 0);
+  // Delivered services today (operational — all activity, not just closed).
+  let serviceCount = 0;
+  let serviceMinutes = 0;
+  for (const o of orders) {
+    for (const it of o.order_items ?? []) {
+      if (it.status === 'service_completed') { serviceCount += 1; serviceMinutes += it.duration_minutes ?? 0; }
+    }
+  }
 
-  return { today, bookings, pax, revenue, discount };
+  return { today, pax, revenue, discount, serviceCount, serviceHours: serviceMinutes / 60 };
+}
+
+// Simulated commission for today across the selected branches — reuses the
+// settlement engine (closed orders, completed services, current rates + warm-up),
+// merged per therapist for the ranking.
+async function fetchCommission(branchIds: string[], today: string): Promise<{ total: number; top: CommRow[] }> {
+  const perBranch = await Promise.all(branchIds.map((b) => loadCommissionGroups(b, today, today)));
+  const byTherapist = new Map<string, CommRow>();
+  for (const groups of perBranch) {
+    for (const g of groups) {
+      const minutes = g.items.reduce((s, it) => s + (it.duration_minutes ?? 0), 0);
+      const prev = byTherapist.get(g.therapist_id);
+      if (prev) {
+        prev.sessions += g.sessions;
+        prev.minutes += minutes;
+        prev.grossCents += g.gross_cents;
+        prev.commissionCents += g.commission_cents;
+        prev.borrowedFrom = prev.borrowedFrom ?? g.borrowed_from;
+      } else {
+        byTherapist.set(g.therapist_id, {
+          therapistId: g.therapist_id, name: g.therapist_name, sessions: g.sessions, minutes,
+          grossCents: g.gross_cents, commissionCents: g.commission_cents, borrowedFrom: g.borrowed_from,
+        });
+      }
+    }
+  }
+  const ranked = [...byTherapist.values()].sort((a, b) => b.commissionCents - a.commissionCents);
+  return { total: ranked.reduce((s, g) => s + g.commissionCents, 0), top: ranked.slice(0, 10) };
 }
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const sp = await searchParams;
   const { branches, selected } = await fetchBranches(sp.branch);
-  const [d, recon, occ] = await Promise.all([
+  const today = todayPHT();
+  const [d, recon, occ, comm] = await Promise.all([
     fetchData(selected),
     loadReconStatus(),
-    computeDayOccupancy(selected, todayPHT(), new Date().toISOString()),
+    computeDayOccupancy(selected, today, new Date().toISOString()),
+    fetchCommission(selected, today),
   ]);
   const overdueItems = recon.branches
     .filter((b) => b.overdueClose)
@@ -66,12 +110,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       days_overdue: b.overdueClose!.days_overdue,
     }));
 
-  const kpis = [
-    { label: 'Bookings Today', value: String(d.bookings) },
-    { label: 'Guests Today', value: String(d.pax) },
-    { label: 'Revenue Today', value: peso(d.revenue) },
-    { label: 'Discount Today', value: peso(d.discount) },
-  ];
+  const net = d.revenue - d.discount - comm.total;
 
   return (
     <div className="flex flex-col gap-6">
@@ -84,18 +123,50 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       <OverdueCloseBanner items={overdueItems} />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {kpis.map((k) => (
-          <Card key={k.label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">{k.label}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-extrabold tracking-tight tabular">{k.value}</div>
-            </CardContent>
-          </Card>
-        ))}
+      {/* One KPI row: the Revenue − Discount − Commission = Net waterfall (double
+          wide), then guests + services delivered. */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Card className="col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">( Revenue − Discount ) − Commission = Net</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-4xl font-extrabold tracking-tight tabular-nums">
+              <span className="text-2xl font-bold text-muted-foreground">(</span>
+              <span>{peso(d.revenue)}</span>
+              <span className="text-2xl font-bold text-muted-foreground">−</span>
+              <span>{peso(d.discount)}</span>
+              <span className="text-2xl font-bold text-muted-foreground">)</span>
+              <span className="text-2xl font-bold text-muted-foreground">−</span>
+              <span>{peso(comm.total)}</span>
+              <span className="text-2xl font-bold text-muted-foreground">=</span>
+              <span className={net < 0 ? 'text-destructive' : 'text-primary'}>{peso(net)}</span>
+            </div>
+            <p className="mt-0.5 text-xs font-medium text-muted-foreground">Gross revenue · closed orders today; commission simulated</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">Guests Today</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-extrabold tracking-tight tabular">{d.pax}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">Service Today</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-extrabold tracking-tight tabular">{d.serviceCount}</div>
+            <p className="mt-0.5 text-xs font-medium text-muted-foreground">{d.serviceHours.toFixed(1)} service hr</p>
+          </CardContent>
+        </Card>
       </div>
+
+      <DashboardCommission rows={comm.top} />
 
       <DashboardUtilization occ={occ} />
     </div>

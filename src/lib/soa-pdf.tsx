@@ -31,26 +31,44 @@ async function loadSoaForPdf(soaId: string): Promise<PdfData | null> {
     .from('revenue_soa')
     .select(`
       soa_no, status, settlement_type, period_from, period_to, issued_date, due_date, total_cents,
-      billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name ),
-      revenue_soa_orders (
-        order:orders (
-          order_no, service_date,
-          branch:branches ( name ),
-          order_customers ( id, customer_name, seq_no ),
-          order_items ( order_customer_id, duration_minutes, list_price_cents, final_amount_cents, status, service:service_items ( name ) )
-        )
-      )
+      billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name )
     `)
     .eq('id', soaId)
     .maybeSingle();
   if (!s) return null;
   const b = one(s.billing);
 
+  // SOA is folio-based: the statement's orders are those carrying an AR line in
+  // this session (order_id not null). De-dupe orders, then list their services.
+  const { data: arLines } = await supabase
+    .from('folio_lines')
+    .select(`
+      order_id,
+      order:orders!folio_lines_order_id_fkey (
+        id, order_no, service_date,
+        branch:branches ( name ),
+        order_customers ( id, customer_name, seq_no ),
+        order_items ( order_customer_id, duration_minutes, list_price_cents, final_amount_cents, status, service:service_items ( name ) )
+      )
+    `)
+    .eq('soa_session_id', soaId)
+    .not('order_id', 'is', null);
+
+  type PdfOrder = {
+    id: string; order_no: string; service_date: string;
+    branch: { name: string } | { name: string }[] | null;
+    order_customers: { id: string; customer_name: string; seq_no: number }[] | null;
+    order_items: { order_customer_id: string | null; duration_minutes: number | null; list_price_cents: number | null; final_amount_cents: number | null; status: string; service: { name: string } | { name: string }[] | null }[] | null;
+  };
+  const orders = new Map<string, PdfOrder>();
+  for (const r of arLines ?? []) {
+    const o = one(r.order) as PdfOrder | null;
+    if (o?.id && !orders.has(o.id)) orders.set(o.id, o);
+  }
+
   const lines: (PdfLine & { _seq: number })[] = [];
   const branchNames = new Set<string>();
-  for (const link of s.revenue_soa_orders ?? []) {
-    const o = one(link.order);
-    if (!o) continue;
+  for (const o of orders.values()) {
     const bn = one(o.branch)?.name;
     if (bn) branchNames.add(bn);
     const nameById = new Map((o.order_customers ?? []).map((c) => [c.id, c.customer_name]));

@@ -23,24 +23,41 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [bd, pm] = await Promise.all([
+  const [bd, pm, tc] = await Promise.all([
     supabase
       .from('billing_destinations')
       .select(`
-        id, code, name, settlement_type, intercompany_account, intercompany_sub,
+        id, code, name, settlement_type, transaction_code_id,
         default_payment_method_id, credit_terms_days, active,
-        default_payment_method:payment_methods ( code, display_name )
+        default_payment_method:payment_methods ( code, display_name ),
+        transaction_code:transaction_codes ( code, debit_account, credit_account )
       `)
       .order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
+    // The bound code drives AR booking + settle; offer the AR/settle-type codes.
+    supabase
+      .from('transaction_codes')
+      .select('id, code, transaction_type, debit_account, credit_account, branch:branches ( code )')
+      .eq('active', true)
+      .in('transaction_type', ['settle', 'payment'])
+      .order('code'),
   ]);
   if (bd.error) throw new Error(bd.error.message);
   if (pm.error) throw new Error(pm.error.message);
-  return { destinations: bd.data ?? [], paymentMethods: pm.data ?? [] };
+  if (tc.error) throw new Error(tc.error.message);
+  const transactionCodes = (tc.data ?? []).map((t) => ({
+    id: t.id,
+    code: t.code,
+    transaction_type: t.transaction_type,
+    debit_account: t.debit_account,
+    credit_account: t.credit_account,
+    branch_code: (Array.isArray(t.branch) ? t.branch[0] : t.branch)?.code ?? null,
+  }));
+  return { destinations: bd.data ?? [], paymentMethods: pm.data ?? [], transactionCodes };
 }
 
 export default async function BillingDestinationsPage() {
-  const { destinations, paymentMethods } = await fetchData();
+  const { destinations, paymentMethods, transactionCodes } = await fetchData();
   const activeCount = destinations.filter((b) => b.active).length;
 
   return (
@@ -61,6 +78,7 @@ export default async function BillingDestinationsPage() {
         </div>
         <BillingDestinationFormDialog
           paymentMethods={paymentMethods}
+          transactionCodes={transactionCodes}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -77,7 +95,7 @@ export default async function BillingDestinationsPage() {
               <TableHead className="font-bold">Code</TableHead>
               <TableHead className="font-bold">Name</TableHead>
               <TableHead className="font-bold">Settlement</TableHead>
-              <TableHead className="font-bold">Intercompany GL</TableHead>
+              <TableHead className="font-bold">Transaction Code</TableHead>
               <TableHead className="font-bold">Default Payment</TableHead>
               <TableHead className="w-24 font-bold">Credit Terms</TableHead>
               <TableHead className="w-24 font-bold">Status</TableHead>
@@ -98,13 +116,13 @@ export default async function BillingDestinationsPage() {
                 const pm = Array.isArray(b.default_payment_method)
                   ? b.default_payment_method[0]
                   : b.default_payment_method;
+                const tc = Array.isArray(b.transaction_code) ? b.transaction_code[0] : b.transaction_code;
                 const itemRecord: BillingDestinationItem = {
                   id: b.id,
                   code: b.code,
                   name: b.name,
                   settlement_type: b.settlement_type as BillingDestinationItem['settlement_type'],
-                  intercompany_account: b.intercompany_account,
-                  intercompany_sub: b.intercompany_sub,
+                  transaction_code_id: b.transaction_code_id,
                   default_payment_method_id: b.default_payment_method_id,
                   credit_terms_days: b.credit_terms_days,
                 };
@@ -120,10 +138,10 @@ export default async function BillingDestinationsPage() {
                       )}
                     </TableCell>
                     <TableCell className="font-mono font-bold tabular text-xs">
-                      {b.intercompany_account ? (
+                      {tc ? (
                         <>
-                          {b.intercompany_account}
-                          {b.intercompany_sub ? <span className="text-muted-foreground"> / {b.intercompany_sub}</span> : null}
+                          {tc.code}
+                          <span className="text-muted-foreground"> · {tc.debit_account ?? '—'}→{tc.credit_account ?? '—'}</span>
                         </>
                       ) : (
                         <span className="text-muted-foreground font-medium">—</span>
@@ -148,6 +166,7 @@ export default async function BillingDestinationsPage() {
                       <BillingDestinationRowActions
                         item={{ ...itemRecord, active: b.active }}
                         paymentMethods={paymentMethods}
+                        transactionCodes={transactionCodes}
                       />
                     </TableCell>
                   </TableRow>

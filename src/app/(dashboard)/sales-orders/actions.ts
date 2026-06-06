@@ -1774,12 +1774,30 @@ async function resolvePaymentTxCodeId(
   return data?.[0]?.id ?? null;
 }
 
+// AR (掛帳) code rides the bill_to destination: one bound code carrying its own
+// DR/CR (and DR/CR branch). A method=ar folio line uses this instead of the
+// branch+method payment code, so the receivable books against the right hotel.
+async function resolveBillToTxCodeId(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  billingDestinationId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('billing_destinations')
+    .select('transaction_code_id')
+    .eq('id', billingDestinationId)
+    .maybeSingle();
+  return data?.transaction_code_id ?? null;
+}
+
 const paymentSchema = z.object({
   order_id: z.string().uuid(),
   order_customer_id: z.string().uuid().optional().nullable(),
   // Posting branch (which branch's open shift receives this). Defaults to the
   // order branch when omitted; the dialog lets the operator pick.
   branch_id: z.string().uuid().optional().nullable(),
+  // Bill to (billing destination). Required when method = ar — it resolves the
+  // AR transaction code and is stamped on the folio line for SOA grouping.
+  billing_destination_id: z.string().uuid().optional().nullable(),
   payment_method_id: z.string().uuid(),
   amount: z.coerce.number().positive(),
   payment_ref: z.string().max(80).optional().nullable(),
@@ -1890,10 +1908,22 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     svcCard = card;
   }
 
-  // Resolve the branch-scoped GL codes for this method up front: the payment
-  // code (non-tip) and, if there are tips, the tip code (CR tips payable).
-  const paymentTxCodeId = await resolvePaymentTxCodeId(supabase, postBranchId, d.payment_method_id);
-  if (!paymentTxCodeId) return { ok: false, error: 'No payment transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
+  // Resolve the GL code for this line. AR (掛帳) rides the bill_to destination's
+  // bound code; every other method uses the branch-scoped payment code. AR also
+  // requires a Bill to + a named guest (a statement must show who).
+  const isAr = method?.code?.toLowerCase() === 'ar';
+  let billingDestinationId: string | null = null;
+  let paymentTxCodeId: string | null;
+  if (isAr) {
+    if (!d.billing_destination_id) return { ok: false, error: 'Pick a Bill to for an AR (on-account) charge.' };
+    if (!d.order_customer_id) return { ok: false, error: 'Pick the guest for an AR charge — the statement must show a name.' };
+    billingDestinationId = d.billing_destination_id;
+    paymentTxCodeId = await resolveBillToTxCodeId(supabase, billingDestinationId);
+    if (!paymentTxCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
+  } else {
+    paymentTxCodeId = await resolvePaymentTxCodeId(supabase, postBranchId, d.payment_method_id);
+    if (!paymentTxCodeId) return { ok: false, error: 'No payment transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
+  }
   const tipTxCodeId = tips.length > 0 ? await resolveTxCodeId(supabase, { branchId: postBranchId, type: 'payment', methodId: d.payment_method_id, creditAccount: TX_TIPS_PAYABLE }) : null;
   if (tips.length > 0 && !tipTxCodeId) return { ok: false, error: 'No tip transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
 
@@ -1912,6 +1942,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       payment_ref: d.payment_ref || null,
       stored_value_card_id: svcCard?.id ?? null,
       branch_id: postBranchId,
+      billing_destination_id: billingDestinationId,
       transaction_code_id: paymentTxCodeId,
     })
     .select('id')
@@ -1997,6 +2028,7 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
 const refundSchema = z.object({
   order_id: z.string().uuid(),
   branch_id: z.string().uuid().optional().nullable(),
+  billing_destination_id: z.string().uuid().optional().nullable(),
   payment_method_id: z.string().uuid(),
   amount: z.coerce.number().positive(),
   payment_ref: z.string().max(80).optional().nullable(),
@@ -2058,10 +2090,22 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
   }
 
   // Refund = an append-only folio line (kind=refund). Amount is stored positive;
-  // the kind carries the direction. paid = sum(payment) - sum(refund).
-  // Reuses the method's payment code (a refund reverses a payment).
-  const refundTxCodeId = await resolvePaymentTxCodeId(supabase, postBranchId, d.payment_method_id);
-  if (!refundTxCodeId) return { ok: false, error: 'No payment transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
+  // the kind carries the direction. paid = sum(payment) - sum(refund). AR refunds
+  // ride the bill_to code (need a Bill to + guest); other methods reuse the
+  // method's payment code (a refund reverses a payment).
+  const isAr = method?.code?.toLowerCase() === 'ar';
+  let billingDestinationId: string | null = null;
+  let refundTxCodeId: string | null;
+  if (isAr) {
+    if (!d.billing_destination_id) return { ok: false, error: 'Pick a Bill to for an AR refund.' };
+    if (!d.order_customer_id) return { ok: false, error: 'Pick the guest for an AR refund — the statement must show a name.' };
+    billingDestinationId = d.billing_destination_id;
+    refundTxCodeId = await resolveBillToTxCodeId(supabase, billingDestinationId);
+    if (!refundTxCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
+  } else {
+    refundTxCodeId = await resolvePaymentTxCodeId(supabase, postBranchId, d.payment_method_id);
+    if (!refundTxCodeId) return { ok: false, error: 'No payment transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
+  }
   const { data: refundLine, error: pe } = await supabase
     .from('folio_lines')
     .insert({
@@ -2075,6 +2119,7 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
       payment_ref: d.payment_ref || null,
       stored_value_card_id: d.stored_value_card_id || null,
       branch_id: postBranchId,
+      billing_destination_id: billingDestinationId,
       transaction_code_id: refundTxCodeId,
     })
     .select('id')

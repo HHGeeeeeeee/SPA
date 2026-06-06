@@ -138,6 +138,7 @@ interface Props {
     editable: boolean;
     service_date: string;
     service_location_type: string | null;
+    billing_to_id: string | null;
   };
   customers: OrderCustomer[];
   items: OrderItem[];
@@ -168,6 +169,7 @@ interface Props {
   orderBranchId: string | null;
   transactionCodes: { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[];
   openShifts: { branchId: string; label: string }[];
+  billingDestinations: { id: string; code: string; name: string; tx_code: string | null }[];
 }
 
 const NONE = '__none__';
@@ -292,6 +294,7 @@ export function OrderWorkspace({
   orderBranchId,
   transactionCodes,
   openShifts,
+  billingDestinations,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -1041,7 +1044,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Payments & refunds</CardTitle>
-                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods.filter((m) => m.code !== 'ar')} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} />
+                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} billingDestinations={billingDestinations} orderBillingToId={order.billing_to_id} guests={customers.map((c) => ({ id: c.id, name: c.customer_name }))} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}

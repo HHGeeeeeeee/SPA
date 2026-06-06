@@ -9,14 +9,14 @@ import { requireAdmin } from '@/lib/auth';
 
 type BillingUpdate = Database['public']['Tables']['billing_destinations']['Update'];
 
-const noDash = z.string().regex(/^[^-]*$/, 'Cannot contain "-" (Acumatica constraint)');
-
 const schema = z.object({
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
   settlement_type: z.enum(['intercompany', 'third_party']),
-  intercompany_account: z.string().max(20).optional().nullable().or(z.literal('')),
-  intercompany_sub: noDash.max(20).optional().nullable().or(z.literal('')),
+  // The single transaction code that drives BOTH the AR booking (掛帳) line and
+  // the settle line — it carries its own DR/CR (and DR/CR branches), so one code
+  // per destination is enough. Supersedes the old intercompany_account/sub GL.
+  transaction_code_id: z.string().uuid().optional().nullable(),
   default_payment_method_id: z.string().uuid().optional().nullable(),
   credit_terms_days: z.coerce.number().int().min(0).max(365).default(30),
 });
@@ -35,8 +35,7 @@ export async function createBillingDestination(input: unknown): Promise<ActionRe
     code: parsed.data.code,
     name: parsed.data.name,
     settlement_type: parsed.data.settlement_type,
-    intercompany_account: parsed.data.intercompany_account || null,
-    intercompany_sub: parsed.data.intercompany_sub || null,
+    transaction_code_id: parsed.data.transaction_code_id || null,
     default_payment_method_id: parsed.data.default_payment_method_id || null,
     credit_terms_days: parsed.data.credit_terms_days,
     active: true,
@@ -58,8 +57,7 @@ export async function updateBillingDestination(input: unknown): Promise<ActionRe
   const patch: BillingUpdate = {};
   if (d.name !== undefined) patch.name = d.name;
   if (d.settlement_type !== undefined) patch.settlement_type = d.settlement_type;
-  if (d.intercompany_account !== undefined) patch.intercompany_account = d.intercompany_account || null;
-  if (d.intercompany_sub !== undefined) patch.intercompany_sub = d.intercompany_sub || null;
+  if (d.transaction_code_id !== undefined) patch.transaction_code_id = d.transaction_code_id || null;
   if (d.default_payment_method_id !== undefined)
     patch.default_payment_method_id = d.default_payment_method_id || null;
   if (d.credit_terms_days !== undefined) patch.credit_terms_days = d.credit_terms_days;

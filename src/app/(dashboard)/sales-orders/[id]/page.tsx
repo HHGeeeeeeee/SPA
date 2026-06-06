@@ -84,7 +84,7 @@ async function fetchData(id: string) {
     // All customer sources / billing destinations — for the inline Source /
     // Billing editor on the order detail panel.
     supabase.from('customer_sources').select('id, code, name, default_billing_to_id').order('code'),
-    supabase.from('billing_destinations').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('billing_destinations').select('id, code, name, transaction_code:transaction_codes ( code )').eq('active', true).order('code'),
     // All active branches + their business units — for the inline Branch /
     // Business Unit editor on the order detail panel.
     supabase.from('branches').select('id, code, name, branch_business_units ( business_units ( id, name ) )').eq('active', true).order('code'),
@@ -240,7 +240,12 @@ async function fetchData(id: string) {
     })),
     capabilityByEmployee,
     allSources: (srcAll.data ?? []) as { id: string; code: string; name: string; default_billing_to_id: string | null }[],
-    allBilling: (billAll.data ?? []) as { id: string; code: string; name: string }[],
+    allBilling: (billAll.data ?? []).map((b) => ({
+      id: b.id,
+      code: b.code,
+      name: b.name,
+      tx_code: (Array.isArray(b.transaction_code) ? b.transaction_code[0] : b.transaction_code)?.code ?? null,
+    })) as { id: string; code: string; name: string; tx_code: string | null }[],
     allBranches: (() => {
       return (brAll.data ?? [])
         .filter((b) => allowedBranchIds.has(b.id))
@@ -535,6 +540,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           editable,
           service_date: order.service_date,
           service_location_type: order.service_location_type,
+          billing_to_id: order.billing_to_id,
         }}
         customers={customers}
         items={items}
@@ -561,6 +567,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         orderBranchId={orderBranchId}
         transactionCodes={transactionCodes}
         openShifts={openShifts}
+        billingDestinations={allBilling}
       />
     </div>
   );

@@ -3,69 +3,32 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { createAuditedClient, createServiceClient } from '@/lib/supabase/server';
+import { createAuditedClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch, getAllowedBranchIds } from '@/lib/branch-access';
 import { assertNoBlockedClose } from '@/lib/business-day';
-import { postToErp, acumaticaConfigured, type PostToErpResult } from '@/lib/erp-posting';
-import { pushGLEntry, attachFileToJournal, type GLLine } from '@/lib/acumatica';
-import { readAcuSessionCookie } from '@/lib/session';
-import { renderSoaPdf } from '@/lib/soa-pdf';
+import { getCurrentOpenShift } from '@/app/(dashboard)/reconciliation/shift-remittance/actions';
 
-// Render the SOA voucher PDF and return it as a fresh ArrayBuffer payload for
-// postToErp's renderedAttachment slot. Best-effort: a failed render returns
-// undefined so the post still runs (and just doesn't get the PDF attached).
-// Buffer is copied into a new ArrayBuffer because Node Buffer's underlying
-// buffer may be SharedArrayBuffer, which attachFileToJournal doesn't accept.
-async function buildSoaAttachment(soaId: string): Promise<{ filename: string; buffer: ArrayBuffer; mimeType: string } | undefined> {
-  try {
-    const pdf = await renderSoaPdf(soaId);
-    if (!pdf) return undefined;
-    const ab = new ArrayBuffer(pdf.buffer.byteLength);
-    new Uint8Array(ab).set(pdf.buffer);
-    return { filename: pdf.filename, buffer: ab, mimeType: 'application/pdf' };
-  } catch (e) {
-    console.error('[SOA PDF render] failed:', e instanceof Error ? e.message : String(e));
-    return undefined;
-  }
-}
-
-// AR control account — constant for the whole SPA entity (CR side of a settle).
-const AR_ACCOUNT = '10200';
-const AR_SUBACCOUNT = '000-000-000'; // dashes stripped before posting
+// ─────────────────────────────────────────────────────────────────────────────
+// SOA is now built on folio_lines, not orders. Accounts receivable is an explicit
+// ar-method folio line (掛帳): kind=payment (+) / refund (−), carrying a Bill to
+// (billing_destination_id) and a guest. SOA "prep" groups the unbilled AR lines
+// (soa_session_id IS NULL) for one billing destination × branch into a revenue_soa
+// session. Settling opens ONE session-scoped folio settle line (order_id NULL),
+// and every AR line in the session points back to it via settled_by_folio_line_id.
+// Voiding a settle reverses that. There is no per-settle ERP push anymore — the
+// folio ledger is the single base, and ERP is derived later from Sales Remittance.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type ActionResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string };
 
 const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
 
-export interface SoaCandidate {
-  id: string;
-  order_no: string;
-  service_date: string;
-  total_cents: number;
+function phtToday(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-/** Closed AR orders for a billing destination AT ONE BRANCH in range, not yet on any SOA. */
-export async function loadSoaCandidates(billingToId: string, branchId: string, from: string, to: string): Promise<SoaCandidate[]> {
-  const supabase = await createAuditedClient();
-  const [{ data: orders }, { data: taken }] = await Promise.all([
-    supabase
-      .from('orders')
-      .select('id, order_no, service_date, total_cents, status')
-      .eq('billing_to_id', billingToId)
-      .eq('branch_id', branchId)
-      .eq('status', 'closed')
-      .is('deleted_at', null)
-      .gte('service_date', from)
-      .lte('service_date', to),
-    supabase.from('revenue_soa_orders').select('order_id'),
-  ]);
-  const takenIds = new Set((taken ?? []).map((t) => t.order_id));
-  return (orders ?? [])
-    .filter((o) => !takenIds.has(o.id))
-    .map((o) => ({ id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents }));
-}
-
+// ── Shared shapes (unchanged — the UI keys off these) ───────────────────────
 export interface SoaItemLine {
   guest: string;
   service: string;
@@ -88,12 +51,13 @@ export interface SoaGroup {
   orders: SoaOrderLine[];
 }
 
-// Raw order shape (with guests + service lines) as selected for SOA detail.
+// The order graph hanging off an AR folio line, as selected for SOA detail.
 interface RawSoaOrder {
   id: string;
   order_no: string;
   service_date: string;
-  total_cents: number;
+  branch_id: string | null;
+  branch: { code: string; name: string } | { code: string; name: string }[] | null;
   order_customers: { id: string; customer_name: string; seq_no: number }[] | null;
   order_items: {
     order_customer_id: string | null;
@@ -106,16 +70,27 @@ interface RawSoaOrder {
   }[] | null;
 }
 
-// One order → its SOA order line, with a per-service-line breakdown ordered by
-// guest seq. Shared by the Generate workspace and the History detail.
-// We drop cancelled lines AND zero-list-price placeholders: a real service
-// always carries a list price (DIS-90 discounts net to 0 but list stays
-// positive), so a `list_price_cents <= 0` row is a junk / orphan item that
-// shouldn't appear on the statement.
-function toSoaOrderLine(o: RawSoaOrder): SoaOrderLine {
+// One AR folio line joined to its order + bill_to, as returned by the loader.
+interface ArFolioRow {
+  id: string;
+  amount_cents: number;
+  kind: string;
+  order_id: string | null;
+  billing_destination_id: string | null;
+  order: RawSoaOrder | RawSoaOrder[] | null;
+  billing: { id: string; code: string; name: string; settlement_type: string } | { id: string; code: string; name: string; settlement_type: string }[] | null;
+}
+
+// payment = +, refund = − (a refund reduces what the hotel owes).
+const signed = (kind: string, cents: number): number => (kind === 'refund' ? -cents : cents);
+
+// Build an order's SOA detail line from its graph. Mirrors the old order-base
+// renderer (drop cancelled + zero-list placeholders), but the order total is the
+// AR net we pass in, not the order's own total.
+function toSoaOrderLine(o: RawSoaOrder, netCents: number): SoaOrderLine {
   const name = new Map((o.order_customers ?? []).map((c) => [c.id, c.customer_name]));
   const seq = new Map((o.order_customers ?? []).map((c) => [c.id, c.seq_no]));
-  const lines: SoaItemLine[] = (o.order_items ?? [])
+  const lines: (SoaItemLine & { _seq: number })[] = (o.order_items ?? [])
     .filter((it) => it.status !== 'cancelled' && (it.list_price_cents ?? 0) > 0)
     .map((it) => ({
       guest: name.get(it.order_customer_id ?? '') ?? 'Guest',
@@ -126,288 +101,96 @@ function toSoaOrderLine(o: RawSoaOrder): SoaOrderLine {
       discount_cents: it.discount_amount_cents ?? 0,
       net_cents: it.final_amount_cents ?? 0,
     }))
-    .sort((a, b) => a._seq - b._seq)
-    .map(({ _seq, ...rest }) => rest);
-  return { id: o.id, order_no: o.order_no, service_date: o.service_date, total_cents: o.total_cents, lines };
-}
-
-export interface SoaHistoryRow {
-  id: string;
-  soa_no: string;
-  status: string;
-  settlement_type: string | null;
-  period_from: string;
-  period_to: string;
-  total_cents: number;
-  outstanding_cents: number;
-  billing_code: string | null;
-  billing_name: string | null;
-  // ERP voucher fields — populated once the settle / payment journal is posted.
-  // gl_batch_nbr is the Acumatica F-number shown next to the SOA in History so
-  // the desk can cross-reference Acumatica without re-opening the SOA detail.
-  gl_batch_nbr: string | null;
-  posting_status: string | null;
-  posting_error: string | null;
-  // The orders stated on this SOA (for the expandable History detail). Empty for
-  // voided statements — voiding releases the order links.
-  detail: SoaOrderLine[];
-}
-
-/** All statements, newest first, each with its stated-orders detail. */
-export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
-  const supabase = await createAuditedClient();
-  // gl_batch_nbr / posting_status / posting_error aren't in the generated DB
-  // types yet — read through an untyped surface and rely on the explicit
-  // mapping below to keep the public SoaHistoryRow strict.
-  const { data } = await (supabase.from('revenue_soa') as unknown as {
-    select: (c: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<Record<string, unknown>> | null }> };
-  })
-    .select(`
-      id, soa_no, status, settlement_type, period_from, period_to, total_cents, outstanding_cents,
-      gl_batch_nbr, posting_status, posting_error,
-      billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name ),
-      revenue_soa_orders (
-        order:orders (
-          id, order_no, service_date, total_cents,
-          order_customers ( id, customer_name, seq_no ),
-          order_items ( order_customer_id, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status, service:service_items ( name ) )
-        )
-      )
-    `)
-    .order('created_at', { ascending: false });
-  return (data ?? []).map((raw) => {
-    const s = raw as {
-      id: string; soa_no: string; status: string; settlement_type: string | null;
-      period_from: string; period_to: string; total_cents: number; outstanding_cents: number | null;
-      gl_batch_nbr: string | null; posting_status: string | null; posting_error: string | null;
-      billing: { code: string | null; name: string | null } | { code: string | null; name: string | null }[] | null;
-      revenue_soa_orders: { order: RawSoaOrder | RawSoaOrder[] | null }[] | null;
-    };
-    const b = one(s.billing);
-    const detail = (s.revenue_soa_orders ?? [])
-      .map((link) => one(link.order) as RawSoaOrder | null)
-      .filter((o): o is RawSoaOrder => Boolean(o))
-      .map(toSoaOrderLine)
-      .sort((a, c) => a.service_date.localeCompare(c.service_date) || a.order_no.localeCompare(c.order_no));
-    return {
-      id: s.id, soa_no: s.soa_no, status: s.status, settlement_type: s.settlement_type,
-      period_from: s.period_from, period_to: s.period_to, total_cents: s.total_cents,
-      outstanding_cents: s.outstanding_cents ?? s.total_cents,
-      billing_code: b?.code ?? null, billing_name: b?.name ?? null,
-      gl_batch_nbr: s.gl_batch_nbr,
-      posting_status: s.posting_status,
-      posting_error: s.posting_error,
-      detail,
-    };
-  });
-}
-
-// ─────────────────────────── AR Balance ───────────────────────────
-// Receivables ledger view: how much is still owed, by whom, and how overdue.
-// It stores nothing new — it sums open SOA outstanding + unbilled closed AR.
-
-export interface ArSoa {
-  id: string;
-  soa_no: string;
-  settlement_type: string | null;
-  period_from: string;
-  period_to: string;
-  total_cents: number;
-  outstanding_cents: number;
-  due_date: string | null;
-  status: string;
-  days_overdue: number; // >0 only for past-due third-party statements
-}
-
-export interface ArDebtor {
-  billing_id: string;
-  code: string;
-  name: string;
-  settlement_type: string; // intercompany | third_party
-  unbilled_cents: number; // closed AR not yet stated on any SOA
-  outstanding_cents: number; // billed but not fully paid (Σ open-SOA outstanding)
-  current_cents: number; // not past due (unbilled + not-overdue outstanding)
-  overdue_cents: number; // past-due outstanding
-  total_cents: number; // unbilled + outstanding
-  unbilled_count: number;
-  soas: ArSoa[];
-}
-
-export interface ArBalance {
-  today: string; // PHT yyyy-mm-dd — the as-of date for the overdue split
-  debtors: ArDebtor[];
-  total_cents: number;
-  current_cents: number;
-  overdue_cents: number;
-}
-
-function phtToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-}
-
-/** Branch-scoped accounts-receivable balance, grouped by billing destination. */
-export async function loadArBalance(): Promise<ArBalance> {
-  const supabase = await createAuditedClient();
-  const allowed = [...(await getAllowedBranchIds())];
-  const today = phtToday();
-  const empty: ArBalance = { today, debtors: [], total_cents: 0, current_cents: 0, overdue_cents: 0 };
-  if (allowed.length === 0) return empty;
-
-  // AR billing destinations (those that bill on AR terms).
-  const { data: arMethod } = await supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle();
-  const arId = arMethod?.id ?? null;
-  const { data: bills } = await supabase
-    .from('billing_destinations')
-    .select('id, code, name, settlement_type, default_payment_method_id')
-    .eq('active', true);
-  const billInfo = new Map((bills ?? []).map((b) => [b.id, b]));
-  const arBillIds = (bills ?? []).filter((b) => arId && b.default_payment_method_id === arId).map((b) => b.id);
-
-  // Open statements in the allowed branches, plus all un-stated closed AR orders.
-  const [{ data: soas }, { data: orders }, { data: taken }] = await Promise.all([
-    supabase
-      .from('revenue_soa')
-      .select('id, soa_no, billing_to_id, settlement_type, period_from, period_to, total_cents, outstanding_cents, due_date, status, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name, settlement_type )')
-      .in('status', ['issued', 'partial_paid'])
-      .in('branch_id', allowed),
-    arBillIds.length
-      ? supabase
-          .from('orders')
-          .select('id, billing_to_id, total_cents')
-          .eq('status', 'closed')
-          .is('deleted_at', null)
-          .in('billing_to_id', arBillIds)
-          .in('branch_id', allowed)
-      : Promise.resolve({ data: [] as { id: string; billing_to_id: string | null; total_cents: number }[] }),
-    supabase.from('revenue_soa_orders').select('order_id'),
-  ]);
-  const takenIds = new Set((taken ?? []).map((t) => t.order_id));
-
-  const debtors = new Map<string, ArDebtor>();
-  const ensure = (billingId: string, code: string, name: string, settlement: string): ArDebtor => {
-    let d = debtors.get(billingId);
-    if (!d) {
-      d = {
-        billing_id: billingId, code, name, settlement_type: settlement,
-        unbilled_cents: 0, outstanding_cents: 0, current_cents: 0, overdue_cents: 0,
-        total_cents: 0, unbilled_count: 0, soas: [],
-      };
-      debtors.set(billingId, d);
-    }
-    return d;
-  };
-
-  // Open SOAs → outstanding, split current / overdue by due date.
-  for (const s of soas ?? []) {
-    const b = one(s.billing);
-    const d = ensure(s.billing_to_id, b?.code ?? '—', b?.name ?? '', b?.settlement_type ?? s.settlement_type ?? 'third_party');
-    const outstanding = s.outstanding_cents ?? s.total_cents;
-    const overdue = s.due_date != null && s.due_date < today && outstanding > 0;
-    const daysOverdue = overdue ? Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${s.due_date}T00:00:00Z`)) / 86400000) : 0;
-    d.outstanding_cents += outstanding;
-    if (overdue) d.overdue_cents += outstanding;
-    else d.current_cents += outstanding;
-    d.soas.push({
-      id: s.id, soa_no: s.soa_no, settlement_type: s.settlement_type,
-      period_from: s.period_from, period_to: s.period_to,
-      total_cents: s.total_cents, outstanding_cents: outstanding,
-      due_date: s.due_date, status: s.status, days_overdue: daysOverdue,
-    });
-  }
-
-  // Unbilled closed AR orders → current (not yet billed, no due date).
-  for (const o of orders ?? []) {
-    if (!o.billing_to_id || takenIds.has(o.id)) continue;
-    const info = billInfo.get(o.billing_to_id);
-    const d = ensure(o.billing_to_id, info?.code ?? '—', info?.name ?? '', info?.settlement_type ?? 'third_party');
-    d.unbilled_cents += o.total_cents;
-    d.current_cents += o.total_cents;
-    d.unbilled_count += 1;
-  }
-
-  const list = [...debtors.values()]
-    .map((d) => {
-      d.total_cents = d.unbilled_cents + d.outstanding_cents;
-      d.soas.sort((a, c) => (c.days_overdue - a.days_overdue) || a.soa_no.localeCompare(c.soa_no));
-      return d;
-    })
-    .filter((d) => d.total_cents > 0)
-    .sort((a, c) => (c.overdue_cents - a.overdue_cents) || (c.total_cents - a.total_cents) || a.code.localeCompare(c.code));
-
+    .sort((a, b) => a._seq - b._seq);
   return {
-    today,
-    debtors: list,
-    total_cents: list.reduce((s, d) => s + d.total_cents, 0),
-    current_cents: list.reduce((s, d) => s + d.current_cents, 0),
-    overdue_cents: list.reduce((s, d) => s + d.overdue_cents, 0),
+    id: o.id,
+    order_no: o.order_no,
+    service_date: o.service_date,
+    total_cents: netCents,
+    lines: lines.map(({ _seq, ...rest }) => rest),
   };
+}
+
+const AR_FOLIO_SELECT = `
+  id, amount_cents, kind, order_id, billing_destination_id,
+  order:orders!folio_lines_order_id_fkey (
+    id, order_no, service_date, branch_id,
+    branch:branches ( code, name ),
+    order_customers ( id, customer_name, seq_no ),
+    order_items ( order_customer_id, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status, service:service_items ( name ) )
+  ),
+  billing:billing_destinations!folio_lines_billing_destination_id_fkey ( id, code, name, settlement_type )
+`;
+
+// Resolve the ar payment_method id (every AR line carries it).
+async function arMethodId(supabase: Awaited<ReturnType<typeof createAuditedClient>>): Promise<string | null> {
+  const { data } = await supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle();
+  return data?.id ?? null;
+}
+
+// Fetch the AR folio lines that are not yet on a SOA (unbilled), optionally
+// scoped to one billing destination + branch. The caller filters by service date.
+async function loadUnbilledArLines(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  scope?: { billingToId: string; branchId: string },
+): Promise<ArFolioRow[]> {
+  const arId = await arMethodId(supabase);
+  if (!arId) return [];
+  let q = supabase
+    .from('folio_lines')
+    .select(AR_FOLIO_SELECT)
+    .eq('payment_method_id', arId)
+    .in('kind', ['payment', 'refund'])
+    .is('soa_session_id', null)
+    .not('order_id', 'is', null);
+  if (scope) q = q.eq('billing_destination_id', scope.billingToId);
+  const { data } = await q;
+  let rows = (data ?? []) as unknown as ArFolioRow[];
+  if (scope) rows = rows.filter((r) => (one(r.order)?.branch_id ?? null) === scope.branchId);
+  return rows;
 }
 
 /**
- * Every AR billing destination with closed orders in range that aren't on any
- * SOA yet — grouped, with per-guest detail. Drives the "Generate SOA" workspace.
+ * Every AR billing destination with unbilled AR folio lines whose order falls in
+ * range — grouped by billing × branch, with per-order detail. Drives the
+ * "Generate SOA" workspace.
  */
 export async function loadSoaWorkspace(from: string, to: string): Promise<SoaGroup[]> {
   const supabase = await createAuditedClient();
-  const { data: arMethod } = await supabase.from('payment_methods').select('id').eq('code', 'ar').maybeSingle();
-  const arId = arMethod?.id ?? null;
-  if (!arId) return [];
-  const { data: bills } = await supabase
-    .from('billing_destinations')
-    .select('id, code, name, settlement_type, default_payment_method_id')
-    .eq('active', true);
-  const billMap = new Map((bills ?? []).filter((b) => b.default_payment_method_id === arId).map((b) => [b.id, b]));
-  if (billMap.size === 0) return [];
+  const allowed = await getAllowedBranchIds();
+  const rows = await loadUnbilledArLines(supabase);
 
-  const [{ data: orders }, { data: taken }] = await Promise.all([
-    supabase
-      .from('orders')
-      .select('id, order_no, service_date, total_cents, billing_to_id, branch_id, branch:branches ( code, name ), order_customers ( id, customer_name, seq_no ), order_items ( order_customer_id, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status, service:service_items ( name ) )')
-      .in('billing_to_id', [...billMap.keys()])
-      .eq('status', 'closed')
-      .is('deleted_at', null)
-      .gte('service_date', from)
-      .lte('service_date', to)
-      .order('service_date'),
-    supabase.from('revenue_soa_orders').select('order_id'),
-  ]);
-  const takenIds = new Set((taken ?? []).map((t) => t.order_id));
+  // order_id → { order graph, net AR cents }, restricted to the date window +
+  // allowed branches.
+  const byOrder = new Map<string, { order: RawSoaOrder; net: number; billing: { id: string; code: string; name: string; settlement_type: string } }>();
+  for (const r of rows) {
+    const order = one(r.order);
+    const billing = one(r.billing);
+    if (!order || !billing || !order.branch_id) continue;
+    if (order.service_date < from || order.service_date > to) continue;
+    if (!allowed.has(order.branch_id)) continue;
+    const cur = byOrder.get(order.id) ?? { order, net: 0, billing };
+    cur.net += signed(r.kind, r.amount_cents);
+    byOrder.set(order.id, cur);
+  }
 
-  // One group (→ one statement) per billing × branch — a statement never mixes branches.
+  // Group order → (billing × branch). A statement never mixes branches.
   const groups = new Map<string, SoaGroup>();
-  for (const o of orders ?? []) {
-    if (takenIds.has(o.id) || !o.billing_to_id || !o.branch_id) continue;
-    const b = billMap.get(o.billing_to_id);
-    if (!b) continue;
-    const br = one(o.branch);
-    const key = `${b.id}:${o.branch_id}`;
+  for (const { order, net, billing } of byOrder.values()) {
+    if (net === 0) continue;
+    const br = one(order.branch);
+    const key = `${billing.id}:${order.branch_id}`;
     const g = groups.get(key) ?? {
-      key, billing_id: b.id, branch_id: o.branch_id, branch_code: br?.code ?? '—',
-      code: b.code, name: b.name, settlement_type: b.settlement_type, bookings: 0, total_cents: 0, orders: [],
+      key, billing_id: billing.id, branch_id: order.branch_id!, branch_code: br?.code ?? '—',
+      code: billing.code, name: billing.name, settlement_type: billing.settlement_type, bookings: 0, total_cents: 0, orders: [],
     };
     g.bookings += 1;
-    g.total_cents += o.total_cents;
-    g.orders.push(toSoaOrderLine(o as unknown as RawSoaOrder));
+    g.total_cents += net;
+    g.orders.push(toSoaOrderLine(order, net));
     groups.set(key, g);
   }
+  for (const g of groups.values()) g.orders.sort((a, b) => a.service_date.localeCompare(b.service_date) || a.order_no.localeCompare(b.order_no));
   return [...groups.values()].sort((a, b) => a.code.localeCompare(b.code) || a.branch_code.localeCompare(b.branch_code));
-}
-
-/** Generate one SOA per selected (billing × branch) group over the same period. */
-export async function generateSOAGroups(groups: { billing_to_id: string; branch_id: string }[], from: string, to: string): Promise<ActionResult<{ created: number }>> {
-  const session = await currentSession();
-  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
-  if (!groups.length) return { ok: false, error: 'Select at least one statement to generate' };
-  let created = 0;
-  const errors: string[] = [];
-  for (const g of groups) {
-    const r = await generateSOA({ billing_to_id: g.billing_to_id, branch_id: g.branch_id, period_from: from, period_to: to });
-    if (r.ok) created += 1;
-    else errors.push(r.error);
-  }
-  if (created === 0) return { ok: false, error: errors[0] ?? 'Nothing to generate' };
-  revalidatePath('/reconciliation/soa');
-  return { ok: true, data: { created } };
 }
 
 const createSchema = z.object({
@@ -417,14 +200,8 @@ const createSchema = z.object({
   period_to: z.string().min(1),
 });
 
-// Add `days` to a yyyy-mm-dd string, returning yyyy-mm-dd. Used to compute the
-// day-after-prior-coverage when auto-narrowing period_from on SOA generation.
-function addDaysYmd(ymd: string, days: number): string {
-  const d = new Date(`${ymd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
+/** Generate one SOA per (billing × branch) group: stamp the in-range unbilled AR
+ *  lines with the new session id. */
 export async function generateSOA(input: unknown): Promise<ActionResult<{ id: string }>> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
@@ -444,42 +221,26 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   if (!branch) return { ok: false, error: 'Branch not found' };
   if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
 
-  // Auto-narrow period_from to the day after the most recent live SOA's
-  // period_to for this billing destination, when its window overlaps the
-  // requested range. The picker is a "max window I care about" — without
-  // narrowing, a wide month pick (5/01–5/29) collides with the semi-monthly
-  // SOA already covering the first half (5/01–5/15) and trips
-  // no_soa_period_overlap. The orders are already de-duped by loadSoaCandidates
-  // (anything on a live SOA is excluded), so narrowing only changes the
-  // STORED period — the bills the new SOA captures are unaffected.
-  const { data: prior } = await supabase
-    .from('revenue_soa')
-    .select('period_to, soa_no')
-    .eq('billing_to_id', billing_to_id)
-    .in('status', ['issued', 'partial_paid', 'settled'])
-    .gte('period_to', period_from)
-    .lte('period_from', period_to)
-    .order('period_to', { ascending: false })
-    .limit(1);
-  const effectiveFrom = prior?.[0]?.period_to ? addDaysYmd(prior[0].period_to, 1) : period_from;
-  if (effectiveFrom > period_to) {
-    return { ok: false, error: `Already covered by ${prior![0]!.soa_no} (through ${prior![0]!.period_to}) — nothing new to bill` };
+  // Unbilled AR lines for this billing × branch, in range.
+  const rows = await loadUnbilledArLines(supabase, { billingToId: billing_to_id, branchId: branch_id });
+  const lineIds: string[] = [];
+  let subtotal = 0;
+  for (const r of rows) {
+    const order = one(r.order);
+    if (!order || order.service_date < period_from || order.service_date > period_to) continue;
+    lineIds.push(r.id);
+    subtotal += signed(r.kind, r.amount_cents);
   }
+  if (lineIds.length === 0) return { ok: false, error: 'No un-stated AR for this billing/branch/period' };
 
-  const candidates = await loadSoaCandidates(billing_to_id, branch_id, effectiveFrom, period_to);
-  if (candidates.length === 0) return { ok: false, error: 'No un-SOA’d closed orders for this billing/branch/period' };
-  const subtotal = candidates.reduce((s, c) => s + c.total_cents, 0);
-
-  const ym = effectiveFrom.replace(/-/g, '').slice(0, 6);
+  const ym = period_from.replace(/-/g, '').slice(0, 6);
   const prefix = `SOA-${ym}-${billing.code}-${branch.code}-`;
   const { data: last } = await supabase
     .from('revenue_soa').select('soa_no').like('soa_no', `${prefix}%`).order('soa_no', { ascending: false }).limit(1);
   const seq = last?.[0]?.soa_no ? Number(last[0].soa_no.slice(prefix.length)) : 0;
   const soa_no = `${prefix}${String(seq + 1).padStart(3, '0')}`;
 
-  // Generated statements are issued immediately (no separate Issue step). Stamp
-  // the statement date now; third-party gets a due date from its credit terms.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = phtToday();
   const dueDate = billing.settlement_type === 'third_party' && (billing.credit_terms_days ?? 0) > 0
     ? new Date(Date.now() + (billing.credit_terms_days ?? 0) * 86400000).toISOString().slice(0, 10)
     : null;
@@ -487,7 +248,7 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
   const { data: soa, error } = await supabase
     .from('revenue_soa')
     .insert({
-      soa_no, billing_to_id, branch_id, period_from: effectiveFrom, period_to,
+      soa_no, billing_to_id, branch_id, period_from, period_to,
       settlement_type: billing.settlement_type,
       subtotal_cents: subtotal, total_cents: subtotal, paid_cents: 0, outstanding_cents: subtotal,
       status: 'issued', issued_date: today, due_date: dueDate,
@@ -496,486 +257,418 @@ export async function generateSOA(input: unknown): Promise<ActionResult<{ id: st
     .single();
   if (error || !soa) return { ok: false, error: error?.message ?? 'Could not create SOA' };
 
-  const { error: le } = await supabase.from('revenue_soa_orders').insert(
-    candidates.map((c) => ({ soa_id: soa.id, order_id: c.id, amount_cents: c.total_cents })),
-  );
+  const { error: le } = await supabase.from('folio_lines').update({ soa_session_id: soa.id }).in('id', lineIds);
   if (le) return { ok: false, error: le.message };
 
   revalidatePath('/reconciliation/soa');
   return { ok: true, data: { id: soa.id } };
 }
 
-interface PreparedSettleSoa {
-  id: string;
-  soa_no: string;
-  branch_id: string;
-  /** SPA branch (the providing side) — used as the journal-level branch and
-   *  the CR (AR clear) line's branch. */
-  branchCode: string;
-  period_to: string;
-  total_cents: number;
-  intercompany_account: string;
-  intercompany_sub: string;
-  /** Billing destination's code (HHO / HJH / HCC / …). This is the hotel's
-   *  own Acumatica branch — the DR side of an intercompany settle lands on
-   *  the hotel's books, not the SPA's. */
-  billing_branch_code: string;
-}
-
-/**
- * Load + validate a list of SOAs for batch settle. Surfaces the first row that
- * can't be settled (wrong type / wrong status / no branch access / blocked
- * close-day) so the batch UI can show one clean reason instead of a half-done
- * post. Returns the dehydrated, branch-grouping-ready records.
- */
-async function loadSettleable(ids: string[]): Promise<{ ok: true; rows: PreparedSettleSoa[] } | { ok: false; error: string }> {
-  const supabase = await createAuditedClient();
-  const { data } = await supabase
-    .from('revenue_soa')
-    .select('id, soa_no, status, total_cents, settlement_type, branch_id, period_to, billing:billing_destinations ( code, intercompany_account, intercompany_sub ), branch:branches ( code )')
-    .in('id', ids);
-  if (!data || data.length === 0) return { ok: false, error: 'SOA not found' };
-  const rows: PreparedSettleSoa[] = [];
-  for (const soa of data) {
-    if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: `${soa.soa_no}: no access to this branch` };
-    if (soa.settlement_type !== 'intercompany') return { ok: false, error: `${soa.soa_no}: third-party statements are settled via Record Payment` };
-    if (soa.status !== 'issued') return { ok: false, error: `${soa.soa_no}: only an issued statement can be settled` };
-    try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
-    const billing = one<{ code: string | null; intercompany_account: string | null; intercompany_sub: string | null }>(soa.billing);
-    if (!billing?.code) return { ok: false, error: `${soa.soa_no}: billing destination missing a code (intercompany branch unknown)` };
-    rows.push({
-      id: soa.id,
-      soa_no: soa.soa_no,
-      branch_id: soa.branch_id,
-      branchCode: one<{ code: string }>(soa.branch)?.code ?? '',
-      period_to: soa.period_to,
-      total_cents: soa.total_cents,
-      intercompany_account: billing?.intercompany_account ?? '50170',
-      intercompany_sub: billing?.intercompany_sub ?? '000000T03',
-      billing_branch_code: billing.code,
-    });
-  }
-  return { ok: true, rows };
-}
-
-/**
- * Atomically post ONE GL journal for a branch-grouped batch of intercompany
- * SOAs. Mirrors the Revenue Confirm batch pattern: one pushGLEntry call with
- * stacked DR cost / CR AR pairs for every SOA in the group; on success all
- * SOAs share the same gl_batch_nbr and flip to settled; on failure every SOA
- * reverts to issued + posting_status='failed'.
- *
- * GL date = max(period_to) of the group — the most recent semi-monthly cutoff
- * the journal represents. Acumatica journals carry a single date/branch, so
- * mixed-period or mixed-branch selections are split into separate groups by
- * the caller.
- */
-async function postSoaSettleBatch(group: PreparedSettleSoa[]): Promise<{ ok: true; batchNbr: string | null } | { ok: false; error: string }> {
-  const session = await currentSession();
-  const svc = createServiceClient();
-  const ids = group.map((s) => s.id);
-  const branchCode = group[0]!.branchCode;
-  const glDate = group.map((s) => s.period_to).sort().at(-1)!;
-  const totalCents = group.reduce((sum, s) => sum + s.total_cents, 0);
-  const soaNos = group.map((s) => s.soa_no);
-
-  // Build all DR cost / CR AR lines up front so a render failure on one PDF
-  // doesn't half-post the journal.
-  //
-  // Intercompany branch placement:
-  //   - DR cost (50170): lands on the HOTEL's branch (HCC, HHO, HJH, …) —
-  //     that's where the cost should appear since the hotel is bearing it.
-  //     `branch` override on the line forces this regardless of the
-  //     journal-level branch.
-  //   - CR AR (10200):   stays on the SPA's branch (HSPA2) — clears the
-  //     receivable from the SPA's books. Left without a per-line branch so
-  //     it inherits the journal's `branch` (= group's branchCode = SPA).
-  const allLines: GLLine[] = group.flatMap((s) => {
-    const amount = s.total_cents / 100;
-    return [
-      {
-        account: s.intercompany_account,
-        sub_account: s.intercompany_sub,
-        branch: s.billing_branch_code,
-        debit_amount: amount,
-        credit_amount: null,
-        transaction_desc: `${s.soa_no} intercompany cost`,
-      },
-      {
-        account: AR_ACCOUNT,
-        sub_account: AR_SUBACCOUNT,
-        debit_amount: null,
-        credit_amount: amount,
-        transaction_desc: `${s.soa_no} AR settle`,
-      },
-    ];
-  });
-
-  // Loose-typed updater — posting_status / gl_batch_nbr aren't in the generated
-  // types yet. Mirrors the Revenue Confirm batch helper.
-  const updateAll = (patch: Record<string, unknown>) =>
-    (svc.from('revenue_soa') as unknown as { update: (p: Record<string, unknown>) => { in: (c: string, v: string[]) => Promise<unknown> } })
-      .update(patch)
-      .in('id', ids);
-
-  // Acumatica not wired → flip every SOA to settled without a voucher number.
-  // Keeps pre-integration flows working (same policy as postToErp).
-  if (!acumaticaConfigured()) {
-    await updateAll({ status: 'settled', paid_cents: 0, outstanding_cents: 0 });
-    // paid_cents needs the per-row total — write each one.
-    for (const s of group) {
-      await svc.from('revenue_soa').update({ paid_cents: s.total_cents }).eq('id', s.id);
-    }
-    return { ok: true, batchNbr: null };
-  }
-
-  await updateAll({ posting_status: 'posting', posting_error: null });
-
-  const { data: logRow } = await (svc.from('erp_posting_log') as unknown as {
-    insert: (p: Record<string, unknown>) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null }> } };
-  })
-    .insert({
-      entity_type: 'soa_settle_batch',
-      entity_id: ids[0],
-      status: 'pending',
-      payload: { branch_code: branchCode, date: glDate, soa_ids: ids, soa_nos: soaNos, count: group.length, total_cents: totalCents, lines: allLines },
-      posted_by_staff_id: session?.staffUserId ?? null,
-      acu_session_user_id: session?.acumaticaUserId ?? null,
-    })
-    .select('id')
-    .single();
-
-  const cookie = await readAcuSessionCookie();
-  try {
-    const description = group.length === 1
-      ? `${soaNos[0]} intercompany settle`
-      : `Intercompany settle batch · ${group.length} SOAs (${branchCode})`;
-    const res = await pushGLEntry({ date: glDate, branch: branchCode, description, currency: 'PHP', lines: allLines }, cookie);
-
-    // One voucher, every SOA in the group references it.
-    for (const s of group) {
-      await (svc.from('revenue_soa') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
-        .update({ status: 'settled', gl_batch_nbr: res.batchNbr, posting_status: 'posted', posting_error: null, paid_cents: s.total_cents, outstanding_cents: 0 })
-        .eq('id', s.id);
-    }
-    if (logRow) {
-      await (svc.from('erp_posting_log') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
-        .update({ status: 'success', batch_nbr: res.batchNbr, erp_response: res.raw })
-        .eq('id', logRow.id);
-    }
-
-    // Best-effort: attach each SOA's voucher PDF to the journal so reviewers
-    // see the per-statement detail in Acumatica. A failure on one attach is
-    // logged but doesn't unwind the post.
-    if (res.batchNbr) {
-      const attachErrors: string[] = [];
-      for (const s of group) {
-        try {
-          const ra = await buildSoaAttachment(s.id);
-          if (!ra) continue;
-          await attachFileToJournal({ batchNbr: res.batchNbr, filename: ra.filename, fileBuffer: ra.buffer, mimeType: ra.mimeType }, cookie);
-        } catch (e) {
-          attachErrors.push(`${s.soa_no}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      if (attachErrors.length && logRow) {
-        await (svc.from('erp_posting_log') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
-          .update({ error_message: `Posted (batch ${res.batchNbr}) but PDF attach failed: ${attachErrors.join('; ')}` })
-          .eq('id', logRow.id);
-      }
-    }
-
-    return { ok: true, batchNbr: res.batchNbr };
-  } catch (err) {
-    const msg = (err as Error).message || 'GL push failed';
-    await updateAll({ posting_status: 'failed', posting_error: msg });
-    if (logRow) {
-      await (svc.from('erp_posting_log') as unknown as { update: (p: Record<string, unknown>) => { eq: (c: string, v: string) => Promise<unknown> } })
-        .update({ status: 'failed', error_message: msg })
-        .eq('id', logRow.id);
-    }
-    return { ok: false, error: msg };
-  }
-}
-
-/**
- * Settle an INTERCOMPANY statement = transfer to cost (no cash). Third-party
- * statements are settled by recording payments instead. Convenience wrapper
- * around the batch path so per-row Settle and AR-Balance batch Settle share
- * the same one-journal-per-call posting (see postSoaSettleBatch).
- */
-export async function settleSOA(id: string): Promise<ActionResult> {
-  const r = await settleSOABatch([id]);
-  if (!r.ok) return { ok: false, error: r.error };
-  return { ok: true };
-}
-
-/**
- * Batch-settle selected INTERCOMPANY statements as ONE GL journal per branch.
- * Acumatica journals carry a single branch + date, so a mixed selection is
- * grouped by branch (and dated at the group's max period_to). Within a branch
- * group every SOA shares the same gl_batch_nbr — exactly like Revenue Confirm
- * batches Sales Orders into one voucher per branch/day.
- *
- * GL date policy = max(period_to) of the branch group: the cost transfer's
- * accounting period matches the semi-monthly cutoff the SOAs represent, not
- * the day a manager happened to click Settle (mirrors per-SOA policy).
- */
-export async function settleSOABatch(ids: string[]): Promise<ActionResult<{ settled: number; batchNbrs: string[] }>> {
+/** Generate one SOA per selected (billing × branch) group over the same period. */
+export async function generateSOAGroups(groups: { billing_to_id: string; branch_id: string }[], from: string, to: string): Promise<ActionResult<{ created: number }>> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
-  if (!ids.length) return { ok: false, error: 'Select at least one intercompany statement' };
-
-  const prepared = await loadSettleable(ids);
-  if (!prepared.ok) return { ok: false, error: prepared.error };
-
-  // Group by branch — one journal per branch (Acumatica journal = single branch).
-  const byBranch = new Map<string, PreparedSettleSoa[]>();
-  for (const s of prepared.rows) {
-    const g = byBranch.get(s.branch_id) ?? [];
-    g.push(s);
-    byBranch.set(s.branch_id, g);
-  }
-
-  let settled = 0;
-  const batchNbrs: string[] = [];
+  if (!groups.length) return { ok: false, error: 'Select at least one statement to generate' };
+  let created = 0;
   const errors: string[] = [];
-  for (const group of byBranch.values()) {
-    const r = await postSoaSettleBatch(group);
-    if (r.ok) {
-      settled += group.length;
-      if (r.batchNbr) batchNbrs.push(r.batchNbr);
-    } else {
-      errors.push(r.error);
-    }
+  for (const g of groups) {
+    const r = await generateSOA({ billing_to_id: g.billing_to_id, branch_id: g.branch_id, period_from: from, period_to: to });
+    if (r.ok) created += 1;
+    else errors.push(r.error);
   }
-  void session;
-
-  if (settled === 0) return { ok: false, error: errors[0] ?? 'Nothing to settle' };
+  if (created === 0) return { ok: false, error: errors[0] ?? 'Nothing to generate' };
   revalidatePath('/reconciliation/soa');
-  return { ok: true, data: { settled, batchNbrs } };
+  return { ok: true, data: { created } };
 }
 
-// PHT (Asia/Manila) today as yyyy-mm-dd — the latest acceptable paid_at.
-const todayPHT = () =>
-  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+export interface SoaHistoryRow {
+  id: string;
+  soa_no: string;
+  status: string;
+  settlement_type: string | null;
+  period_from: string;
+  period_to: string;
+  total_cents: number;
+  outstanding_cents: number;
+  billing_code: string | null;
+  billing_name: string | null;
+  // Kept for shape compatibility with the History UI; folio-base settle no longer
+  // pushes a GL voucher, so these stay null (ERP is derived from Sales Remittance).
+  gl_batch_nbr: string | null;
+  posting_status: string | null;
+  posting_error: string | null;
+  detail: SoaOrderLine[];
+}
 
-const paymentSchema = z.object({
+/** All statements, newest first, each with its folio-derived order detail. */
+export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
+  const supabase = await createAuditedClient();
+  const { data: soas } = await supabase
+    .from('revenue_soa')
+    .select('id, soa_no, status, settlement_type, period_from, period_to, total_cents, outstanding_cents, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name )')
+    .order('created_at', { ascending: false });
+  const soaList = soas ?? [];
+  if (soaList.length === 0) return [];
+
+  // Member AR lines for these sessions (order_id not null = the receivable lines;
+  // settle lines have order_id null and are excluded from the order detail).
+  const ids = soaList.map((s) => s.id);
+  const { data: lines } = await supabase
+    .from('folio_lines')
+    .select(`id, amount_cents, kind, soa_session_id, order_id, ${AR_FOLIO_SELECT}`)
+    .in('soa_session_id', ids)
+    .not('order_id', 'is', null);
+
+  // soa_session_id → (order_id → { order, net })
+  const bySession = new Map<string, Map<string, { order: RawSoaOrder; net: number }>>();
+  for (const raw of (lines ?? []) as unknown as (ArFolioRow & { soa_session_id: string })[]) {
+    const order = one(raw.order);
+    if (!order) continue;
+    const m = bySession.get(raw.soa_session_id) ?? new Map();
+    const cur = m.get(order.id) ?? { order, net: 0 };
+    cur.net += signed(raw.kind, raw.amount_cents);
+    m.set(order.id, cur);
+    bySession.set(raw.soa_session_id, m);
+  }
+
+  return soaList.map((s) => {
+    const b = one(s.billing as { code: string | null; name: string | null } | { code: string | null; name: string | null }[] | null);
+    const detail = [...(bySession.get(s.id)?.values() ?? [])]
+      .map(({ order, net }) => toSoaOrderLine(order, net))
+      .sort((a, c) => a.service_date.localeCompare(c.service_date) || a.order_no.localeCompare(c.order_no));
+    return {
+      id: s.id, soa_no: s.soa_no, status: s.status, settlement_type: s.settlement_type,
+      period_from: s.period_from, period_to: s.period_to, total_cents: s.total_cents,
+      outstanding_cents: s.outstanding_cents ?? s.total_cents,
+      billing_code: b?.code ?? null, billing_name: b?.name ?? null,
+      gl_batch_nbr: null, posting_status: null, posting_error: null,
+      detail,
+    };
+  });
+}
+
+// ─────────────────────────── AR Balance ───────────────────────────
+export interface ArSoa {
+  id: string;
+  soa_no: string;
+  settlement_type: string | null;
+  period_from: string;
+  period_to: string;
+  total_cents: number;
+  outstanding_cents: number;
+  due_date: string | null;
+  status: string;
+  days_overdue: number;
+}
+export interface ArDebtor {
+  billing_id: string;
+  code: string;
+  name: string;
+  settlement_type: string;
+  unbilled_cents: number;
+  outstanding_cents: number;
+  current_cents: number;
+  overdue_cents: number;
+  total_cents: number;
+  unbilled_count: number;
+  soas: ArSoa[];
+}
+export interface ArBalance {
+  today: string;
+  debtors: ArDebtor[];
+  total_cents: number;
+  current_cents: number;
+  overdue_cents: number;
+}
+
+/** Branch-scoped AR balance grouped by billing destination: unbilled AR folio
+ *  lines + open SOA outstanding. */
+export async function loadArBalance(): Promise<ArBalance> {
+  const supabase = await createAuditedClient();
+  const allowed = [...(await getAllowedBranchIds())];
+  const today = phtToday();
+  const empty: ArBalance = { today, debtors: [], total_cents: 0, current_cents: 0, overdue_cents: 0 };
+  if (allowed.length === 0) return empty;
+
+  const { data: bills } = await supabase
+    .from('billing_destinations')
+    .select('id, code, name, settlement_type')
+    .eq('active', true);
+  const billInfo = new Map((bills ?? []).map((b) => [b.id, b]));
+
+  const [{ data: soas }, rows] = await Promise.all([
+    supabase
+      .from('revenue_soa')
+      .select('id, soa_no, billing_to_id, settlement_type, period_from, period_to, total_cents, outstanding_cents, due_date, status, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name, settlement_type )')
+      .in('status', ['issued', 'partial_paid'])
+      .in('branch_id', allowed),
+    loadUnbilledArLines(supabase),
+  ]);
+
+  const debtors = new Map<string, ArDebtor>();
+  const ensure = (billingId: string, code: string, name: string, settlement: string): ArDebtor => {
+    let d = debtors.get(billingId);
+    if (!d) {
+      d = { billing_id: billingId, code, name, settlement_type: settlement, unbilled_cents: 0, outstanding_cents: 0, current_cents: 0, overdue_cents: 0, total_cents: 0, unbilled_count: 0, soas: [] };
+      debtors.set(billingId, d);
+    }
+    return d;
+  };
+
+  // Open SOAs → outstanding, split current / overdue by due date.
+  for (const s of soas ?? []) {
+    const b = one(s.billing);
+    const d = ensure(s.billing_to_id, b?.code ?? '—', b?.name ?? '', b?.settlement_type ?? s.settlement_type ?? 'third_party');
+    const outstanding = s.outstanding_cents ?? s.total_cents;
+    const overdue = s.due_date != null && s.due_date < today && outstanding > 0;
+    const daysOverdue = overdue ? Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${s.due_date}T00:00:00Z`)) / 86400000) : 0;
+    d.outstanding_cents += outstanding;
+    if (overdue) d.overdue_cents += outstanding; else d.current_cents += outstanding;
+    d.soas.push({ id: s.id, soa_no: s.soa_no, settlement_type: s.settlement_type, period_from: s.period_from, period_to: s.period_to, total_cents: s.total_cents, outstanding_cents: outstanding, due_date: s.due_date, status: s.status, days_overdue: daysOverdue });
+  }
+
+  // Unbilled AR folio lines (net) → current, grouped by bill_to (allowed branches).
+  const unbilledByDest = new Map<string, { net: number; orders: Set<string> }>();
+  for (const r of rows) {
+    const order = one(r.order);
+    if (!order || !order.branch_id || !allowed.includes(order.branch_id) || !r.billing_destination_id) continue;
+    const cur = unbilledByDest.get(r.billing_destination_id) ?? { net: 0, orders: new Set() };
+    cur.net += signed(r.kind, r.amount_cents);
+    if (order.id) cur.orders.add(order.id);
+    unbilledByDest.set(r.billing_destination_id, cur);
+  }
+  for (const [destId, { net, orders }] of unbilledByDest) {
+    if (net === 0) continue;
+    const info = billInfo.get(destId);
+    const d = ensure(destId, info?.code ?? '—', info?.name ?? '', info?.settlement_type ?? 'third_party');
+    d.unbilled_cents += net;
+    d.current_cents += net;
+    d.unbilled_count += orders.size;
+  }
+
+  const list = [...debtors.values()]
+    .map((d) => {
+      d.total_cents = d.unbilled_cents + d.outstanding_cents;
+      d.soas.sort((a, c) => (c.days_overdue - a.days_overdue) || a.soa_no.localeCompare(c.soa_no));
+      return d;
+    })
+    .filter((d) => d.total_cents !== 0)
+    .sort((a, c) => (c.overdue_cents - a.overdue_cents) || (c.total_cents - a.total_cents) || a.code.localeCompare(c.code));
+
+  return {
+    today,
+    debtors: list,
+    total_cents: list.reduce((s, d) => s + d.total_cents, 0),
+    current_cents: list.reduce((s, d) => s + d.current_cents, 0),
+    overdue_cents: list.reduce((s, d) => s + d.overdue_cents, 0),
+  };
+}
+
+// ─────────────────────────── Settle / Unsettle / Void ───────────────────────
+const settleSchema = z.object({
   soa_id: z.string().uuid(),
-  amount: z.coerce.number().positive(),
-  payment_method: z.string().max(60).optional().nullable(),
-  reference_no: z.string().max(120).optional().nullable(),
-  paid_at: z.string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date')
-    .refine((d) => d <= todayPHT(), 'Date received cannot be in the future')
-    .optional(),
-  note: z.string().max(300).optional().nullable(),
+  payment_method: z.enum(['cash', 'bank']),
   proof_file_path: z.string().max(400).optional().nullable(),
 });
 
 /**
- * Compose + post the GL entry for a third-party SOA collection. Resolves the
- * branch's settle transaction_code by payment method (cash → DR 10108, bank →
- * DR 10111, both CR 10200), and posts via postToErp with the proof attached.
- * Shared by recordSoaPayment (first attempt) and retrySoaPaymentPosting.
+ * Settle a statement with ONE session-scoped folio settle line (kind=payment,
+ * order_id NULL). It carries the destination's bound transaction code, posts to
+ * the branch's open shift (so it lands in Sales Remittance), and every AR line in
+ * the session points back to it via settled_by_folio_line_id. Both intercompany
+ * and third-party use this path; method is cash/bank for now.
  */
-async function postSoaPaymentToErp(args: {
-  paymentId: string;
-  soaNo: string;
-  branchId: string;
-  branchCode: string;
-  paidAtIso: string;
-  amountCents: number;
-  methodCode: string;
-  proofPath: string | null;
-}): Promise<PostToErpResult> {
-  const supabase = await createAuditedClient();
-  const amount = args.amountCents / 100;
-  const { data: pm } = await supabase.from('payment_methods').select('id').eq('code', args.methodCode).maybeSingle();
-  if (!pm) return { ok: false, error: `No payment method "${args.methodCode}"` };
-  const { data: tx } = await supabase
-    .from('transaction_codes')
-    .select('debit_account, debit_subaccount, credit_account, credit_subaccount')
-    .eq('branch_id', args.branchId)
-    .eq('transaction_type', 'settle')
-    .eq('payment_method_id', pm.id)
-    .eq('active', true)
-    .maybeSingle();
-  if (!tx?.debit_account || !tx?.credit_account) {
-    return { ok: false, error: `No settle transaction code configured for ${args.methodCode}` };
-  }
-  const tag = args.soaNo;
-  // Third-party AR collection journals only attach the PROOF (cash photo /
-  // remittance slip / bank receipt). The SOA PDF is intentionally NOT attached
-  // here — the journal represents the receipt event, and the proof is its
-  // primary document. Intercompany settle is the inverse: no proof exists, so
-  // the SOA PDF is attached there (see postSoaSettleBatch).
-  return await postToErp({
-    entityType: 'soa_payment',
-    table: 'revenue_soa_payments',
-    entityId: args.paymentId,
-    date: args.paidAtIso.slice(0, 10),
-    branch: args.branchCode,
-    description: `${tag} AR collection (${args.methodCode})`.trim(),
-    lines: [
-      { account: tx.debit_account, sub_account: tx.debit_subaccount ?? '000000000', debit_amount: amount, credit_amount: null, transaction_desc: `${tag} ${args.methodCode} receipt`.trim() },
-      { account: tx.credit_account, sub_account: tx.credit_subaccount ?? '000000000', debit_amount: null, credit_amount: amount, transaction_desc: `${tag} AR settle`.trim() },
-    ],
-    proofPath: args.proofPath ?? undefined,
-  });
-}
-
-/**
- * Record a (possibly partial) payment against a THIRD-PARTY statement. Updates
- * paid / outstanding and flips to partial_paid or settled, then posts the cash
- * receipt to ERP: DR cash/bank (per method, from transaction_codes) / CR AR.
- */
-export async function recordSoaPayment(input: unknown): Promise<ActionResult<{ batchNbr: string | null }>> {
+export async function settleSOA(input: unknown): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
-  const parsed = paymentSchema.safeParse(input);
+  const parsed = settleSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
-  const { soa_id, amount, payment_method, reference_no, paid_at, note, proof_file_path } = parsed.data;
+  const { soa_id, payment_method, proof_file_path } = parsed.data;
   const supabase = await createAuditedClient();
+
   const { data: soa } = await supabase
     .from('revenue_soa')
-    .select('soa_no, status, total_cents, paid_cents, settlement_type, branch_id, branch:branches ( code )')
+    .select('soa_no, status, total_cents, paid_cents, outstanding_cents, branch_id, billing_to_id, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( transaction_code_id )')
     .eq('id', soa_id)
     .single();
   if (!soa) return { ok: false, error: 'SOA not found' };
   if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
-  if (soa.settlement_type !== 'third_party') return { ok: false, error: 'Record Payment is for third-party statements; intercompany uses Settle' };
-  if (!['issued', 'partial_paid'].includes(soa.status)) return { ok: false, error: 'This statement is not open for payment' };
+  if (!['issued', 'partial_paid'].includes(soa.status)) return { ok: false, error: 'Only an open statement can be settled' };
   try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
-  const amountCents = Math.round(amount * 100);
-  const outstanding = soa.total_cents - soa.paid_cents;
-  if (amountCents > outstanding) return { ok: false, error: `Amount exceeds the outstanding balance (${(outstanding / 100).toLocaleString('en-PH')})` };
+  const txCodeId = one(soa.billing as { transaction_code_id: string | null } | { transaction_code_id: string | null }[] | null)?.transaction_code_id ?? null;
+  if (!txCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
 
-  // Cash physically lands in today's till, so it's stamped with the real time of
-  // entry and feeds the shift cash count via cashReceivedCents. Non-cash methods
-  // are back-office (no till impact) and keep the recorded date.
-  const isCash = (payment_method ?? '').toLowerCase() === 'cash';
-  const paidAtIso = isCash
-    ? new Date().toISOString()
-    : (paid_at ? `${paid_at}T00:00:00+08:00` : new Date().toISOString());
-  const ins = await supabase
-    .from('revenue_soa_payments')
+  const { data: pm } = await supabase.from('payment_methods').select('id').eq('code', payment_method).maybeSingle();
+  if (!pm) return { ok: false, error: `No payment method "${payment_method}"` };
+
+  const openShift = await getCurrentOpenShift(soa.branch_id);
+  if (!openShift) return { ok: false, error: 'No cash shift is open for this branch — open one on the Sales Remittance page before settling.' };
+
+  const amount = (soa.outstanding_cents ?? soa.total_cents - soa.paid_cents);
+  const { data: settleLine, error: se } = await supabase
+    .from('folio_lines')
     .insert({
-      soa_id, amount_cents: amountCents, paid_at: paidAtIso,
-      payment_method: payment_method || null, reference_no: reference_no || null, note: note || null,
+      order_id: null,
+      shift_id: openShift.id,
+      kind: 'payment',
+      amount_cents: amount,
+      posted_by: session!.staffUserId,
+      payment_method_id: pm.id,
+      branch_id: soa.branch_id,
+      billing_destination_id: soa.billing_to_id,
+      soa_session_id: soa_id,
+      transaction_code_id: txCodeId,
       proof_file_path: proof_file_path || null,
-      recorded_by: session!.staffUserId,
-    } as never)
+    })
     .select('id')
     .single();
-  if (ins.error || !ins.data) return { ok: false, error: ins.error?.message ?? 'Payment insert failed' };
-  const paymentId = (ins.data as { id: string }).id;
+  if (se || !settleLine) return { ok: false, error: se?.message ?? 'Could not post settle line' };
 
-  const newPaid = soa.paid_cents + amountCents;
-  const newOutstanding = soa.total_cents - newPaid;
-  const upd = await supabase
+  // Point every receivable line in the session back at the settle line.
+  const { error: ue } = await supabase
+    .from('folio_lines')
+    .update({ settled_by_folio_line_id: settleLine.id })
+    .eq('soa_session_id', soa_id)
+    .not('order_id', 'is', null);
+  if (ue) return { ok: false, error: ue.message };
+
+  const { error: soe } = await supabase
     .from('revenue_soa')
-    .update({ paid_cents: newPaid, outstanding_cents: newOutstanding, status: newOutstanding <= 0 ? 'settled' : 'partial_paid' })
+    .update({ status: 'settled', paid_cents: soa.total_cents, outstanding_cents: 0 })
     .eq('id', soa_id);
-  if (upd.error) return { ok: false, error: upd.error.message };
-
-  // ERP: clear the receivable — DR cash/bank (per method, from transaction_codes
-  // settle code), CR AR + attach the proof. The payment is already recorded; a
-  // posting failure is noted on the payment row (retriable), it doesn't undo
-  // the collection. No-op until Acumatica is configured. Intercompany uses
-  // settleSOA, not this path.
-  const postRes = await postSoaPaymentToErp({
-    paymentId,
-    soaNo: soa.soa_no ?? '',
-    branchId: soa.branch_id,
-    branchCode: one<{ code: string }>(soa.branch)?.code ?? '',
-    paidAtIso,
-    amountCents,
-    methodCode: (payment_method ?? '').toLowerCase(),
-    proofPath: proof_file_path ?? null,
-  });
-  // Surface the AR-receipt batch ref (`batchNbr` from PostToErpResult) so
-  // the success toast can show it. null in dev mode (no Acumatica). A
-  // posting failure is noted on the payment row (retriable) — the payment
-  // itself is already recorded, so we still return ok=true here.
-  const batchNbr = postRes.ok ? postRes.batchNbr : null;
+  if (soe) return { ok: false, error: soe.message };
 
   revalidatePath('/reconciliation/soa');
-  // A cash collection feeds the shift cash count — refresh that page too.
-  if (isCash) revalidatePath('/reconciliation/cash');
-  return { ok: true, data: { batchNbr } };
+  revalidatePath('/reconciliation/cash');
+  revalidatePath('/reconciliation');
+  return { ok: true };
 }
 
 /**
- * Re-attempt the ERP posting for a SOA payment whose previous posting failed.
- * Reads the payment + parent SOA, then re-runs the same compose-and-post via
- * postSoaPaymentToErp. The payment row's posting_status/error/batch_nbr is
- * updated by postToErp's own contract (success → posted + batch + attach proof;
- * failure → still failed, error refreshed, retried_count incremented in the
- * log). Manager-gated; only valid for rows that aren't already posted.
+ * Reverse a settle: post a NEGATIVE settle folio line (kind=refund, same method /
+ * branch / code), clear settled_by on every session line, and reopen the SOA.
  */
-export async function retrySoaPaymentPosting(paymentId: string): Promise<ActionResult<{ batchNbr: string | null }>> {
+export async function unsettleSOA(id: string): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const supabase = await createAuditedClient();
 
-  // The new columns (posting_status / proof_file_path / ...) aren't in the
-  // generated types yet — cast the read.
-  const sb = supabase as unknown as {
-    from: (t: string) => {
-      select: (c: string) => {
-        eq: (k: string, v: string) => {
-          maybeSingle: () => Promise<{
-            data: {
-              id: string;
-              soa_id: string;
-              amount_cents: number;
-              payment_method: string | null;
-              paid_at: string;
-              proof_file_path: string | null;
-              posting_status: string | null;
-            } | null;
-            error: unknown;
-          }>;
-        };
-      };
-    };
-  };
-  const pr = await sb
-    .from('revenue_soa_payments')
-    .select('id, soa_id, amount_cents, payment_method, paid_at, proof_file_path, posting_status')
-    .eq('id', paymentId)
-    .maybeSingle();
-  if (!pr.data) return { ok: false, error: 'Payment not found' };
-  const pay = pr.data;
-  if (pay.posting_status === 'posted') return { ok: false, error: 'Already posted to ERP' };
-
   const { data: soa } = await supabase
     .from('revenue_soa')
-    .select('soa_no, branch_id, branch:branches ( code )')
-    .eq('id', pay.soa_id)
+    .select('status, total_cents, branch_id, billing_to_id')
+    .eq('id', id)
     .single();
-  if (!soa) return { ok: false, error: 'Statement not found' };
+  if (!soa) return { ok: false, error: 'SOA not found' };
   if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (soa.status !== 'settled') return { ok: false, error: 'Only a settled statement can be unsettled' };
+  try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
-  const r = await postSoaPaymentToErp({
-    paymentId: pay.id,
-    soaNo: soa.soa_no ?? '',
-    branchId: soa.branch_id,
-    branchCode: one<{ code: string }>(soa.branch)?.code ?? '',
-    paidAtIso: pay.paid_at,
-    amountCents: pay.amount_cents,
-    methodCode: (pay.payment_method ?? '').toLowerCase(),
-    proofPath: pay.proof_file_path ?? null,
+  // The positive settle line that settled this session.
+  const { data: settleLine } = await supabase
+    .from('folio_lines')
+    .select('id, amount_cents, payment_method_id, transaction_code_id')
+    .eq('soa_session_id', id)
+    .is('order_id', null)
+    .eq('kind', 'payment')
+    .order('posted_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!settleLine) return { ok: false, error: 'No settle line found for this statement' };
+  if (!settleLine.transaction_code_id) return { ok: false, error: 'Settle line is missing its transaction code' };
+
+  const openShift = await getCurrentOpenShift(soa.branch_id);
+  if (!openShift) return { ok: false, error: 'No cash shift is open for this branch — open one before reversing the settle.' };
+
+  const { error: re } = await supabase.from('folio_lines').insert({
+    order_id: null,
+    shift_id: openShift.id,
+    kind: 'refund',
+    amount_cents: settleLine.amount_cents,
+    posted_by: session!.staffUserId,
+    payment_method_id: settleLine.payment_method_id,
+    branch_id: soa.branch_id,
+    billing_destination_id: soa.billing_to_id,
+    soa_session_id: id,
+    transaction_code_id: settleLine.transaction_code_id,
   });
+  if (re) return { ok: false, error: re.message };
+
+  // Clear the per-line settle reference.
+  const { error: ce } = await supabase
+    .from('folio_lines')
+    .update({ settled_by_folio_line_id: null })
+    .eq('soa_session_id', id)
+    .not('order_id', 'is', null);
+  if (ce) return { ok: false, error: ce.message };
+
+  const { error: soe } = await supabase
+    .from('revenue_soa')
+    .update({ status: 'issued', paid_cents: 0, outstanding_cents: soa.total_cents })
+    .eq('id', id);
+  if (soe) return { ok: false, error: soe.message };
+
   revalidatePath('/reconciliation/soa');
-  if (!r.ok) return { ok: false, error: r.error };
-  return { ok: true, data: { batchNbr: r.batchNbr } };
+  revalidatePath('/reconciliation/cash');
+  revalidatePath('/reconciliation');
+  return { ok: true };
 }
 
-/** Upload an AR collection proof (remittance slip / cash photo) to the private
- *  ar-proofs bucket. Returns the storage path to store on the payment row. */
+/** Void an issued (unsettled) statement: release its AR lines back to the pool. */
+export async function voidSOA(id: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const supabase = await createAuditedClient();
+  const { data: soa } = await supabase.from('revenue_soa').select('status, branch_id').eq('id', id).single();
+  if (!soa) return { ok: false, error: 'SOA not found' };
+  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (soa.status !== 'issued') {
+    return { ok: false, error: 'Only an issued statement can be voided; unsettle a settled one first.' };
+  }
+  // Release the AR lines so they can be re-stated.
+  const { error: re } = await supabase.from('folio_lines').update({ soa_session_id: null }).eq('soa_session_id', id);
+  if (re) return { ok: false, error: re.message };
+  const { error } = await supabase.from('revenue_soa').update({ status: 'void' }).eq('id', id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/reconciliation/soa');
+  return { ok: true };
+}
+
+// ─────────────────────────── Settle ledger + proof ──────────────────────────
+export interface SoaPaymentRow {
+  id: string;
+  amount_cents: number;
+  kind: string; // payment (settle) | refund (reversal)
+  paid_at: string;
+  payment_method: string | null;
+  reference_no: string | null;
+  proof_file_path: string | null;
+}
+
+/** The settle / reversal folio lines posted against a statement, newest first. */
+export async function loadSoaPayments(soa_id: string): Promise<SoaPaymentRow[]> {
+  const supabase = await createAuditedClient();
+  const { data: soa } = await supabase.from('revenue_soa').select('branch_id').eq('id', soa_id).maybeSingle();
+  if (!soa?.branch_id || !(await canAccessBranch(soa.branch_id))) return [];
+  const { data } = await supabase
+    .from('folio_lines')
+    .select('id, amount_cents, kind, posted_at, payment_ref, proof_file_path, method:payment_methods ( code )')
+    .eq('soa_session_id', soa_id)
+    .is('order_id', null)
+    .order('posted_at', { ascending: false });
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    amount_cents: r.amount_cents,
+    kind: r.kind,
+    paid_at: r.posted_at,
+    payment_method: one(r.method as { code: string } | { code: string }[] | null)?.code ?? null,
+    reference_no: r.payment_ref,
+    proof_file_path: r.proof_file_path,
+  }));
+}
+
+/** Upload an AR settle proof (cash photo / remittance slip) to the private
+ *  ar-proofs bucket. Returns the storage path to stamp on the settle line. */
 export async function uploadArProof(formData: FormData): Promise<ActionResult<{ path: string }>> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
@@ -995,42 +688,6 @@ export async function uploadArProof(formData: FormData): Promise<ActionResult<{ 
   return { ok: true, data: { path } };
 }
 
-export interface SoaPaymentRow {
-  id: string;
-  amount_cents: number;
-  paid_at: string;
-  payment_method: string | null;
-  reference_no: string | null;
-  posting_status: string | null;
-  gl_batch_nbr: string | null;
-  posting_error: string | null;
-  proof_file_path: string | null;
-}
-
-/** Payments recorded against a SOA, most recent first. Carries the per-payment
- *  GL batch / posting status + the proof attachment path. */
-export async function loadSoaPayments(soa_id: string): Promise<SoaPaymentRow[]> {
-  const supabase = await createAuditedClient();
-  const { data: soa } = await supabase.from('revenue_soa').select('branch_id').eq('id', soa_id).maybeSingle();
-  if (!soa?.branch_id || !(await canAccessBranch(soa.branch_id))) return [];
-  // The new posting / proof columns aren't in the generated DB types yet — cast.
-  const sb = supabase as unknown as {
-    from: (t: string) => {
-      select: (c: string) => {
-        eq: (k: string, v: string) => {
-          order: (k: string, o?: { ascending: boolean }) => Promise<{ data: SoaPaymentRow[] | null; error: unknown }>;
-        };
-      };
-    };
-  };
-  const r = await sb
-    .from('revenue_soa_payments')
-    .select('id, amount_cents, paid_at, payment_method, reference_no, posting_status, gl_batch_nbr, posting_error, proof_file_path')
-    .eq('soa_id', soa_id)
-    .order('paid_at', { ascending: false });
-  return r.data ?? [];
-}
-
 /** Short-lived signed URL to view a stored AR proof (bucket is private). */
 export async function getArProofUrl(path: string): Promise<ActionResult<{ url: string }>> {
   const session = await currentSession();
@@ -1039,27 +696,4 @@ export async function getArProofUrl(path: string): Promise<ActionResult<{ url: s
   const { data, error } = await supabase.storage.from('ar-proofs').createSignedUrl(path, 600);
   if (error || !data) return { ok: false, error: error?.message ?? 'Could not generate link' };
   return { ok: true, data: { url: data.signedUrl } };
-}
-
-export async function voidSOA(id: string): Promise<ActionResult> {
-  const session = await currentSession();
-  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
-  const supabase = await createAuditedClient();
-  const { data: soa } = await supabase.from('revenue_soa').select('status, branch_id').eq('id', id).single();
-  if (!soa) return { ok: false, error: 'SOA not found' };
-  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
-  // Only an issued statement (no payments, not yet settled) can be plain-voided.
-  // An `issued` SOA always has paid_cents = 0 — a payment flips it to
-  // partial_paid/settled — so once money or a cost-transfer is on it, voiding
-  // would orphan those records and double-count the released orders. Those need
-  // a reversal/adjustment instead.
-  if (soa.status !== 'issued') {
-    return { ok: false, error: 'Only an issued statement with no payments can be voided; a settled or partly-paid statement needs a reversal/adjustment.' };
-  }
-  // Release the orders so they can be re-stated.
-  await supabase.from('revenue_soa_orders').delete().eq('soa_id', id);
-  const { error } = await supabase.from('revenue_soa').update({ status: 'void' }).eq('id', id);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath('/reconciliation/soa');
-  return { ok: true };
 }

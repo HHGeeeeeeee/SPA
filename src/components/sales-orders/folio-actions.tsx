@@ -24,6 +24,8 @@ interface Method { id: string; code: string; display_name: string }
 interface Card { id: string; card_no: string; balance_cents: number; customer_name: string | null }
 interface Branch { id: string; code: string }
 interface TxCode { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }
+interface BillingDest { id: string; code: string; name: string; tx_code: string | null }
+interface Guest { id: string; name: string }
 
 const TIPS_PAYABLE = '20500';
 
@@ -48,6 +50,9 @@ export function FolioActions({
   orderBranchId,
   transactionCodes,
   openShifts,
+  billingDestinations,
+  orderBillingToId,
+  guests,
 }: {
   orderId: string;
   section: 'revenue' | 'payments';
@@ -59,6 +64,9 @@ export function FolioActions({
   orderBranchId: string | null;
   transactionCodes: TxCode[];
   openShifts: { branchId: string; label: string }[];
+  billingDestinations?: BillingDest[];
+  orderBillingToId?: string | null;
+  guests?: Guest[];
 }) {
   const [pending, start] = useTransition();
   const router = useRouter();
@@ -66,15 +74,25 @@ export function FolioActions({
   const txCodes = transactionCodes ?? [];
   const methodList = methods ?? [];
   const cards = storedValueCards ?? [];
+  const billingList = billingDestinations ?? [];
+  const guestList = guests ?? [];
   const defaultMethod = methodList.find((m) => m.code?.toLowerCase() === 'cash')?.id ?? methodList[0]?.id ?? '';
   // Default posting branch: the user's only branch if they have exactly one,
   // otherwise the order's branch. Always editable.
   const defaultBranch = branchList.length === 1 ? branchList[0].id : (orderBranchId ?? branchList[0]?.id ?? '');
+  // AR (掛帳): default Bill to from the order header, guest auto-picked when sole.
+  const defaultBill = orderBillingToId ?? billingList[0]?.id ?? '';
+  const defaultGuest = guestList.length === 1 ? guestList[0].id : '';
 
   const methodOptions = methodList.map((m) => ({ value: m.id, label: m.display_name }));
   const branchOptions = branchList.map((b) => ({ value: b.id, label: b.code }));
+  const billOptions = billingList.map((b) => ({ value: b.id, label: `${b.code} · ${b.name}` }));
+  const guestOptions = guestList.map((g) => ({ value: g.id, label: g.name }));
   const cardOptions = cards.map((c) => ({ value: c.id, label: `${c.card_no}${c.customer_name ? ` · ${c.customer_name}` : ''} (${peso(c.balance_cents)})` }));
   const codeOf = (id: string) => methodList.find((m) => m.id === id)?.code;
+  // AR rides the bill_to destination's bound code; the read-only field shows it.
+  const isArMethod = (id: string) => codeOf(id)?.toLowerCase() === 'ar';
+  const arDestCode = (billId: string) => billingList.find((b) => b.id === billId)?.tx_code ?? null;
 
   // The payment-side code shown read-only: the branch's active payment code for
   // the method that isn't the tip code. Mirrors the server resolver, so the
@@ -94,15 +112,20 @@ export function FolioActions({
   const [cMethod, setCMethod] = useState(defaultMethod);
   const [cRef, setCRef] = useState('');
   const [cCard, setCCard] = useState('');
+  const [cBill, setCBill] = useState(defaultBill);
+  const [cGuest, setCGuest] = useState(defaultGuest);
   const cIsSvc = codeOf(cMethod) === 'stored_value_card';
+  const cIsAr = isArMethod(cMethod);
   const cOver = Math.round((Number(cAmount) || 0) * 100) > dueCents;
   function doCollect() {
     const amt = Number(cAmount || 0);
     if (amt <= 0) return toast.error('Enter an amount');
     if (cOver) return toast.error(`Cannot exceed the outstanding (${peso(dueCents)})`);
     if (cIsSvc && !cCard) return toast.error('Select a stored value card');
+    if (cIsAr && !cBill) return toast.error('Pick a Bill to');
+    if (cIsAr && !cGuest) return toast.error('Pick the guest');
     start(async () => {
-      const r = await takePayment({ order_id: orderId, branch_id: cBranch || null, payment_method_id: cMethod, amount: amt, payment_ref: cRef || null, stored_value_card_id: cIsSvc ? cCard : null });
+      const r = await takePayment({ order_id: orderId, branch_id: cBranch || null, payment_method_id: cMethod, amount: amt, payment_ref: cRef || null, stored_value_card_id: cIsSvc ? cCard : null, billing_destination_id: cIsAr ? cBill : null, order_customer_id: cIsAr ? cGuest : null });
       if (r.ok) { toast.success('Payment recorded'); setCollectOpen(false); setCAmount(''); setCRef(''); router.refresh(); }
       else toast.error(r.error);
     });
@@ -115,15 +138,20 @@ export function FolioActions({
   const [rMethod, setRMethod] = useState(defaultMethod);
   const [rRef, setRRef] = useState('');
   const [rCard, setRCard] = useState('');
+  const [rBill, setRBill] = useState(defaultBill);
+  const [rGuest, setRGuest] = useState(defaultGuest);
   const rIsSvc = codeOf(rMethod) === 'stored_value_card';
+  const rIsAr = isArMethod(rMethod);
   const rOver = Math.round((Number(rAmount) || 0) * 100) > paidCents;
   function doRefund() {
     const amt = Number(rAmount || 0);
     if (amt <= 0) return toast.error('Enter an amount');
     if (rOver) return toast.error(`Refund cannot exceed collected (${peso(paidCents)})`);
     if (rIsSvc && !rCard) return toast.error('Select a stored value card');
+    if (rIsAr && !rBill) return toast.error('Pick a Bill to');
+    if (rIsAr && !rGuest) return toast.error('Pick the guest');
     start(async () => {
-      const r = await recordRefund({ order_id: orderId, branch_id: rBranch || null, payment_method_id: rMethod, amount: amt, payment_ref: rRef || null, stored_value_card_id: rIsSvc ? rCard : null });
+      const r = await recordRefund({ order_id: orderId, branch_id: rBranch || null, payment_method_id: rMethod, amount: amt, payment_ref: rRef || null, stored_value_card_id: rIsSvc ? rCard : null, billing_destination_id: rIsAr ? rBill : null, order_customer_id: rIsAr ? rGuest : null });
       if (r.ok) { toast.success('Refund recorded'); setRefundOpen(false); setRAmount(''); setRRef(''); router.refresh(); }
       else toast.error(r.error);
     });
@@ -172,6 +200,26 @@ export function FolioActions({
       </Select>
     </div>
   );
+  // Bill to (billing destination) — shown only for an AR charge. Drives the code.
+  const billField = (value: string, onChange: (v: string) => void) => (
+    <div className="flex flex-col gap-1">
+      <Label className="text-xs font-semibold">Bill to</Label>
+      <Select items={billOptions} value={value} onValueChange={(v) => v && onChange(v)}>
+        <SelectTrigger><SelectValue placeholder="Pick a destination" /></SelectTrigger>
+        <SelectContent>{billOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+      </Select>
+    </div>
+  );
+  // Guest — required for AR so the statement can show a name.
+  const guestField = (value: string, onChange: (v: string) => void) => (
+    <div className="flex flex-col gap-1">
+      <Label className="text-xs font-semibold">Guest</Label>
+      <Select items={guestOptions} value={value} onValueChange={(v) => v && onChange(v)}>
+        <SelectTrigger><SelectValue placeholder="Pick a guest" /></SelectTrigger>
+        <SelectContent>{guestOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+      </Select>
+    </div>
+  );
   // Read-only resolved transaction code.
   const txCodeField = (code: string | null) => (
     <div className="flex flex-col gap-1">
@@ -201,7 +249,7 @@ export function FolioActions({
     return (
       <div className="flex flex-wrap items-center gap-2">
         {/* Add payment */}
-        <Dialog open={collectOpen} onOpenChange={(o) => { setCollectOpen(o); if (o) { setCBranch(defaultBranch); setCAmount(dueCents > 0 ? String(dueCents / 100) : ''); setCMethod(defaultMethod); setCRef(''); } }}>
+        <Dialog open={collectOpen} onOpenChange={(o) => { setCollectOpen(o); if (o) { setCBranch(defaultBranch); setCAmount(dueCents > 0 ? String(dueCents / 100) : ''); setCMethod(defaultMethod); setCRef(''); setCBill(defaultBill); setCGuest(defaultGuest); } }}>
           <DialogTrigger render={<Button size="sm" variant="outline"><CreditCard className="size-4" /> Add payment</Button>} />
           <DialogContent className="sm:max-w-sm">
             <DialogHeader>
@@ -218,7 +266,13 @@ export function FolioActions({
                   </Select>
                 </div>
               </div>
-              {txCodeField(paymentCodeFor(cBranch, cMethod))}
+              {cIsAr && (
+                <div className="grid grid-cols-2 gap-3">
+                  {billField(cBill, setCBill)}
+                  {guestField(cGuest, setCGuest)}
+                </div>
+              )}
+              {txCodeField(cIsAr ? arDestCode(cBill) : paymentCodeFor(cBranch, cMethod))}
               {shiftField(cBranch)}
               {cIsSvc && (
                 <div className="flex flex-col gap-1">
@@ -247,7 +301,7 @@ export function FolioActions({
         </Dialog>
 
         {/* Add refund */}
-        <Dialog open={refundOpen} onOpenChange={(o) => { setRefundOpen(o); if (o) { setRBranch(defaultBranch); setRAmount(''); setRMethod(defaultMethod); setRRef(''); } }}>
+        <Dialog open={refundOpen} onOpenChange={(o) => { setRefundOpen(o); if (o) { setRBranch(defaultBranch); setRAmount(''); setRMethod(defaultMethod); setRRef(''); setRBill(defaultBill); setRGuest(defaultGuest); } }}>
           <DialogTrigger render={<Button size="sm" variant="outline" className="text-destructive" disabled={paidCents <= 0}><Undo2 className="size-4" /> Add refund</Button>} />
           <DialogContent className="sm:max-w-sm">
             <DialogHeader>
@@ -265,7 +319,13 @@ export function FolioActions({
                   </Select>
                 </div>
               </div>
-              {txCodeField(paymentCodeFor(rBranch, rMethod))}
+              {rIsAr && (
+                <div className="grid grid-cols-2 gap-3">
+                  {billField(rBill, setRBill)}
+                  {guestField(rGuest, setRGuest)}
+                </div>
+              )}
+              {txCodeField(rIsAr ? arDestCode(rBill) : paymentCodeFor(rBranch, rMethod))}
               {shiftField(rBranch)}
               {rIsSvc && (
                 <div className="flex flex-col gap-1">

@@ -1,12 +1,9 @@
 'use client';
 
-import { Fragment, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
+import { Fragment, useState } from 'react';
 import { ChevronRight, ChevronDown, FilePlus2, Wallet, AlertTriangle } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
@@ -21,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { SoaActions } from '@/components/reconciliation/soa-actions';
 import { SoaPaymentsList } from '@/components/reconciliation/soa-payments-list';
 import { StatusBadge } from '@/components/reconciliation/status-badge';
-import { settleSOABatch, type ArBalance, type ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
+import { type ArBalance, type ArDebtor } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 function peso(cents: number): string {
   return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
@@ -41,32 +38,12 @@ function fmtDate(ymd: string | null): string {
  * on the SOA (Record Payment / Settle) — this view is the ledger, not a new ledger.
  */
 export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
-  const router = useRouter();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [openSoa, setOpenSoa] = useState<Set<string>>(new Set());
-  const [sel, setSel] = useState<Set<string>>(new Set());
-  const [settling, startSettle] = useTransition();
   const toggle = (id: string) =>
     setOpen((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleSoa = (id: string) =>
     setOpenSoa((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleSel = (id: string) =>
-    setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  function doSettle() {
-    const ids = [...sel];
-    if (!ids.length) return;
-    startSettle(async () => {
-      const r = await settleSOABatch(ids);
-      if (r.ok) {
-        const count = r.data?.settled ?? 0;
-        const batches = r.data?.batchNbrs ?? [];
-        const batchTag = batches.length === 1 ? ` · GL #${batches[0]}` : batches.length > 1 ? ` · ${batches.length} journals` : '';
-        toast.success(`Settled ${count} SOA${count > 1 ? 's' : ''}${batchTag}`);
-        setSel(new Set());
-        router.refresh();
-      } else toast.error(r.error);
-    });
-  }
 
   if (ar.debtors.length === 0) {
     return (
@@ -82,24 +59,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
   const thirdParty = ar.debtors.filter((d) => d.settlement_type === 'third_party');
   const intercompany = ar.debtors.filter((d) => d.settlement_type === 'intercompany');
 
-  // Bulk settle is intercompany-only (third-party collects per Record Payment).
-  // We surface this at page level via a sticky bar that mirrors the SOA / Tip /
-  // Commission workspaces — one place for "select all + action", no per-section
-  // checkbox cluttering the headers.
-  const interCoSoas = intercompany.flatMap((d) => d.soas);
-  const interCoIds = interCoSoas.map((s) => s.id);
-  const allIntercoSel = interCoIds.length > 0 && interCoIds.every((id) => sel.has(id));
-  const selectedTotal = interCoSoas.filter((s) => sel.has(s.id)).reduce((sum, s) => sum + s.outstanding_cents, 0);
-  function toggleAllInterco() {
-    setSel((p) => {
-      const n = new Set(p);
-      if (allIntercoSel) interCoIds.forEach((id) => n.delete(id));
-      else interCoIds.forEach((id) => n.add(id));
-      return n;
-    });
-  }
-
-  function section(title: string, hint: string, debtors: ArDebtor[], settleable = false, selectBar?: React.ReactNode) {
+  function section(title: string, hint: string, debtors: ArDebtor[]) {
     if (debtors.length === 0) return null;
     const subUnbilled = debtors.reduce((s, d) => s + d.unbilled_cents, 0);
     const subOutstanding = debtors.reduce((s, d) => s + d.outstanding_cents, 0);
@@ -110,7 +70,6 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
           <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{title}</h3>
           <p className="text-xs font-medium text-muted-foreground/80">{hint}</p>
         </div>
-        {selectBar}
         <Card className="p-0 overflow-hidden">
           <Table className="table-fixed">
             <colgroup>
@@ -194,16 +153,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                   {d.soas.map((s) => (
                                     <Fragment key={s.id}>
                                     <TableRow>
-                                      <TableCell className="pl-4 pr-0">
-                                        {settleable && (
-                                          <input
-                                            type="checkbox"
-                                            className="size-4 cursor-pointer accent-primary"
-                                            checked={sel.has(s.id)}
-                                            onChange={() => toggleSel(s.id)}
-                                          />
-                                        )}
-                                      </TableCell>
+                                      <TableCell className="pl-4 pr-0" />
                                       <TableCell className="font-mono font-bold">
                                         {s.status === 'partial_paid' && (
                                           <button type="button" onClick={() => toggleSoa(s.id)} className="mr-1 align-middle text-muted-foreground hover:text-foreground" aria-label="Show payments">
@@ -294,40 +244,9 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
         As of {fmtDate(ar.today)} · &quot;Overdue&quot; = third-party statements past their due date. Intercompany has no due date (settled by internal cost transfer).
       </p>
 
-      {section('Third-party — to collect', 'Real receivables — collected via Record Payment (e.g. Elnido Go pays periodically).', thirdParty)}
+      {section('Third-party — to collect', 'Real receivables — settle per statement (cash / bank), with optional proof.', thirdParty)}
 
-      {/* Select-all bar lives INSIDE the Intercompany section (between the
-          title and the table) so it visually belongs to the section it acts
-          on — previously it sat above the section title and read as a
-          stray Third-party control. */}
-      {section(
-        'Intercompany — to settle',
-        'Cleared by internal cost transfer (Settle), not cash collection.',
-        intercompany,
-        true,
-        interCoIds.length > 0 ? (
-          <div className="sticky top-2 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-2.5 shadow-sm">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="size-4 cursor-pointer accent-primary"
-                checked={allIntercoSel}
-                onChange={toggleAllInterco}
-              />
-              <span className="text-sm font-bold">Select all ({interCoIds.length})</span>
-              <span className="text-xs font-medium text-muted-foreground">— pick intercompany statements to batch settle</span>
-            </label>
-            {sel.size > 0 && (
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-bold">{sel.size} selected · {peso(selectedTotal)}</span>
-                <Button size="sm" onClick={doSettle} disabled={settling}>
-                  {settling ? 'Settling…' : `Settle & post (${sel.size})`}
-                </Button>
-              </div>
-            )}
-          </div>
-        ) : undefined,
-      )}
+      {section('Intercompany — to settle', 'Settle per statement — posts a folio settle line into the open shift.', intercompany)}
     </div>
   );
 }

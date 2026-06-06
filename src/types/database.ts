@@ -85,6 +85,7 @@ export type Database = {
           intercompany_sub: string | null
           name: string
           settlement_type: string
+          transaction_code_id: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -100,6 +101,7 @@ export type Database = {
           intercompany_sub?: string | null
           name: string
           settlement_type: string
+          transaction_code_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -115,10 +117,18 @@ export type Database = {
           intercompany_sub?: string | null
           name?: string
           settlement_type?: string
+          transaction_code_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "billing_destinations_transaction_code_id_fkey"
+            columns: ["transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "billing_destinations_default_payment_method_id_fkey"
             columns: ["default_payment_method_id"]
@@ -1522,6 +1532,7 @@ export type Database = {
         Row: {
           amount_cents: number
           auth_code: string | null
+          billing_destination_id: string | null
           branch_id: string | null
           card_last4: string | null
           created_at: string
@@ -1529,13 +1540,16 @@ export type Database = {
           kind: string
           note: string | null
           order_customer_id: string | null
-          order_id: string
+          order_id: string | null
           order_item_id: string | null
           payment_method_id: string | null
           payment_ref: string | null
           posted_at: string
           posted_by: string | null
+          proof_file_path: string | null
+          settled_by_folio_line_id: string | null
           shift_id: string
+          soa_session_id: string | null
           stored_value_card_id: string | null
           tip_cents: number | null
           transaction_code_id: string | null
@@ -1544,6 +1558,7 @@ export type Database = {
         Insert: {
           amount_cents: number
           auth_code?: string | null
+          billing_destination_id?: string | null
           branch_id?: string | null
           card_last4?: string | null
           created_at?: string
@@ -1551,13 +1566,16 @@ export type Database = {
           kind: string
           note?: string | null
           order_customer_id?: string | null
-          order_id: string
+          order_id?: string | null
           order_item_id?: string | null
           payment_method_id?: string | null
           payment_ref?: string | null
           posted_at?: string
           posted_by?: string | null
+          proof_file_path?: string | null
+          settled_by_folio_line_id?: string | null
           shift_id: string
+          soa_session_id?: string | null
           stored_value_card_id?: string | null
           tip_cents?: number | null
           transaction_code_id?: string | null
@@ -1566,6 +1584,7 @@ export type Database = {
         Update: {
           amount_cents?: number
           auth_code?: string | null
+          billing_destination_id?: string | null
           branch_id?: string | null
           card_last4?: string | null
           created_at?: string
@@ -1573,19 +1592,43 @@ export type Database = {
           kind?: string
           note?: string | null
           order_customer_id?: string | null
-          order_id?: string
+          order_id?: string | null
           order_item_id?: string | null
           payment_method_id?: string | null
           payment_ref?: string | null
           posted_at?: string
           posted_by?: string | null
+          proof_file_path?: string | null
+          settled_by_folio_line_id?: string | null
           shift_id?: string
+          soa_session_id?: string | null
           stored_value_card_id?: string | null
           tip_cents?: number | null
           transaction_code_id?: string | null
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "folio_lines_billing_destination_id_fkey"
+            columns: ["billing_destination_id"]
+            isOneToOne: false
+            referencedRelation: "billing_destinations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_soa_session_id_fkey"
+            columns: ["soa_session_id"]
+            isOneToOne: false
+            referencedRelation: "revenue_soa"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_settled_by_folio_line_id_fkey"
+            columns: ["settled_by_folio_line_id"]
+            isOneToOne: false
+            referencedRelation: "folio_lines"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "folio_lines_order_id_fkey"
             columns: ["order_id"]

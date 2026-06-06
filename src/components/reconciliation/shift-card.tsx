@@ -36,9 +36,12 @@ interface Props {
   date: string;
   item: ShiftRemittance;
   canReopen?: boolean;
+  /** Called after a successful close / reopen — lets a host (e.g. the list's
+   *  per-row dialog) dismiss itself once the action lands. */
+  onDone?: () => void;
 }
 
-export function ShiftCard({ branchId, date, item, canReopen }: Props) {
+export function ShiftCard({ branchId, date, item, canReopen, onDone }: Props) {
   const { shift } = item;
   const [actual, setActual] = useState(shift?.closingCountCents != null ? String(shift.closingCountCents / 100) : '');
   const [reason, setReason] = useState(shift?.varianceReason ?? '');
@@ -57,14 +60,14 @@ export function ShiftCard({ branchId, date, item, canReopen }: Props) {
     if (!shift) return;
     startTransition(async () => {
       const r = await closeShift({ shift_id: shift.id, actual_count: Number(actual || 0), variance_reason: reason || null });
-      if (r.ok) { toast.success(`${item.label} closed`); router.refresh(); } else toast.error(r.error);
+      if (r.ok) { toast.success(`${item.label} closed`); onDone?.(); router.refresh(); } else toast.error(r.error);
     });
   }
   function doReopen() {
     if (!shift) return;
     startTransition(async () => {
       const r = await reopenShift({ shift_id: shift.id, reason: reopenReason });
-      if (r.ok) { toast.success(`${item.label} reopened`); setReopenOpen(false); setReopenReason(''); router.refresh(); } else toast.error(r.error);
+      if (r.ok) { toast.success(`${item.label} reopened`); setReopenOpen(false); setReopenReason(''); onDone?.(); router.refresh(); } else toast.error(r.error);
     });
   }
 

@@ -201,6 +201,14 @@ async function fetchData(id: string) {
 
   const allowedBranchIds = await getAllowedBranchIds();
 
+  // Current open cash shift per accessible branch — shown read-only in the folio
+  // dialogs (and a "please open a shift" hint when a branch has none).
+  const openShiftsRes = await supabase
+    .from('shifts')
+    .select('id, label, branch_id')
+    .eq('status', 'open')
+    .in('branch_id', [...allowedBranchIds]);
+
   return {
     order,
     serviceItems: (svc.data ?? []).map((s) => {
@@ -248,6 +256,7 @@ async function fetchData(id: string) {
     accessibleBranches: (brAll.data ?? []).filter((b) => allowedBranchIds.has(b.id)).map((b) => ({ id: b.id, code: b.code })),
     orderBranchId: order.branch_id as string | null,
     transactionCodes: (txCodes.data ?? []) as { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[],
+    openShifts: (openShiftsRes.data ?? []).map((s) => ({ branchId: s.branch_id as string, label: s.label as string })),
   };
 }
 
@@ -256,7 +265,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes, openShifts } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -551,6 +560,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         accessibleBranches={accessibleBranches}
         orderBranchId={orderBranchId}
         transactionCodes={transactionCodes}
+        openShifts={openShifts}
       />
     </div>
   );

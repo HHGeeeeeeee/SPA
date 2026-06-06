@@ -47,6 +47,7 @@ export function FolioActions({
   branches,
   orderBranchId,
   transactionCodes,
+  openShifts,
 }: {
   orderId: string;
   section: 'revenue' | 'payments';
@@ -57,6 +58,7 @@ export function FolioActions({
   branches: Branch[];
   orderBranchId: string | null;
   transactionCodes: TxCode[];
+  openShifts: { branchId: string; label: string }[];
 }) {
   const [pending, start] = useTransition();
   const router = useRouter();
@@ -81,6 +83,9 @@ export function FolioActions({
     txCodes.find((t) => t.transaction_type === 'payment' && t.branch_id === branchId && t.payment_method_id === methodId && t.credit_account !== TIPS_PAYABLE)?.code ?? null;
   // Revenue is branchless — one service-revenue code rides every manual revenue line.
   const revenueCode = txCodes.find((t) => t.transaction_type === 'revenue')?.code ?? null;
+  // The branch's current open cash shift — every posting lands in it. No open
+  // shift → the post is blocked (the dialog hints to open one).
+  const openShiftFor = (branchId: string) => (openShifts ?? []).find((s) => s.branchId === branchId)?.label ?? null;
 
   // ── Add payment ──────────────────────────────────────────────────────────
   const [collectOpen, setCollectOpen] = useState(false);
@@ -174,6 +179,23 @@ export function FolioActions({
       <Input value={code ?? '—'} readOnly disabled className="font-mono" />
     </div>
   );
+  // Read-only current open shift for the chosen branch, else a "please open a
+  // shift" hint (postings can't land without one).
+  const shiftField = (branchId: string) => {
+    const label = openShiftFor(branchId);
+    return (
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs font-semibold">Open shift</Label>
+        {label ? (
+          <Input value={label} readOnly disabled />
+        ) : (
+          <p className="rounded-lg border border-amber-500/50 bg-amber-50 px-2.5 py-2 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+            No open shift for this branch — please open a shift first.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   if (section === 'payments') {
     return (
@@ -197,6 +219,7 @@ export function FolioActions({
                 </div>
               </div>
               {txCodeField(paymentCodeFor(cBranch, cMethod))}
+              {shiftField(cBranch)}
               {cIsSvc && (
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs font-semibold">Stored value card</Label>
@@ -218,7 +241,7 @@ export function FolioActions({
             </div>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setCollectOpen(false)} disabled={pending}>Cancel</Button>
-              <Button type="button" onClick={doCollect} disabled={pending || cOver}>{pending ? 'Saving…' : 'Record'}</Button>
+              <Button type="button" onClick={doCollect} disabled={pending || cOver || !openShiftFor(cBranch)}>{pending ? 'Saving…' : 'Record'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -243,6 +266,7 @@ export function FolioActions({
                 </div>
               </div>
               {txCodeField(paymentCodeFor(rBranch, rMethod))}
+              {shiftField(rBranch)}
               {rIsSvc && (
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs font-semibold">Refund onto card</Label>
@@ -264,7 +288,7 @@ export function FolioActions({
             </div>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setRefundOpen(false)} disabled={pending}>Cancel</Button>
-              <Button type="button" className="bg-destructive text-white hover:bg-destructive/90" onClick={doRefund} disabled={pending || rOver}>{pending ? 'Saving…' : 'Refund'}</Button>
+              <Button type="button" className="bg-destructive text-white hover:bg-destructive/90" onClick={doRefund} disabled={pending || rOver || !openShiftFor(rBranch)}>{pending ? 'Saving…' : 'Refund'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -285,6 +309,7 @@ export function FolioActions({
           <div className="flex flex-col gap-3 py-2">
             {branchField(revBranch, setRevBranch)}
             {txCodeField(revenueCode)}
+            {shiftField(revBranch)}
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Amount</Label>
               <Input type="number" min="0" step="0.01" value={revAmount} onChange={(e) => setRevAmount(e.target.value)} />
@@ -296,7 +321,7 @@ export function FolioActions({
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setRevOpen(false)} disabled={pending}>Cancel</Button>
-            <Button type="button" onClick={doAddRevenue} disabled={pending}>{pending ? 'Saving…' : 'Post'}</Button>
+            <Button type="button" onClick={doAddRevenue} disabled={pending || !openShiftFor(revBranch)}>{pending ? 'Saving…' : 'Post'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -312,6 +337,7 @@ export function FolioActions({
           <div className="flex flex-col gap-3 py-2">
             {branchField(adjBranch, setAdjBranch)}
             {txCodeField(revenueCode)}
+            {shiftField(adjBranch)}
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Amount to deduct</Label>
               <Input type="number" min="0" step="0.01" value={adjAmount} onChange={(e) => setAdjAmount(e.target.value)} placeholder="Positive amount" />
@@ -335,7 +361,7 @@ export function FolioActions({
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setAdjOpen(false)} disabled={pending}>Cancel</Button>
-            <Button type="button" className="bg-destructive text-white hover:bg-destructive/90" onClick={doAdjust} disabled={pending}>{pending ? 'Saving…' : 'Adjust'}</Button>
+            <Button type="button" className="bg-destructive text-white hover:bg-destructive/90" onClick={doAdjust} disabled={pending || !openShiftFor(adjBranch)}>{pending ? 'Saving…' : 'Adjust'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

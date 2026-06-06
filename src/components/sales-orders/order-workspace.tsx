@@ -167,6 +167,7 @@ interface Props {
   accessibleBranches: { id: string; code: string }[];
   orderBranchId: string | null;
   transactionCodes: { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[];
+  openShifts: { branchId: string; label: string }[];
 }
 
 const NONE = '__none__';
@@ -290,6 +291,7 @@ export function OrderWorkspace({
   accessibleBranches,
   orderBranchId,
   transactionCodes,
+  openShifts,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -1029,7 +1031,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Revenue</CardTitle>
-                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} />
+                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['revenue', 'tip'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
@@ -1039,7 +1041,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Payments & refunds</CardTitle>
-                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods.filter((m) => m.code !== 'ar')} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} />
+                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods.filter((m) => m.code !== 'ar')} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}

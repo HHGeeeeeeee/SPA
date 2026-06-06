@@ -3910,20 +3910,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "transaction_codes_credit_branch_id_fkey"
-            columns: ["credit_branch_id"]
-            isOneToOne: false
-            referencedRelation: "branches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "transaction_codes_debit_branch_id_fkey"
-            columns: ["debit_branch_id"]
-            isOneToOne: false
-            referencedRelation: "branches"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "transaction_codes_payment_method_id_fkey"
             columns: ["payment_method_id"]
             isOneToOne: false

@@ -51,18 +51,9 @@ async function buildShiftGlLines(
     byCode.set(l.transaction_code_id, cur);
   }
 
-  // Resolve any DR/CR branch ids on the codes to Acumatica branch codes.
-  const branchIds = new Set<string>();
-  for (const { tx } of byCode.values()) {
-    if (tx.debit_branch_id) branchIds.add(tx.debit_branch_id);
-    if (tx.credit_branch_id) branchIds.add(tx.credit_branch_id);
-  }
-  const branchCode = new Map<string, string>();
-  if (branchIds.size > 0) {
-    const { data: brs } = await supabase.from('branches').select('id, code').in('id', [...branchIds]);
-    for (const b of brs ?? []) branchCode.set(b.id, b.code);
-  }
-  const codeOfBranch = (id: string | null): string => (id ? branchCode.get(id) ?? shiftBranchCode : shiftBranchCode);
+  // debit/credit_branch_id holds a free-text Acumatica branch segment (or null);
+  // an empty override falls back to the shift's branch.
+  const codeOfBranch = (override: string | null): string => override?.trim() || shiftBranchCode;
 
   const gl: GLLine[] = [];
   for (const { net, tx } of byCode.values()) {

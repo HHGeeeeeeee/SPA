@@ -33,9 +33,7 @@ async function fetchData() {
         debit_account, debit_subaccount, debit_branch_id,
         credit_account, credit_subaccount, credit_branch_id, active,
         branch:branches!transaction_codes_branch_id_fkey ( code ),
-        payment_method:payment_methods ( code ),
-        debit_branch:branches!transaction_codes_debit_branch_id_fkey ( code ),
-        credit_branch:branches!transaction_codes_credit_branch_id_fkey ( code )
+        payment_method:payment_methods ( code )
       `)
       .order('code'),
     supabase.from('branches').select('id, code, name').eq('active', true).order('code'),
@@ -118,8 +116,6 @@ export default async function TransactionCodesPage() {
               codes.map((c) => {
                 const branch = Array.isArray(c.branch) ? c.branch[0] : c.branch;
                 const pm = Array.isArray(c.payment_method) ? c.payment_method[0] : c.payment_method;
-                const dbr = Array.isArray(c.debit_branch) ? c.debit_branch[0] : c.debit_branch;
-                const cbr = Array.isArray(c.credit_branch) ? c.credit_branch[0] : c.credit_branch;
                 const itemRecord: TxCodeItem = {
                   id: c.id,
                   code: c.code,
@@ -144,10 +140,10 @@ export default async function TransactionCodesPage() {
                     </TableCell>
                     <TableCell className="font-mono font-bold">{pm?.code ?? '—'}</TableCell>
                     <TableCell>
-                      <GLCell acct={c.debit_account} sub={c.debit_subaccount} branch={dbr?.code} />
+                      <GLCell acct={c.debit_account} sub={c.debit_subaccount} branch={c.debit_branch_id} />
                     </TableCell>
                     <TableCell>
-                      <GLCell acct={c.credit_account} sub={c.credit_subaccount} branch={cbr?.code} />
+                      <GLCell acct={c.credit_account} sub={c.credit_subaccount} branch={c.credit_branch_id} />
                     </TableCell>
                     <TableCell>
                       {c.active ? (

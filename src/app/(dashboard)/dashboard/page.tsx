@@ -1,9 +1,11 @@
-import Link from 'next/link';
-
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { loadReconStatus } from '@/lib/recon-status';
 import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-banner';
+import { DashboardBranchPicker } from '@/components/dashboard/dashboard-branch-picker';
+import { DashboardUtilization } from '@/components/dashboard/dashboard-utilization';
+import { computeDayOccupancy } from '@/lib/occupancy';
+import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,42 +15,48 @@ function peso(cents: number): string {
 function todayPHT(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
+// Active branches the viewer may see, plus the resolved selection from the
+// `branch` URL param (comma-separated). Defaults to all allowed branches.
+async function fetchBranches(branchParam?: string): Promise<{ branches: { id: string; code: string; name: string }[]; selected: string[] }> {
+  const supabase = createServiceClient();
+  const allowed = await getAllowedBranchIds();
+  const { data } = await supabase.from('branches').select('id, code, name').eq('active', true).order('code');
+  const list = (data ?? []).filter((b) => allowed.has(b.id));
+  const requested = (branchParam ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const valid = requested.filter((id) => list.some((b) => b.id === id));
+  const selected = valid.length ? valid : list.map((b) => b.id);
+  return { branches: list, selected };
+}
 
-async function fetchData() {
+async function fetchData(branchIds: string[]) {
   const supabase = createServiceClient();
   const today = todayPHT();
 
-  const [todayOrders, inService, openTips, svc, arOrders] = await Promise.all([
-    supabase
-      .from('orders')
-      .select('id, total_cents, discount_cents, status, order_customers ( id )')
-      .eq('service_date', today)
-      .is('deleted_at', null)
-      .neq('status', 'void'),
-    supabase.from('order_items').select('id', { count: 'exact', head: true }).eq('status', 'in_service'),
-    supabase.from('tips').select('amount_cents').is('settlement_id', null).eq('status', 'open'),
-    supabase.from('stored_value_cards').select('current_balance_cents').eq('status', 'active'),
-    supabase.from('orders').select('total_cents').eq('status', 'closed').is('deleted_at', null),
-  ]);
+  const { data: todayOrders } = await supabase
+    .from('orders')
+    .select('id, total_cents, discount_cents, status, order_customers ( id )')
+    .eq('service_date', today)
+    .is('deleted_at', null)
+    .neq('status', 'void')
+    .in('branch_id', branchIds);
 
-  const orders = todayOrders.data ?? [];
+  const orders = todayOrders ?? [];
   const bookings = orders.length;
   const pax = orders.reduce((s, o) => s + (o.order_customers?.length ?? 0), 0);
   const revenue = orders.filter((o) => o.status === 'closed').reduce((s, o) => s + o.total_cents, 0);
   const discount = orders.reduce((s, o) => s + o.discount_cents, 0);
-  const tipsOpen = (openTips.data ?? []).reduce((s, t) => s + t.amount_cents, 0);
-  const svcLiability = (svc.data ?? []).reduce((s, c) => s + c.current_balance_cents, 0);
 
-  return {
-    today, bookings, pax, revenue, discount,
-    inService: inService.count ?? 0,
-    tipsOpen, svcLiability,
-    closedCount: (arOrders.data ?? []).length,
-  };
+  return { today, bookings, pax, revenue, discount };
 }
 
-export default async function DashboardPage() {
-  const [d, recon] = await Promise.all([fetchData(), loadReconStatus()]);
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
+  const sp = await searchParams;
+  const { branches, selected } = await fetchBranches(sp.branch);
+  const [d, recon, occ] = await Promise.all([
+    fetchData(selected),
+    loadReconStatus(),
+    computeDayOccupancy(selected, todayPHT(), new Date().toISOString()),
+  ]);
   const overdueItems = recon.branches
     .filter((b) => b.overdueClose)
     .map((b) => ({
@@ -63,17 +71,12 @@ export default async function DashboardPage() {
     { label: 'Guests Today', value: String(d.pax) },
     { label: 'Revenue Today', value: peso(d.revenue) },
     { label: 'Discount Today', value: peso(d.discount) },
-    { label: 'In Service Now', value: String(d.inService) },
-  ];
-
-  const finance = [
-    { label: 'AR Outstanding', value: peso(recon.arOutstandingCents), href: '/reconciliation/soa?view=ar' },
-    { label: 'Tips Unsettled', value: peso(d.tipsOpen), href: '/reconciliation/tips' },
-    { label: 'Stored-Value Liability', value: peso(d.svcLiability), href: '/stored-value-cards' },
   ];
 
   return (
     <div className="flex flex-col gap-6">
+      <DashboardBranchPicker branches={branches} selected={selected} />
+
       <div>
         <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">Today · {d.today}</p>
@@ -81,7 +84,7 @@ export default async function DashboardPage() {
 
       <OverdueCloseBanner items={overdueItems} />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {kpis.map((k) => (
           <Card key={k.label}>
             <CardHeader className="pb-2">
@@ -94,80 +97,7 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      <div>
-        <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-[0.12em] mb-2">Financial</h3>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {finance.map((f) => (
-            <Link key={f.label} href={f.href}>
-              <Card className="transition-colors hover:bg-accent/40">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">{f.label}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-extrabold tracking-tight tabular">{f.value}</div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-[0.12em]">Daily Close · {recon.today}</h3>
-          <Link href="/reconciliation" className="text-xs font-bold text-primary hover:underline">Reconciliation →</Link>
-        </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {recon.branches.map((b) => {
-            const quiet = b.dayStatus === 'no_activity';
-            const closed = b.dayStatus === 'closed';
-            const done = quiet || closed;
-            // Day-row colour follows the overall pipeline state, not the
-            // individual milestones (those are still shown on the Cash /
-            // To-confirm rows).
-            const dayClass =
-              closed ? 'text-primary' :
-              b.dayStatus === 'in_progress' ? 'text-amber-700 dark:text-amber-400' :
-              quiet ? 'text-muted-foreground' : 'text-muted-foreground';
-            const dayLabel =
-              closed ? 'Closed' :
-              b.dayStatus === 'in_progress' ? 'In progress' :
-              quiet ? '—' : 'Open';
-            return (
-              <Link key={b.id} href={`/reconciliation/end-of-day?branch=${b.id}&date=${recon.today}`}>
-                <Card className="transition-colors hover:bg-accent/40">
-                  <CardHeader className="pb-2 flex-row items-center justify-between">
-                    <CardTitle className="text-sm font-bold">{b.code}</CardTitle>
-                    {done
-                      ? <span className={`text-xs font-bold ${quiet ? 'text-muted-foreground' : 'text-primary'}`}>{quiet ? 'No activity' : 'All done'}</span>
-                      : <span className="size-2.5 rounded-full bg-amber-500" />}
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-1 text-sm font-semibold">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Cash</span>
-                      <span className={quiet
-                        ? 'text-muted-foreground'
-                        : b.cashClosed ? 'text-primary' : 'text-amber-700 dark:text-amber-400'}>
-                        {quiet ? '—' : (b.cashClosed ? 'Closed' : 'Pending')}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">To confirm</span>
-                      <span className={`tabular ${b.pendingConfirm > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>
-                        {b.pendingConfirm > 0 ? `${b.pendingConfirm} · ${peso(b.pendingConfirmCents)}` : '0'}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Day</span>
-                      <span className={dayClass}>{dayLabel}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      </div>
+      <DashboardUtilization occ={occ} />
     </div>
   );
 }

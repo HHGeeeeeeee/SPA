@@ -65,8 +65,10 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
   // Map ALL branch codes (not just the filtered ones): a booking can sit on a
   // cross-branch station whose branch is outside the current filter, and its
   // label must still resolve to that station's real branch.
-  const { data: brCodes } = await supabase.from('branches').select('id, code');
+  const { data: brCodes } = await supabase.from('branches').select('id, code, therapist_share_group');
   const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
+  // Therapist capacity pools the whole share group (each branch sees the full pool).
+  const grpBranchIds = shareGroupBranchIds(brCodes ?? [], branchIds);
   const [bedsRes, itemsRes, shiftRes, unassignedRes] = await Promise.all([
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
@@ -80,7 +82,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     supabase
       .from('employee_shifts')
       .select('employee_id, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ), home_branch:branches!employees_home_branch_id_fkey ( code ) )')
-      .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
+      .in('branch_id', grpBranchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     // Unassigned lines (a booking with no bed yet) — they ride the unallocated
     // rail. No resource filter (they have none); branch/day filtered in the loop.
     supabase
@@ -271,8 +273,10 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   // Map ALL branch codes (not just the filtered ones): a line assigned to a
   // cross-branch station must show that station's real branch, even when the
   // station's branch sits outside the current top-filter selection.
-  const { data: brCodes } = await supabase.from('branches').select('id, code');
+  const { data: brCodes } = await supabase.from('branches').select('id, code, therapist_share_group');
   const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
+  // Therapist capacity pools the whole share group (each branch sees the full pool).
+  const grpBranchSet = new Set(shareGroupBranchIds(brCodes ?? [], branchIds));
 
   const [empRes, shiftRes, itemsRes, bedsRes] = await Promise.all([
     // Rows = every active service therapist whose HOME branch is in the filter,
@@ -430,13 +434,14 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
 
   // ── Occupancy / utilization ──────────────────────────────────────────────
   // Therapist capacity = service therapists rostered AT the selected branches
-  // today (employee_shifts.branch_id ∈ selection + a service position): includes
-  // loaned-in cross-branch, excludes loaned-out. Bed capacity = active stations.
+  // today anywhere in the share group (employee_shifts.branch_id ∈ group + a
+  // service position): therapists are a shared pool, so every branch in the group
+  // sees the full pool. Bed capacity = active stations of the selection.
   // Demand windows reuse the items already fetched (scheduled + live + done).
   const placedNow = nowClockMin != null ? place(nowClockMin) : null;
   const capByEmp = new Map<string, OccWin>();
   for (const s of shiftRes.data ?? []) {
-    if (!brSet.has(s.branch_id)) continue;
+    if (!grpBranchSet.has(s.branch_id)) continue;
     const emp = one(s.employees);
     const code = emp ? one(emp.position)?.code ?? null : null;
     if (!isServicePosition(code)) continue;
@@ -527,6 +532,19 @@ function shareGroupComputable(groups: (string | null)[]): { ok: boolean; note: s
     return { ok: false, note: 'selected branches are not in one therapist share group' };
   }
   return { ok: true, note: null };
+}
+
+// The therapist pool spans the whole share group (each branch sees the full
+// pool), so capacity counts shifts at every branch sharing the selection's
+// group. A branch with no group — or a selection spanning groups (not
+// computable anyway) — falls back to just the selected branches.
+function shareGroupBranchIds(allBranches: { id: string; therapist_share_group: string | null }[], selectedIds: string[]): string[] {
+  const sel = allBranches.filter((b) => selectedIds.includes(b.id));
+  const groups = sel.map((b) => b.therapist_share_group ?? null);
+  const sameGroup = selectedIds.length <= 1 || (!groups.some((g) => !g) && new Set(groups).size === 1);
+  const common = groups[0] ?? null;
+  if (!sameGroup || !common) return selectedIds;
+  return allBranches.filter((b) => b.therapist_share_group === common).map((b) => b.id);
 }
 
 type OccWin = { s: number; e: number };

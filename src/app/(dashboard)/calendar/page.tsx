@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
-import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift } from '@/components/shift-schedule/schedule-board';
+import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift, type AssignBed } from '@/components/shift-schedule/schedule-board';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
@@ -184,7 +184,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
 // while bookings with no therapist yet ride the left "Unallocated" rail. Drag a
 // rail card onto a person to pre-assign them. Mirrors fetchStationBoard but keyed
 // on therapist_id instead of resource_id.
-async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[] }> {
+async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[] }> {
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
@@ -206,15 +206,18 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   const { data: brCodes } = await supabase.from('branches').select('id, code').in('id', branchIds);
   const branchCodeById = new Map((brCodes ?? []).map((b) => [b.id, b.code]));
 
-  const [shiftRes, itemsRes] = await Promise.all([
+  const [shiftRes, itemsRes, bedsRes] = await Promise.all([
     supabase
       .from('employee_shifts')
       .select('employee_id, branch_id, shift_type, shift_start, shift_end, employees:employee_id ( name, employee_code, position:positions ( code ) )')
       .in('branch_id', branchIds).eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name ), category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
+      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, branch_id, service_date, status, service_location_type, total_cents, paid_cents )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
+    // Every active station in the share group — candidates for the People
+    // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
+    supabase.from('resources').select('id, resource_name, resource_type, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
   ]);
 
   // Open the window early enough to cover shifts that start before the branch
@@ -253,6 +256,9 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   }
 
   const blocks: BoardBlock[] = [];
+  // Per-bed busy windows (draft + in-service items that hold a bed) so the
+  // People popover's "Assign bed" picker can offer only free stations.
+  const bedBusy = new Map<string, { s: number; e: number }[]>();
   for (const it of itemsRes.data ?? []) {
     const ord = one(it.order);
     if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
@@ -272,6 +278,12 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       endMin = startMin + dur;
       variant = 'scheduled';
     }
+    // A held bed (timed draft / live service) blocks that station for its window.
+    if (it.resource_id && !untimed && (it.status === 'draft' || it.status === 'in_service')) {
+      const arr = bedBusy.get(it.resource_id) ?? [];
+      arr.push({ s: startMin, e: endMin });
+      bedBusy.set(it.resource_id, arr);
+    }
     const therapistId = it.therapist_id ?? null;
     // A booking whose therapist isn't on shift today still needs a row to show on.
     if (therapistId && !rowsById.has(therapistId)) {
@@ -280,25 +292,39 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     // line2: dispatch shows hotel info; regular bookings show station / branch.
     const orderBranch = branchCodeById.get(ord.branch_id) ?? '—';
     const res = one(it.resource);
+    const onSite = ord.service_location_type !== 'external_hotel';
+    const bedUnassigned = onSite && !res;
     const line2 = ord.service_location_type === 'external_hotel'
       ? `Dispatch${it.external_room_no ? ` · Rm ${it.external_room_no}` : ''}`
       : res
         ? `${branchCodeById.get(res.branch_id) ?? orderBranch} · ${res.resource_name}`
         : `${orderBranch} · not assigned`;
+    // Station types this service may sit on (item-level allow-list wins, else the
+    // category's required type) so the bed picker only offers compatible beds.
+    const svc = one(it.service);
+    const cat = one(it.category);
+    const allowedResourceTypes = svc?.allowed_resource_types?.length
+      ? svc.allowed_resource_types
+      : cat?.required_resource_type ? [cat.required_resource_type] : [];
     blocks.push({
       key: `oi:${it.id}`, kind: 'order', refId: it.id, bedId: therapistId,
       guest: one(it.guest)?.customer_name ?? undefined, pax: 1,
-      line1: fmtSvc(one(it.service)?.name ?? one(it.category)?.name),
+      line1: fmtSvc(svc?.name ?? cat?.name),
       line2,
       startMin, endMin, durationMin: dur, prepMin: 0, cleanupMin: 0,
       variant, draggable: it.status === 'draft',
       orderId: ord.id, therapistId, untimed,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
+      bedUnassigned, allowedResourceTypes,
     });
   }
 
   const beds = [...rowsById.values()];
-  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts };
+  const assignBeds: AssignBed[] = (bedsRes.data ?? []).map((bd) => ({
+    id: bd.id, name: bd.resource_name, branch: branchCodeById.get(bd.branch_id) ?? '—',
+    type: bd.resource_type, busy: bedBusy.get(bd.id) ?? [],
+  }));
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds };
 }
 // Option lists for the board's click-to-add (reuses NewReservationDialog).
 async function fetchBoardDialogData(): Promise<BoardDialogData> {
@@ -405,6 +431,7 @@ export default async function CalendarPage({
           dialog={boardDialog!}
           axis="person"
           subjectLabel="Therapist"
+          assignBeds={peopleBoard.assignBeds}
         />
       ) : (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">

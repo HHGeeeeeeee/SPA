@@ -73,6 +73,22 @@ export interface BoardBlock {
    *  a hovered minute (block's own variant decides if it actually occupies
    *  the therapist — completed / interrupted don't). */
   therapistId?: string | null;
+  /** On-site booking that still has no bed (resource_id null). Drives the red
+   *  "not assigned" hint and unlocks the People popover's "Assign bed" picker. */
+  bedUnassigned?: boolean;
+  /** Station types this service may use (service item's allowed types, else the
+   *  category's required type). Empty = any bed. Filters the bed picker. */
+  allowedResourceTypes?: string[];
+}
+/** A candidate bed for the People board's "Assign bed" picker: every active
+ *  station in the share group, carrying its busy windows so the popover can
+ *  offer only the ones free during the booking. */
+export interface AssignBed {
+  id: string;
+  name: string;
+  branch: string;
+  type: string;
+  busy: { s: number; e: number }[];
 }
 export interface BoardStaffShift {
   id: string;
@@ -279,11 +295,18 @@ function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: Board
       <span className="truncate font-semibold">
         {block.guest ? `${block.guest} · ` : ''}{block.line1}
       </span>
-      {block.line2
-        ? <span className="truncate font-medium opacity-80">{block.line2}</span>
-        : !block.therapistId
-          ? <span className="truncate font-extrabold text-red-600 dark:text-red-400">Not assigned</span>
-          : null}
+      {block.bedUnassigned
+        ? <span className="truncate font-medium">
+            {/* "<branch> · not assigned" — branch faint, the bedless part red so
+                an unbeded booking stands out on the People board. */}
+            <span className="opacity-80">{block.line2?.replace(/·.*$/, '· ')}</span>
+            <span className="font-extrabold text-red-600 dark:text-red-400">not assigned</span>
+          </span>
+        : block.line2
+          ? <span className="truncate font-medium opacity-80">{block.line2}</span>
+          : !block.therapistId
+            ? <span className="truncate font-extrabold text-red-600 dark:text-red-400">Not assigned</span>
+            : null}
     </div>
   );
 }
@@ -469,7 +492,7 @@ function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, inde
 
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
-  axis = 'bed', subjectLabel = 'Station',
+  axis = 'bed', subjectLabel = 'Station', assignBeds = [],
 }: {
   branchId: string;
   day: string;
@@ -486,6 +509,9 @@ export function ScheduleBoard({
    *  bedId to the row id (resource_id for bed, therapist_id for person). */
   axis?: 'bed' | 'person';
   subjectLabel?: string;
+  /** Candidate beds for the People popover's "Assign bed" picker (axis='person'
+   *  only). Every active station in the share group with its busy windows. */
+  assignBeds?: AssignBed[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -749,6 +775,17 @@ export function ScheduleBoard({
     startTransition(async () => {
       const r = await assignTherapistToOrderItem({ item_id: refId, therapist_id: therapistId, start_min: startMin, day });
       if (r.ok) { toast.success(name ? `Assigned ${name}` : 'Therapist assigned'); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+  // Pin a bed to a bedless booking from the People popover. Reuses
+  // moveScheduledOrderItem (the Station drag's action): it sets resource_id and
+  // re-stamps the booked time, leaving therapist_id untouched, and runs the same
+  // bed-conflict + resource-type guards server-side.
+  function doAssignBed(refId: string, bedId: string, startMin: number, name?: string) {
+    startTransition(async () => {
+      const r = await moveScheduledOrderItem({ item_id: refId, bed_id: bedId, start_min: startMin, day });
+      if (r.ok) { toast.success(name ? `Assigned ${name}` : 'Bed assigned'); setDetail(null); router.refresh(); }
       else toast.error(r.error);
     });
   }
@@ -1153,6 +1190,38 @@ export function ScheduleBoard({
                   </select>
                 </div>
               )}
+              {/* People board: a bedless booking can be pinned to a bed here. The
+                  options are the share group's beds that are type-compatible AND
+                  free for this booking's window — the server re-checks on submit. */}
+              {axis === 'person' && b.draggable && b.bedUnassigned && !b.untimed && (() => {
+                const free = assignBeds.filter((bed) => {
+                  const typeOk = !b.allowedResourceTypes?.length || b.allowedResourceTypes.includes(bed.type);
+                  const busy = bed.busy.some((w) => b.startMin < w.e && w.s < b.endMin);
+                  return typeOk && !busy;
+                });
+                return (
+                  <div className="mt-3 border-t border-border pt-2">
+                    <label className="text-[11px] font-semibold text-muted-foreground">Assign bed</label>
+                    {free.length === 0 ? (
+                      <p className="mt-1 text-[12px] font-medium text-muted-foreground">No bed free for this time.</p>
+                    ) : (
+                      <select
+                        className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5 text-sm"
+                        defaultValue=""
+                        onChange={(e) => {
+                          const bed = free.find((x) => x.id === e.target.value);
+                          if (bed) doAssignBed(b.refId, bed.id, b.startMin, bed.name);
+                        }}
+                      >
+                        <option value="" disabled>Pick a bed…</option>
+                        {free.map((bed) => (
+                          <option key={bed.id} value={bed.id}>{bed.branch} · {bed.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="mt-3 flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setDetail(null)}>Close</Button>
                 {b.orderId && (

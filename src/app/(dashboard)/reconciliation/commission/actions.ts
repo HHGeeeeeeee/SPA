@@ -49,7 +49,7 @@ async function loadEligible(from: string, to: string, branchId: string) {
   const { data, error } = await supabase
     .from('order_items')
     .select(`
-      id, list_price_cents, discount_amount_cents, final_amount_cents, duration_minutes, actual_start, created_at, therapist_id, therapist_home_branch_id, resource_id, commission_settlement_id, status,
+      id, list_price_cents, discount_amount_cents, final_amount_cents, duration_minutes, scheduled_start, actual_start, created_at, therapist_id, therapist_home_branch_id, resource_id, commission_settlement_id, status,
       service:service_items!order_items_service_item_id_fkey ( name, commission_applicable ),
       therapist:employees!order_items_therapist_id_fkey ( name ),
       resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ),
@@ -78,7 +78,7 @@ async function loadEligible(from: string, to: string, branchId: string) {
 
 // The commission engine (read-only): groups eligible items per therapist with
 // per-line commission. commission = gross × effective_rate, where the effective
-// rate is the warm-up band rate for the day's Nth session (by actual_start), else
+// rate is the warm-up band rate for the day's Nth session (by scheduled_start), else
 // the therapist's class rate (branch override → global). No DB writes.
 async function computeGroups(branchId: string, from: string, to: string): Promise<CommGroup[]> {
   const supabase = await createAuditedClient();
@@ -128,14 +128,14 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
     return null;
   };
 
-  // Group per therapist + calendar day, order by actual_start to set occurrence.
+  // Group per therapist + calendar day, order by scheduled_start to set occurrence.
   const byDay = new Map<string, typeof eligible>();
   for (const r of eligible) {
     const key = `${r.it.therapist_id}:${r.ord!.service_date}`;
     const arr = byDay.get(key);
     if (arr) arr.push(r); else byDay.set(key, [r]);
   }
-  const sortKey = (r: (typeof eligible)[number]) => r.it.actual_start ?? r.it.created_at ?? '9999';
+  const sortKey = (r: (typeof eligible)[number]) => r.it.scheduled_start ?? r.it.created_at ?? '9999';
 
   const groups = new Map<string, CommGroup>();
   for (const [, rows] of byDay) {

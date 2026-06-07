@@ -106,5 +106,14 @@ begin
 end;
 $$;
 
-grant execute on function public.report_revenue(date, date, text[], text[], uuid[], boolean)
-  to authenticated, service_role;
+-- report_revenue is only ever called server-side with the service-role key, and
+-- its branch scoping is enforced by the CALLER (the server action), not inside
+-- the function. Lock EXECUTE to service_role so a logged-in user can't hit the
+-- RPC directly via PostgREST and pass their own p_branch_ids. (RLS already
+-- denies the function's internal reads to anon/authenticated today, but this is
+-- the explicit, future-proof boundary — independent of whether a permissive RLS
+-- policy is ever added later.)
+-- Supabase's default privileges grant EXECUTE to anon/authenticated explicitly
+-- (not only via PUBLIC), so revoke from each by name.
+revoke all on function public.report_revenue(date, date, text[], text[], uuid[], boolean) from public, anon, authenticated;
+grant execute on function public.report_revenue(date, date, text[], text[], uuid[], boolean) to service_role;

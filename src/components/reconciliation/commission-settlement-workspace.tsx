@@ -280,6 +280,8 @@ export function CommissionSettlementWorkspace({
   const pdfHref = histSel.size === 1
     ? `/reconciliation/commission/${[...histSel][0]}/pdf`
     : `/reconciliation/commission/pdf-zip?ids=${[...histSel].join(',')}`;
+  // HR payroll upload — one .xlsx for all selected periods (Remarks = settlement no).
+  const xlsxHref = `/reconciliation/commission/xlsx?ids=${[...histSel].join(',')}`;
 
   return (
     <div className="flex flex-col gap-6">
@@ -468,11 +470,17 @@ export function CommissionSettlementWorkspace({
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={allHistSelected} onChange={toggleAllHist} />
                   <span className="text-sm font-bold">Select all ({selectable.length})</span>
-                  <span className="text-xs font-medium text-muted-foreground">— pick settlements to download as PDF / ZIP</span>
+                  <span className="text-xs font-medium text-muted-foreground">— pick settlements to download as PDF / Excel</span>
                 </label>
                 {histSel.size > 0 && (
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-bold">{histSel.size} selected</span>
+                    <a
+                      href={xlsxHref}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600 px-3 py-1.5 text-sm font-bold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                    >
+                      <Download className="size-4" /> Payroll Excel ({histSel.size})
+                    </a>
                     <a
                       href={pdfHref}
                       className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-bold text-primary-foreground hover:bg-primary/90"

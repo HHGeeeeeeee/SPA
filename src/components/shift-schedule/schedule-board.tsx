@@ -20,6 +20,16 @@ import {
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn, formatPHP } from '@/lib/utils';
 import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
@@ -576,6 +586,8 @@ export function ScheduleBoard({
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
   // Block-detail popover (opened by clicking a booking; "Open order" navigates).
   const [detail, setDetail] = useState<{ block: BoardBlock; x: number; y: number } | null>(null);
+  // Finish confirmation — revenue is recognised at finish, so confirm before it.
+  const [finishConfirm, setFinishConfirm] = useState<{ itemId: string; orderId: string } | null>(null);
   // Station rail: 'bookings' (unallocated) vs 'staff' (on-shift therapists to
   // drag onto unassigned services). staffDragId is set while a staff card drags,
   // to light up the droppable (unassigned) blocks.
@@ -1433,7 +1445,7 @@ export function ScheduleBoard({
                 {/* Finish an in-service line — stamps the end time, same as the
                     order page's Finish. */}
                 {b.variant === 'in_service' && b.orderId && (
-                  <Button size="sm" disabled={pending} onClick={() => doFinishFromBoard(b.refId, b.orderId!)}>
+                  <Button size="sm" disabled={pending} onClick={() => setFinishConfirm({ itemId: b.refId, orderId: b.orderId! })}>
                     Finish
                   </Button>
                 )}
@@ -1442,6 +1454,25 @@ export function ScheduleBoard({
           </>
         );
       })()}
+
+      <AlertDialog open={!!finishConfirm} onOpenChange={(o) => { if (!o) setFinishConfirm(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Finish this service?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Finishing recognises the service revenue now — confirm the discount amount is correct on the order first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (finishConfirm) doFinishFromBoard(finishConfirm.itemId, finishConfirm.orderId); setFinishConfirm(null); }}
+            >
+              Finish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Drag preview for staff cards — renders in a portal so it isn't clipped
           by the rail's overflow while dragging onto a far block. */}

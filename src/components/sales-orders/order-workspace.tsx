@@ -635,13 +635,10 @@ export function OrderWorkspace({
   }
 
   function doFinishItem(it: OrderItem) {
-    // Warn if finishing before the booked duration has elapsed — a 60/90-min
-    // service (plus prep) shouldn't realistically finish sooner.
-    if (it.actual_start && it.duration_minutes) {
-      const elapsedMin = (Date.now() - new Date(it.actual_start).getTime()) / 60000;
-      if (elapsedMin < it.duration_minutes) { setConfirmFinish(it); return; }
-    }
-    finishItemNow(it.id);
+    // Always confirm before finishing — revenue is recognised at finish now, so
+    // the desk verifies the discount / final amount first (the dialog also flags
+    // an early finish when the booked duration hasn't elapsed).
+    setConfirmFinish(it);
   }
 
   function doSkipItem(id: string) {
@@ -1194,23 +1191,30 @@ export function OrderWorkspace({
       <AlertDialog open={!!confirmFinish} onOpenChange={(o) => { if (!o) setConfirmFinish(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Finish early?</AlertDialogTitle>
+            <AlertDialogTitle>Finish {confirmFinish?.service_name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              <strong>{confirmFinish?.service_name}</strong> has run only{' '}
-              <strong>
-                {confirmFinish?.actual_start
-                  ? Math.max(0, Math.floor((Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000))
-                  : 0} min
-              </strong>{' '}
-              of its <strong>{confirmFinish?.duration_minutes} min</strong> booking. Finish it now anyway?
+              Confirm the discount is correct — this final amount is booked as revenue now.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">List price</span><span className="tabular font-medium">{peso(confirmFinish?.list_price_cents ?? 0)}</span></div>
+            {(confirmFinish?.discount_amount_cents ?? 0) > 0 && (
+              <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular font-medium text-destructive">−{peso(confirmFinish?.discount_amount_cents ?? 0)}</span></div>
+            )}
+            <div className="mt-1 flex justify-between border-t border-border pt-1 font-bold"><span>Revenue to book</span><span className="tabular">{peso(confirmFinish?.final_amount_cents ?? 0)}</span></div>
+          </div>
+          {confirmFinish?.actual_start && confirmFinish?.duration_minutes
+            && (Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000 < confirmFinish.duration_minutes && (
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+              Finishing early — only {Math.max(0, Math.floor((Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000))} of {confirmFinish.duration_minutes} min run.
+            </p>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep running</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => { if (confirmFinish) finishItemNow(confirmFinish.id); setConfirmFinish(null); }}
             >
-              Finish anyway
+              Finish &amp; book {peso(confirmFinish?.final_amount_cents ?? 0)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

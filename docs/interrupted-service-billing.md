@@ -1,88 +1,56 @@
 # Charging for an interrupted service (full / partial / free)
 
-## First, the key rule: interrupting does NOT change the money
+## When revenue is recognised
 
-The moment a service is **Started** (goes *in service*), the system posts a **full revenue** folio line on the order (the service's final amount).
+Service revenue is recognised when the service **Finishes** — the full, discount-applied amount is posted to the folio **at finish**, not at start. So before finishing, the desk confirms the discount is right (the Finish prompt shows the exact amount that will be booked).
 
-When you **Interrupt** a running service, the system only does two things:
+An **Interrupt** is a terminal end that never reaches Finish, so it books revenue from the **Handling** you pick:
 
-1. Marks the service *interrupted* and records the **reason** plus the **charge intent** you picked (Full charge / No charge);
-2. It does **not** automatically reverse or adjust that revenue.
+- **Full charge** → books the full amount immediately (just like a finish).
+- **No charge** → books nothing; requires a **manager PIN**.
 
-> In other words: picking "No charge" on Interrupt only records intent — **the money is not reduced automatically**. The actual charge / waiver is always done by hand in the Folio section below, using **Add payment** and **Adjust charge**. That way the folio ledger and the order total never silently drift apart.
+> **Audit note.** A charged interrupt means the service was (partly) delivered and billed, so its revenue is recognised right then — automatically, and tied to that service line — exactly like a finish. It can't be forgotten, and the shift / GL always reflects delivered-and-charged work. A *waiver* (No charge) is gated by a manager PIN, so the decision **not** to recognise revenue is an approved, audited control rather than a silent omission.
 
-**Prerequisite for every case**: each folio action (Add payment / Adjust charge) needs an **open shift** for that branch. With no open shift the dialog shows a "please open a shift" hint — open one on Sales Remittance first.
-
----
-
-## Common first step: Interrupt the service
-
-On the order's service row (or the board), click **Interrupt** on the running service → pick Handling (Full charge / No charge) + Reason → submit.
-
-- Picking **No charge** requires a **manager PIN** (staff can't waive a charge on their own).
-- The Handling choice is only an intent record; the actual money is still handled by one of the three cases below.
-
-After interrupting, work in the order's **Folio** section:
-
-- **Revenue card**: `Add revenue`, `Adjust charge`
-- **Payments card**: `Add payment`, `Add refund`
+**Prerequisite**: finishing — or a charged interrupt — posts revenue into the branch's **open shift**, and the service category needs a revenue transaction code. With either missing, the action is blocked with a hint (open a shift on Sales Remittance / set the code in Settings → Service Categories).
 
 ---
 
-## Case 1: Full charge — just Add payment
+## The three cases
 
-The service was interrupted but you still charge full price. Revenue is already the full amount, so **no adjustment is needed**.
+After interrupting (service row or board → **Interrupt** → Handling + Reason), handle the money in the order's **Folio** section.
 
-1. Payments card → **Add payment**
-2. Pick Branch / Method, enter the amount (full), submit.
+### Case 1 — Full charge: just Add payment
 
-Done. Revenue = full, collected = full, balanced.
+Interrupt with **Full charge** → the full revenue is already booked.
 
----
+1. Payments card → **Add payment**, collect the full amount.
 
-## Case 2: Partial charge — Adjust charge first (manager), then Add payment
+### Case 2 — Partial charge: Adjust charge down, then Add payment
 
-You only charge part of it (e.g. list price ₱1,000, you collect only ₱600). First deduct the **part you are NOT charging** from revenue, then collect the actual amount.
+Interrupt with **Full charge** (books the full amount), then knock off the part you are not charging. Example: a ₱1,000 service where you only collect ₱600.
 
-1. Revenue card → **Adjust charge** (needs **manager PIN**)
-   - "Amount to deduct": enter the **amount to take off** (= the part not charged, here **₱400**)
-   - Enter a Reason
-   - Enter the manager PIN (single masked field; any manager's PIN works)
-   - Submit → the system posts a **−₱400** revenue line
-2. Payments card → **Add payment**, collect the **actual amount ₱600**.
+1. Revenue card → **Adjust charge** (manager PIN) — "Amount to deduct" = the part **not** charged (**₱400**). Posts a −₱400 revenue line.
+2. Payments card → **Add payment** — the actual amount (**₱600**).
 
-Done. Net revenue = 1,000 − 400 = **₱600**, collected = ₱600, balanced.
+Net revenue = 1,000 − 400 = **₱600**, collected ₱600.
 
-> Key point: Adjust charge takes the **positive amount you want to deduct** — the system turns it into a negative posting. Do not enter the amount you are collecting.
+### Case 3 — Free: No charge, nothing else
 
----
-
-## Case 3: Free — Adjust charge the full amount (manager PIN), no payment
-
-Nothing is charged (e.g. a fully waived complaint). Reverse the full revenue; no payment needed.
-
-1. Revenue card → **Adjust charge** (needs **manager PIN**)
-   - "Amount to deduct": enter the **full amount** (₱1,000)
-   - Enter a Reason
-   - Enter the manager PIN
-   - Submit → the system posts a **−₱1,000** revenue line
-2. **No** Add payment.
-
-Done. Net revenue = 1,000 − 1,000 = **₱0**, collected = ₱0, balanced.
+Interrupt with **No charge** (manager PIN) → no revenue is booked. **Done** — no Adjust charge needed.
 
 ---
 
 ## Quick reference
 
-| Case | Adjust charge (amount to deduct) | Add payment (collect) | Manager needed? |
+| Case | Interrupt handling | Revenue booked by interrupt | Then on the order |
 | --- | --- | --- | --- |
-| Full charge | — | full | No |
-| Partial charge | the part not charged | actual collected | Yes (Adjust charge) |
-| Free | full | — | Yes (Adjust charge) |
+| Full charge | Full charge | full amount | Add payment (full) |
+| Partial charge | Full charge | full amount | Adjust charge (deduct uncharged) + Add payment |
+| Free | No charge (manager PIN) | none | nothing |
 
 ## FAQ
 
-- **What amount goes in Adjust charge?** The part you are **not** charging (the amount to deduct), not the amount you collect. The system posts it as negative revenue.
-- **Why does a free service still need Adjust charge?** Because Start already posted the full revenue and Interrupt does not reverse it. Only Adjust charge actually removes that revenue.
-- **Can't click Add payment / Adjust charge?** The branch has no open shift. Open one on **Sales Remittance** first.
+- **Why does interrupting book revenue automatically?** See the audit note above — delivered-and-charged work is recognised at the moment it happens and tied to the service line, so it can't be missed; a waiver needs manager approval.
+- **A free interrupt — do I still Adjust charge?** No. No charge books nothing, so there is nothing to reverse.
+- **Can't Interrupt (Full charge) / Finish?** The branch has no open shift, or the service category has no revenue transaction code. Open a shift on **Sales Remittance** / set the code in *Settings → Service Categories*.
 - **Collected too much / need to refund?** Use **Add refund** on the Payments card (manager).

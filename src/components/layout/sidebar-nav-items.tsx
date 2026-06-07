@@ -12,6 +12,7 @@ import {
   Building2,
   Database,
   CircleAlert,
+  BarChart3,
   LucideIcon,
 } from 'lucide-react';
 
@@ -88,6 +89,7 @@ export const mainNavItems: NavItem[] = [
       { label: 'Accounts Receivable', href: '/reconciliation/soa', managerOnly: true },
     ],
   },
+  { label: 'Report Builder', href: '/report-builder', icon: BarChart3, managerOnly: true },
   { label: 'Incidents', href: '/incidents', icon: CircleAlert },
   { label: 'Help', href: '/help', icon: BookOpen },
   {

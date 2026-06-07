@@ -4146,7 +4146,17 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      report_revenue: {
+        Args: {
+          p_from: string
+          p_to: string
+          p_dimensions: string[]
+          p_statuses: string[]
+          p_branch_ids: string[]
+          p_settled_only?: boolean
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never

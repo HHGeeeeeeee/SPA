@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
-import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift, type AssignBed, type BoardOccupancy } from '@/components/shift-schedule/schedule-board';
+import { ScheduleBoard, BLOCK_KIND_LABEL, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift, type AssignBed, type BoardOccupancy } from '@/components/shift-schedule/schedule-board';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
@@ -261,7 +261,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
 // while bookings with no therapist yet ride the left "Unallocated" rail. Drag a
 // rail card onto a person to pre-assign them. Mirrors fetchStationBoard but keyed
 // on therapist_id instead of resource_id.
-async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[]; occupancy: BoardOccupancy }> {
+async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[]; occupancy: BoardOccupancy; lineup: string[] }> {
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
@@ -289,7 +289,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   // Therapist capacity pools the whole share group (each branch sees the full pool).
   const grpBranchSet = new Set(shareGroupBranchIds(brCodes ?? [], branchIds));
 
-  const [empRes, shiftRes, itemsRes, bedsRes] = await Promise.all([
+  const [empRes, shiftRes, itemsRes, bedsRes, blockRes, lineupRes] = await Promise.all([
     // Rows = every active service therapist whose HOME branch is in the filter,
     // rostered today or not ("these are your branch's people"). Off-shift ones
     // still get a row; the board's "Available only" toggle hides the empties.
@@ -311,6 +311,11 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     // Every active station in the share group — candidates for the People
     // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
+    // Today's therapist absence blocks (late / stepped out / early leave) — drawn
+    // on each person's row and subtracted from the "available" list.
+    supabase.from('therapist_block').select('id, employee_id, start_at, end_at, reason, block_kind').eq('block_date', day),
+    // The desk's manual line-up order for the primary branch (display-only).
+    supabase.from('daily_lineup').select('ordered_ids').eq('branch_id', branchId).eq('lineup_date', day).maybeSingle(),
   ]);
 
   // Home-branch service therapists become the rows.
@@ -444,7 +449,26 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     });
   }
 
+  // Absence blocks → a non-draggable 'blocked' block on the therapist's row.
+  // Only for therapists that have a row (home-branch service staff on the board).
+  for (const bl of blockRes.data ?? []) {
+    if (!rowsById.has(bl.employee_id)) continue;
+    const startMin = place(tsToMin(bl.start_at));
+    const endMin = place(tsToMin(bl.end_at));
+    blocks.push({
+      key: `tb:${bl.id}`, kind: 'block', refId: bl.id, bedId: bl.employee_id,
+      line1: bl.reason || 'Absent',
+      line2: bl.block_kind ? BLOCK_KIND_LABEL[bl.block_kind] ?? bl.block_kind : undefined,
+      startMin, endMin, durationMin: endMin - startMin, prepMin: 0, cleanupMin: 0,
+      variant: 'blocked', draggable: false, therapistId: bl.employee_id,
+    });
+  }
+
   const beds = [...rowsById.values()];
+  // Manual line-up order (display-only): the explicitly-ordered therapist ids
+  // that still map to a row today. Anyone not listed is "not in line-up" and the
+  // panel shows them separately — so newly-rostered staff are never lost.
+  const lineup = (lineupRes.data?.ordered_ids ?? []).filter((id) => rowsById.has(id));
   const assignBeds: AssignBed[] = (bedsRes.data ?? []).map((bd) => ({
     id: bd.id, name: bd.resource_name, branch: branchCodeById.get(bd.branch_id) ?? '—',
     type: bd.resource_type, zone: bd.location_zone ?? null, busy: bedBusy.get(bd.id) ?? [],
@@ -494,6 +518,15 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     if (it.resource_id) occBedBusy.push({ s, e: occEnd });
     if (it.therapist_id) occTherBusy.push({ s, e: occEnd });
   }
+  // Absent hours = each absence block's overlap with that therapist's on-shift
+  // band (off-shift absences don't cost capacity), summed across rostered rows.
+  let absentMin = 0;
+  for (const bl of blockRes.data ?? []) {
+    const band = bandByEmp.get(bl.employee_id);
+    if (!band) continue;
+    absentMin += overlap(place(tsToMin(bl.start_at)), place(tsToMin(bl.end_at)), band.start, band.end);
+  }
+
   const sg = shareGroupComputable((brHoursAll ?? []).map((b) => b.therapist_share_group ?? null));
   const occupancy = buildOccupancy({
     computable: sg.ok,
@@ -506,8 +539,9 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     therBusy: occTherBusy,
     actual: occActual,
   });
+  occupancy.absentHours = absentMin / 60;
 
-  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds, occupancy };
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds, occupancy, lineup };
 }
 // Option lists for the board's click-to-add (reuses NewReservationDialog).
 async function fetchBoardDialogData(): Promise<BoardDialogData> {
@@ -658,6 +692,7 @@ export default async function CalendarPage({
   // is gated off for now, but the prop is required).
   const boardDialog = (stationBoard || peopleBoard) ? await fetchBoardDialogData() : null;
 
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -706,6 +741,7 @@ export default async function CalendarPage({
           subjectLabel="Therapist"
           assignBeds={peopleBoard.assignBeds}
           occupancy={peopleBoard.occupancy}
+          lineup={peopleBoard.lineup}
         />
       ) : (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">

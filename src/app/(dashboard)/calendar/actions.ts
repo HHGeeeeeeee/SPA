@@ -163,6 +163,29 @@ async function therapistHasConflict(
   return false;
 }
 
+// Does `therapistId` have an absence block overlapping [startMin, endMin) on
+// `day`? A block (late / stepped-out / etc.) holds the therapist just like a
+// booking does, so the same window can't be assigned over it.
+async function therapistHasBlock(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  therapistId: string,
+  day: string,
+  startMin: number,
+  endMin: number,
+): Promise<boolean> {
+  const { data: bl } = await supabase
+    .from('therapist_block')
+    .select('start_at, end_at')
+    .eq('employee_id', therapistId)
+    .eq('block_date', day);
+  for (const b of bl ?? []) {
+    const s = isoMinPHT(b.start_at) + (datePHT(b.start_at) !== day ? 1440 : 0);
+    const e = isoMinPHT(b.end_at) + (datePHT(b.end_at) !== day ? 1440 : 0);
+    if (overlaps(startMin, endMin, s, e)) return true;
+  }
+  return false;
+}
+
 const assignSchema = z.object({
   item_id: z.string().uuid(),
   therapist_id: z.string().uuid(),
@@ -197,6 +220,9 @@ export async function assignTherapistToOrderItem(input: unknown): Promise<Action
   const endMin = start_min + durationMin;
   if (await therapistHasConflict(supabase, therapist_id, day, start_min, endMin, item_id)) {
     return { ok: false, error: 'That therapist is already booked for this time' };
+  }
+  if (await therapistHasBlock(supabase, therapist_id, day, start_min, endMin)) {
+    return { ok: false, error: 'That therapist is marked absent for this time' };
   }
 
   const startIso = makeIso(day, start_min);
@@ -360,6 +386,95 @@ export async function bulkSetShifts(input: unknown): Promise<{ ok: true; count: 
   if (ins.error) return { ok: false, error: ins.error.message };
   revalidatePath('/calendar');
   return { ok: true, count: rows.length };
+}
+
+// ── Therapist absence blocks ────────────────────────────────────────────────
+// Live, partial-day "this therapist is away" markers the front desk records on
+// the fly (late, stepped out, early leave…). Unlike the roster's leave shift
+// (manager-only, whole day), a block is an operational desk action — any signed-
+// in user with branch access can add/remove one.
+
+const blockSchema = z.object({
+  employee_id: z.string().uuid(),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  start_min: z.number().int().min(0).max(2879),
+  end_min: z.number().int().min(0).max(2880),
+  reason: z.string().trim().min(1, 'A reason is required').max(200),
+  block_kind: z.enum(['late', 'early_leave', 'stepped_out', 'absent', 'other']).optional().nullable(),
+});
+
+export async function addTherapistBlock(input: unknown): Promise<ActionResult> {
+  const parsed = blockSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  if (d.end_min <= d.start_min) return { ok: false, error: 'End time must be after start time' };
+  if (!(await currentSession())) return { ok: false, error: 'Sign in to record an absence' };
+
+  const supabase = await createAuditedClient();
+  // The block's branch = where this therapist works (their home branch), so
+  // branch-scoped absence reports attribute it correctly without trusting the
+  // client. Access is checked against that branch.
+  const { data: emp } = await supabase
+    .from('employees').select('home_branch_id').eq('id', d.employee_id).single();
+  const branchId = emp?.home_branch_id;
+  if (!branchId) return { ok: false, error: 'Therapist not found' };
+  if (!(await canAccessBranch(branchId))) return { ok: false, error: 'No access to this branch' };
+
+  const { error } = await supabase.from('therapist_block').insert({
+    employee_id: d.employee_id,
+    branch_id: branchId,
+    block_date: d.day,
+    start_at: makeIso(d.day, d.start_min),
+    end_at: makeIso(d.day, d.end_min),
+    reason: d.reason,
+    block_kind: d.block_kind ?? null,
+  });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/calendar');
+  return { ok: true };
+}
+
+export async function removeTherapistBlock(blockId: string): Promise<ActionResult> {
+  if (!z.string().uuid().safeParse(blockId).success) return { ok: false, error: 'Invalid block' };
+  if (!(await currentSession())) return { ok: false, error: 'Sign in to edit absences' };
+  const supabase = await createAuditedClient();
+  const { data: bl } = await supabase
+    .from('therapist_block').select('branch_id').eq('id', blockId).single();
+  if (!bl) return { ok: true }; // already gone
+  if (!(await canAccessBranch(bl.branch_id))) return { ok: false, error: 'No access to this branch' };
+  const { error } = await supabase.from('therapist_block').delete().eq('id', blockId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/calendar');
+  return { ok: true };
+}
+
+// ── Daily line-up order (manual, display-only) ──────────────────────────────
+// The desk's "who's next" order for the day. The whole order is one array per
+// (branch, date); every save overwrites it wholesale, so there's no per-row
+// position to mis-shift — re-marking is just re-storing the list.
+const lineupSchema = z.object({
+  branch_id: z.string().uuid(),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  ordered_ids: z.array(z.string().uuid()).max(500),
+});
+
+export async function setDailyLineup(input: unknown): Promise<ActionResult> {
+  const parsed = lineupSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  if (!(await currentSession())) return { ok: false, error: 'Sign in to set the line-up' };
+  if (!(await canAccessBranch(d.branch_id))) return { ok: false, error: 'No access to this branch' };
+  // De-dup defensively (a drag bug shouldn't be able to list someone twice).
+  const seen = new Set<string>();
+  const ordered = d.ordered_ids.filter((id) => (seen.has(id) ? false : (seen.add(id), true)));
+
+  const supabase = await createAuditedClient();
+  const { error } = await supabase
+    .from('daily_lineup')
+    .upsert({ branch_id: d.branch_id, lineup_date: d.day, ordered_ids: ordered }, { onConflict: 'branch_id,lineup_date' });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/calendar');
+  return { ok: true };
 }
 
 export async function clearShift(

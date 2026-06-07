@@ -1139,6 +1139,119 @@ export type Database = {
           },
         ]
       }
+      daily_lineup: {
+        Row: {
+          branch_id: string
+          lineup_date: string
+          ordered_ids: string[]
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          branch_id: string
+          lineup_date: string
+          ordered_ids?: string[]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          branch_id?: string
+          lineup_date?: string
+          ordered_ids?: string[]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_lineup_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_lineup_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      therapist_block: {
+        Row: {
+          block_date: string
+          block_kind: string | null
+          branch_id: string
+          created_at: string
+          created_by: string | null
+          employee_id: string
+          end_at: string
+          id: string
+          reason: string
+          start_at: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          block_date: string
+          block_kind?: string | null
+          branch_id: string
+          created_at?: string
+          created_by?: string | null
+          employee_id: string
+          end_at: string
+          id?: string
+          reason: string
+          start_at: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          block_date?: string
+          block_kind?: string | null
+          branch_id?: string
+          created_at?: string
+          created_by?: string | null
+          employee_id?: string
+          end_at?: string
+          id?: string
+          reason?: string
+          start_at?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "therapist_block_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "therapist_block_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "therapist_block_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "therapist_block_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       employee_shifts: {
         Row: {
           branch_id: string

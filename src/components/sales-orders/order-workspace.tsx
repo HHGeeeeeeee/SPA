@@ -162,6 +162,11 @@ interface Props {
   busyTherapistIds: string[];
   busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
+  shiftWindowsByTherapist: Record<string, { s: number; e: number }[]>;
+  bookingWindowsByTherapist: Record<string, { s: number; e: number; item: string }[]>;
+  blockWindowsByTherapist: Record<string, { s: number; e: number }[]>;
+  lineupRank: Record<string, number>;
+  serviceDate: string;
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
   sourceDefaultDiscountId: string | null;
@@ -277,6 +282,11 @@ export function OrderWorkspace({
   busyTherapistIds,
   busyTherapistEndMap,
   busyResourceIds,
+  shiftWindowsByTherapist,
+  bookingWindowsByTherapist,
+  blockWindowsByTherapist,
+  lineupRank,
+  serviceDate,
   resources,
   discountClasses,
   sourceDefaultDiscountId,
@@ -858,6 +868,12 @@ export function OrderWorkspace({
                                 busyTherapistIds={busyTherapistIds}
                                 busyTherapistEndMap={busyTherapistEndMap}
                                 busyResourceIds={busyResourceIds}
+                                shiftWindows={shiftWindowsByTherapist}
+                                bookingWindows={bookingWindowsByTherapist}
+                                blockWindows={blockWindowsByTherapist}
+                                lineupRank={lineupRank}
+                                serviceDate={serviceDate}
+                                lineItemId={it.id}
                                 guestGender={guestGenderOf(c)}
                                 sourceDiscountLocked={sourceDiscountLocked}
                                 defaultDiscountId={defaultDiscountId}
@@ -986,6 +1002,11 @@ export function OrderWorkspace({
                           busyTherapistIds={busyTherapistIds}
                           busyTherapistEndMap={busyTherapistEndMap}
                           busyResourceIds={busyResourceIds}
+                          shiftWindows={shiftWindowsByTherapist}
+                          bookingWindows={bookingWindowsByTherapist}
+                          blockWindows={blockWindowsByTherapist}
+                          lineupRank={lineupRank}
+                          serviceDate={serviceDate}
                           guestGender={guestGenderOf(c)}
                           sourceDiscountLocked={sourceDiscountLocked}
                           defaultDiscountId={defaultDiscountId}

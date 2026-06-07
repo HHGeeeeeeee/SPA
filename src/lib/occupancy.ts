@@ -19,6 +19,7 @@ export interface DayOccupancy {
   utilizationPct: number | null;
   stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
   therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
+  absentHours: number;             // shift-hours lost to therapist absence blocks today
   // One entry per operating hour (placed-hour ints; >24 after midnight).
   // revenueCents = service revenue recognised in that hour (delivered services'
   // list price, by start hour) — drawn as a background area on the chart.
@@ -50,14 +51,14 @@ function one<T>(v: T | T[] | null): T | null {
 
 const EMPTY: DayOccupancy = {
   computable: true, note: null, bedHours: 0, therapistHours: 0, stationCount: 0, therapistCount: 0,
-  capacityHours: 0, actualHours: 0, utilizationPct: null, stationOccPct: null, therapistOccPct: null, perHour: [],
+  capacityHours: 0, actualHours: 0, utilizationPct: null, stationOccPct: null, therapistOccPct: null, absentHours: 0, perHour: [],
 };
 
 export async function computeDayOccupancy(branchIds: string[], day: string, nowIso?: string): Promise<DayOccupancy> {
   if (!branchIds.length) return EMPTY;
   const supabase = createServiceClient();
 
-  const [brRes, resRes, shiftRes, itemsRes] = await Promise.all([
+  const [brRes, resRes, shiftRes, itemsRes, blockRes] = await Promise.all([
     // ALL active branches — needed to expand the therapist pool to the whole
     // share group, not just the selected branches.
     supabase.from('branches').select('id, open_time, close_time, therapist_share_group').eq('active', true),
@@ -70,6 +71,9 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
       .from('order_items')
       .select('id, status, duration_minutes, list_price_cents, resource_id, therapist_id, scheduled_start, slot_start, slot_end, actual_start, actual_end, order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
+    // Today's therapist absence blocks (late / stepped out / early leave) — the
+    // hours subtracted from rostered capacity below.
+    supabase.from('therapist_block').select('employee_id, start_at, end_at').eq('block_date', day),
   ]);
 
   const brAll = brRes.data ?? [];
@@ -87,12 +91,15 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
   const commonGroup = groups[0] ?? null;
   const groupBranchSet = new Set(commonGroup ? brAll.filter((b) => b.therapist_share_group === commonGroup).map((b) => b.id) : branchIds);
 
-  // Window: earliest open → latest close of the SELECTED branches (union),
-  // folding after-midnight closes.
+  // Window: earliest open → latest close of the SELECTED branches (union).
+  // place() folds only genuine after-midnight times (before a midnight-crossing
+  // branch's close) to the next day — NOT pre-open morning hours, so a shift that
+  // starts before open (e.g. 09:00 vs a 10:00 open) stays in the morning.
   const hours = selBr.map((b) => ({ open: timeToMin(b.open_time ?? '10:00') ?? 600, close: timeToMin(b.close_time ?? '02:00') ?? 120 }));
-  const windowStartMin = Math.min(...hours.map((h) => h.open).concat([600]));
-  const windowEndMin = Math.max(...hours.map((h) => (h.close <= h.open ? h.close + 1440 : h.close)).concat([windowStartMin + 60]));
-  const place = (clockMin: number) => (clockMin < windowStartMin ? clockMin + 1440 : clockMin);
+  const branchOpen = Math.min(...hours.map((h) => h.open).concat([600]));
+  const crossingCloses = hours.filter((h) => h.close <= h.open).map((h) => h.close);
+  const wrapThreshold = crossingCloses.length ? Math.max(...crossingCloses) : -1;
+  const place = (clockMin: number) => (clockMin < wrapThreshold ? clockMin + 1440 : clockMin);
   const nowMin = nowIso ? place(tsToMin(nowIso)) : null;
 
   const stationCount = (resRes.data ?? []).length;
@@ -100,8 +107,10 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
 
   // Therapist capacity: service therapists rostered today anywhere in the share
   // group (one merged window per person, so a split/loaned shift doesn't
-  // double-count).
+  // double-count). rawStarts feeds the early-open widening; placedEnds the late close.
   const capByEmp = new Map<string, Win>();
+  const rawStarts: number[] = [];
+  const placedEnds: number[] = [];
   for (const s of shiftRes.data ?? []) {
     if (!groupBranchSet.has(s.branch_id)) continue;
     const emp = one(s.employees);
@@ -110,10 +119,32 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
     const ss = timeToMin(s.shift_start); const se = timeToMin(s.shift_end);
     if (ss == null || se == null) continue;
     const st = place(ss); const en = place(se);
+    rawStarts.push(ss); placedEnds.push(en);
     const prev = capByEmp.get(s.employee_id);
     capByEmp.set(s.employee_id, prev ? { s: Math.min(prev.s, st), e: Math.max(prev.e, en) } : { s: st, e: en });
   }
   const shifts = [...capByEmp.values()];
+
+  // Open the window early enough to cover shifts that start before the branch
+  // opens (only the few hours before open, so a genuine after-midnight time can't
+  // drag it backwards); close it at the latest of branch close / shift end.
+  const earlyStarts = rawStarts.filter((m) => m < branchOpen && m >= branchOpen - 360);
+  const windowStartMin = earlyStarts.length ? Math.min(branchOpen, ...earlyStarts) : branchOpen;
+  const windowEndMin = Math.max(
+    ...hours.map((h) => (h.close <= h.open ? h.close + 1440 : h.close)),
+    ...placedEnds,
+    windowStartMin + 60,
+  );
+
+  // Absent hours = each absence block's overlap with that therapist's rostered
+  // capacity window (off-shift / non-pool absences cost nothing), summed.
+  let absentMin = 0;
+  for (const bl of blockRes.data ?? []) {
+    const cap = capByEmp.get(bl.employee_id);
+    if (!cap) continue;
+    absentMin += overlap(place(tsToMin(bl.start_at)), place(tsToMin(bl.end_at)), cap.s, cap.e);
+  }
+  const absentHours = absentMin / 60;
 
   // Demand windows. Occupancy (booked) counts scheduled drafts + live + done as
   // holding a bed / a therapist; utilization counts only DELIVERED service
@@ -181,6 +212,7 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
     utilizationPct: capacityHours > 0 ? actualHours / capacityHours : null,
     stationOccPct: bedHours > 0 ? bedOccHours / bedHours : null,
     therapistOccPct: therapistHours > 0 ? therOccHours / therapistHours : null,
+    absentHours,
     perHour,
   };
 }

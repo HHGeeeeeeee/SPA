@@ -73,7 +73,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
-      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, slot_start, slot_end, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
     // Pull the full roster (with employee identity + position) instead of bare
@@ -104,13 +104,18 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     let variant: BlockVariant;
     let draggable = false;
     if (it.status === 'draft') {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (!sIso) continue; // no planned time → can't place it on the axis
       startMin = place(tsToMin(sIso)); endMin = startMin + dur; variant = 'scheduled'; draggable = true;
     } else {
-      if (!it.actual_start) continue;
-      startMin = place(tsToMin(it.actual_start));
-      endMin = it.actual_end ? place(tsToMin(it.actual_end)) : startMin + dur;
+      // Display the booked block (slot_*), not the real button times: it opens at
+      // the planned start and ends at the trimmed/capped end stamped on finish —
+      // so a late Start/End press never shifts the block.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      startMin = place(tsToMin(sIso));
+      const eIso = it.slot_end ?? it.actual_end;
+      endMin = eIso ? place(tsToMin(eIso)) : startMin + dur;
       // Finished / interrupted lines render as the greyed "completed" block (they
       // still hold the bed through the cleanup buffer); only a live one is in_service.
       variant = it.status === 'in_service' ? 'in_service' : 'completed';
@@ -210,19 +215,22 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     for (const it of rows ?? []) {
       const ord = one(it.order);
       if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
-      const r = it as { status: string; resource_id?: string | null; therapist_id?: string | null; scheduled_start?: string | null; service_start?: string | null; slot_start?: string | null; actual_start?: string | null; actual_end?: string | null; duration_minutes?: number | null };
+      const r = it as { status: string; resource_id?: string | null; therapist_id?: string | null; scheduled_start?: string | null; slot_start?: string | null; slot_end?: string | null; actual_start?: string | null; actual_end?: string | null; duration_minutes?: number | null };
       const dur = r.duration_minutes ?? 60;
       let s: number;
       let occEnd: number;
       if (r.status === 'draft') {
-        const sIso = r.scheduled_start ?? r.service_start ?? r.slot_start;
+        const sIso = r.scheduled_start ?? r.slot_start;
         if (!sIso) continue; // untimed → can't attribute to an hour
         s = place(tsToMin(sIso)); occEnd = s + dur;
       } else {
-        if (!r.actual_start) continue;
-        s = place(tsToMin(r.actual_start));
-        occEnd = r.actual_end ? place(tsToMin(r.actual_end)) : s + dur;
-        const actEnd = r.actual_end ? place(tsToMin(r.actual_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
+        // Delivered window = the booked block (slot_*), capped on finish — the
+        // truest "service hour" since button presses can lag the real service.
+        const sIso = r.slot_start ?? r.actual_start ?? r.scheduled_start;
+        if (!sIso) continue;
+        s = place(tsToMin(sIso));
+        occEnd = r.slot_end ? place(tsToMin(r.slot_end)) : s + dur;
+        const actEnd = r.slot_end ? place(tsToMin(r.slot_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
         actual.push({ s, e: actEnd });
       }
       if (r.resource_id) bedBusy.push({ s, e: occEnd });
@@ -298,7 +306,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, therapist_id, resource_id, scheduled_start, slot_start, slot_end, actual_start, actual_end, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
     // Every active station in the share group — candidates for the People
     // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
@@ -366,12 +374,16 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     let variant: BlockVariant;
     let untimed = false;
     if (it.status === 'in_service' || it.status === 'service_completed' || it.status === 'interrupted') {
-      if (!it.actual_start) continue;
-      startMin = place(tsToMin(it.actual_start));
-      endMin = it.actual_end ? place(tsToMin(it.actual_end)) : startMin + dur;
+      // Booked block (slot_*), not the real button times — a late Start/End press
+      // doesn't shift the displayed block.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      startMin = place(tsToMin(sIso));
+      const eIso = it.slot_end ?? it.actual_end;
+      endMin = eIso ? place(tsToMin(eIso)) : startMin + dur;
       variant = it.status === 'in_service' ? 'in_service' : 'completed';
     } else {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (sIso) { startMin = place(tsToMin(sIso)); } else { startMin = windowStartMin; untimed = true; }
       endMin = startMin + dur;
       variant = 'scheduled';
@@ -467,14 +479,16 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     let s: number;
     let occEnd: number;
     if (it.status === 'draft') {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (!sIso) continue;
       s = place(tsToMin(sIso)); occEnd = s + dur;
     } else {
-      if (!it.actual_start) continue;
-      s = place(tsToMin(it.actual_start));
-      occEnd = it.actual_end ? place(tsToMin(it.actual_end)) : s + dur;
-      const actEnd = it.actual_end ? place(tsToMin(it.actual_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
+      // Delivered window = booked block (slot_*), capped on finish.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      s = place(tsToMin(sIso));
+      occEnd = it.slot_end ? place(tsToMin(it.slot_end)) : s + dur;
+      const actEnd = it.slot_end ? place(tsToMin(it.slot_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
       occActual.push({ s, e: actEnd });
     }
     if (it.resource_id) occBedBusy.push({ s, e: occEnd });

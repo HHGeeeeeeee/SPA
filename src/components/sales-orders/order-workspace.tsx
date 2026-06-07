@@ -58,7 +58,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_7rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_8.5rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -184,9 +184,6 @@ const GENDER_OPTS = [
   { value: 'M', label: 'Male only' },
 ];
 
-function hm(ts: string | null): string {
-  return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
-}
 // ISO → short date + time in Manila (folio "created at").
 function dtm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short' }) : '';
@@ -209,18 +206,10 @@ function toHHmm(ts: string | null): string {
   return ts ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts)) : '';
 }
 
-// Time window for a service line: actual once finished, else the projected end
-// while it's running. The bed is occupied for prep + service, so the projected
-// end folds prep in. Nothing before it's started.
-function timeWindow(actualStart: string | null, actualEnd: string | null, durationMin: number | null, prepMin: number): string | null {
-  if (!actualStart) return null;
-  if (actualEnd) return `${hm(actualStart)}–${hm(actualEnd)}`;
-  const occ = (durationMin ?? 0) + (prepMin ?? 0);
-  if (occ > 0) {
-    const end = new Date(new Date(actualStart).getTime() + occ * 60000).toISOString();
-    return `${hm(actualStart)}–~${hm(end)}`;
-  }
-  return hm(actualStart);
+// Plan end = booked start + duration, as HH:mm (for the order line's Plan row).
+function planEndHHmm(start: string | null, durationMin: number | null): string {
+  if (!start || durationMin == null) return '—';
+  return toHHmm(new Date(new Date(start).getTime() + durationMin * 60000).toISOString());
 }
 
 // A service-line action button with a colour + a hover tooltip explaining it.
@@ -835,7 +824,7 @@ export function OrderWorkspace({
                       <span>Category</span>
                       <span>Service</span>
                       <span>Duration</span>
-                      <span>Start</span>
+                      <span>Plan / Act</span>
                       <span>Therapist</span>
                       <span>{dispatch ? 'Room' : 'Station'}</span>
                       <span className="text-right">Price</span>
@@ -915,7 +904,10 @@ export function OrderWorkspace({
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
                             </span>
-                            <span className="text-xs font-medium text-muted-foreground tabular truncate">{toHHmm(it.actual_start ?? it.scheduled_start) || '—'}</span>
+                            <span className="flex flex-col gap-0.5 text-[11px] font-medium text-muted-foreground tabular leading-tight">
+                              <span title="Planned (booked) start-end">P {toHHmm(it.scheduled_start) || '—'}-{planEndHHmm(it.scheduled_start, it.duration_minutes)}</span>
+                              <span title="Actual start-end (real button press)" className={it.actual_start ? '' : 'opacity-60'}>A {toHHmm(it.actual_start) || '—'}-{toHHmm(it.actual_end) || '—'}</span>
+                            </span>
                             <span className="font-medium text-muted-foreground truncate">
                               {it.therapist_name ?? 'Unassigned'}
                             </span>

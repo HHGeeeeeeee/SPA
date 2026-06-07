@@ -1128,7 +1128,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group, category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, duration_minutes, service:service_items ( commission_applicable, allowed_resource_types, service_group, category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
     .eq('id', itemId)
     .single();
 
@@ -1216,9 +1216,17 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     if (busy && busy.length > 0) return { ok: false, error: 'This station is occupied by another in-service line' };
   }
 
+  // actual_start records the REAL Start press. slot_* drive the calendar's
+  // display block: it opens at the planned start (not the press time — the desk
+  // starts the line only after seating the guest) and runs to the planned end
+  // until Finish trims/caps it.
+  const planStartIso = item?.scheduled_start ?? now;
+  const planEndIso = item?.scheduled_start && item.duration_minutes != null
+    ? new Date(Date.parse(item.scheduled_start) + item.duration_minutes * 60000).toISOString()
+    : null;
   const { error } = await supabase
     .from('order_items')
-    .update({ status: 'in_service', actual_start: item?.scheduled_start ?? now, service_start: item?.scheduled_start ?? now })
+    .update({ status: 'in_service', actual_start: now, slot_start: planStartIso, slot_end: planEndIso })
     .eq('id', itemId);
   if (error) return { ok: false, error: error.message };
 
@@ -1329,7 +1337,7 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   const nowMs = Date.now();
   const { data: item } = await supabase
     .from('order_items')
-    .select('actual_start, scheduled_start, slot_end, duration_minutes, status, final_amount_cents')
+    .select('actual_start, scheduled_start, slot_start, duration_minutes, status, final_amount_cents')
     .eq('id', itemId)
     .single();
   if (!item) return { ok: false, error: 'Service line not found' };
@@ -1340,27 +1348,28 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   const rev = await resolveServiceRevenuePosting(supabase, itemId, orderId);
   if (!rev.ok) return rev;
 
-  // The end time is capped at the planned end (booked start + duration, or the
-  // stored slot_end): finishing early records the real end, but finishing late
-  // can't push the line past its plan — an overrun never extends the booked block.
-  const planEndMs = item.slot_end
-    ? Date.parse(item.slot_end)
-    : (item.scheduled_start && item.duration_minutes != null)
-      ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
-      : null;
-  let endMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
-  // Never before the service actually started (a line started after its own plan
-  // end would otherwise read end < start).
-  if (item.actual_start) endMs = Math.max(endMs, Date.parse(item.actual_start));
-  const end = new Date(endMs).toISOString();
+  const now = new Date(nowMs).toISOString();
+  // Planned end = booked start + duration. The calendar block (slot_end) is
+  // capped here: finishing early trims it, finishing late holds it at the plan
+  // (the desk may press End after the guest has already left). actual_end always
+  // records the REAL press time, for the operational record.
+  const planEndMs = item.scheduled_start && item.duration_minutes != null
+    ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
+    : null;
+  const slotStartMs = item.slot_start
+    ? Date.parse(item.slot_start)
+    : item.scheduled_start ? Date.parse(item.scheduled_start) : nowMs;
+  let slotEndMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
+  if (slotEndMs < slotStartMs) slotEndMs = slotStartMs; // never a negative-length block
+  const slotEnd = new Date(slotEndMs).toISOString();
 
-  const patch: { status: string; actual_end: string; service_end: string; actual_duration_minutes?: number } = {
+  const patch: { status: string; actual_end: string; slot_end: string; actual_duration_minutes?: number } = {
     status: 'service_completed',
-    actual_end: end,
-    service_end: end,
+    actual_end: now,
+    slot_end: slotEnd,
   };
-  if (item?.actual_start) {
-    patch.actual_duration_minutes = Math.max(1, Math.round((endMs - Date.parse(item.actual_start)) / 60000));
+  if (item.actual_start) {
+    patch.actual_duration_minutes = Math.max(1, Math.round((nowMs - Date.parse(item.actual_start)) / 60000));
   }
   const { error } = await supabase.from('order_items').update(patch).eq('id', itemId);
   if (error) return { ok: false, error: error.message };
@@ -1493,7 +1502,7 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
 
   const { data: item } = await supabase
     .from('order_items')
-    .select('actual_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status')
+    .select('actual_start, scheduled_start, slot_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status')
     .eq('id', d.item_id)
     .single();
   if (!item) return { ok: false, error: 'Service line not found' };
@@ -1503,6 +1512,17 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
   const actualMin = item.actual_start
     ? Math.max(1, Math.round((Date.parse(now) - Date.parse(item.actual_start)) / 60000))
     : 0;
+  // Calendar block ends at the interrupt point, capped at the planned end.
+  const nowMs = Date.parse(now);
+  const planEndMs = item.scheduled_start && item.duration_minutes != null
+    ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
+    : null;
+  const slotStartMs = item.slot_start
+    ? Date.parse(item.slot_start)
+    : item.scheduled_start ? Date.parse(item.scheduled_start) : nowMs;
+  let slotEndMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
+  if (slotEndMs < slotStartMs) slotEndMs = slotStartMs;
+  const slotEnd = new Date(slotEndMs).toISOString();
 
   // Revenue is recognised on a CHARGED interrupt — the service was (partly)
   // delivered and billed, so it books straight to the folio like a finish:
@@ -1543,6 +1563,7 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
       interruption_notes: d.notes ?? null,
       interruption_at: now,
       actual_end: now,
+      slot_end: slotEnd,
       actual_duration_minutes: actualMin,
       // Reschedule starts in the "pending follow-up" state. Manager clears it
       // from the Pending Reschedules list once the make-up service has been

@@ -2107,9 +2107,7 @@ export type Database = {
           resource_id: string | null
           scheduled_start: string | null
           service_category_id: string
-          service_end: string | null
           service_item_id: string | null
-          service_start: string | null
           slot_end: string | null
           slot_start: string | null
           status: string
@@ -2147,9 +2145,7 @@ export type Database = {
           resource_id?: string | null
           scheduled_start?: string | null
           service_category_id: string
-          service_end?: string | null
           service_item_id?: string | null
-          service_start?: string | null
           slot_end?: string | null
           slot_start?: string | null
           status?: string
@@ -2187,9 +2183,7 @@ export type Database = {
           resource_id?: string | null
           scheduled_start?: string | null
           service_category_id?: string
-          service_end?: string | null
           service_item_id?: string | null
-          service_start?: string | null
           slot_end?: string | null
           slot_start?: string | null
           status?: string

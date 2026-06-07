@@ -68,7 +68,7 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, duration_minutes, list_price_cents, resource_id, therapist_id, scheduled_start, service_start, slot_start, actual_start, actual_end, order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
+      .select('id, status, duration_minutes, list_price_cents, resource_id, therapist_id, scheduled_start, slot_start, slot_end, actual_start, actual_end, order:orders!order_items_order_id_fkey ( branch_id, service_date, status )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
   ]);
 
@@ -131,14 +131,16 @@ export async function computeDayOccupancy(branchIds: string[], day: string, nowI
     let s: number;
     let occEnd: number;
     if (it.status === 'draft') {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (!sIso) continue; // untimed → can't attribute to an hour
       s = place(tsToMin(sIso)); occEnd = s + dur;
     } else {
-      if (!it.actual_start) continue;
-      s = place(tsToMin(it.actual_start));
-      occEnd = it.actual_end ? place(tsToMin(it.actual_end)) : s + dur;
-      const actEnd = it.actual_end ? place(tsToMin(it.actual_end)) : (nowMin != null ? Math.max(s, nowMin) : s + dur);
+      // Delivered window = booked block (slot_*), capped on finish.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      s = place(tsToMin(sIso));
+      occEnd = it.slot_end ? place(tsToMin(it.slot_end)) : s + dur;
+      const actEnd = it.slot_end ? place(tsToMin(it.slot_end)) : (nowMin != null ? Math.max(s, nowMin) : s + dur);
       actual.push({ s, e: actEnd });
       const h = Math.floor(s / 60);
       revByHour.set(h, (revByHour.get(h) ?? 0) + (it.list_price_cents ?? 0));

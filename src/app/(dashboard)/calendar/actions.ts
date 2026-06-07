@@ -55,13 +55,13 @@ async function bedHasConflict(
   // occupancy comes entirely from scheduled/in-service order items on that bed.
   const { data: oi } = await supabase
     .from('order_items')
-    .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
+    .select('id, status, scheduled_start, slot_start, slot_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
     .eq('resource_id', bedId)
     .in('status', ['draft', 'in_service']);
   for (const it of oi ?? []) {
     if (one(it.order)?.service_date !== day) continue;
     if (exclude.itemId && it.id === exclude.itemId) continue;
-    const startIso = it.actual_start ?? it.scheduled_start ?? it.service_start ?? it.slot_start;
+    const startIso = it.slot_start ?? it.scheduled_start;
     if (!startIso) continue;
     // Normalise to the board's minute axis. startMin/endMin can exceed 1439 on a
     // past-midnight board (00:30 next clock day = 1470), but isoMinPHT only ever
@@ -70,8 +70,8 @@ async function bedHasConflict(
     // +1440 — otherwise a 00:30 booking reads as 30 and never overlaps a 1470
     // placement (and a service spanning midnight would have end < start).
     const s = isoMinPHT(startIso) + (datePHT(startIso) !== day ? 1440 : 0);
-    const e = it.actual_end
-      ? isoMinPHT(it.actual_end) + (datePHT(it.actual_end) !== day ? 1440 : 0)
+    const e = it.slot_end
+      ? isoMinPHT(it.slot_end) + (datePHT(it.slot_end) !== day ? 1440 : 0)
       : s + (it.duration_minutes ?? 60);
     if (overlaps(startMin, endMin, s, e)) return true;
   }
@@ -146,17 +146,17 @@ async function therapistHasConflict(
 ): Promise<boolean> {
   const { data: oi } = await supabase
     .from('order_items')
-    .select('id, status, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
+    .select('id, status, scheduled_start, slot_start, slot_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
     .eq('therapist_id', therapistId)
     .in('status', ['draft', 'in_service']);
   for (const it of oi ?? []) {
     if (one(it.order)?.service_date !== day) continue;
     if (it.id === excludeItemId) continue;
-    const startIso = it.actual_start ?? it.scheduled_start ?? it.service_start ?? it.slot_start;
+    const startIso = it.slot_start ?? it.scheduled_start;
     if (!startIso) continue;
     const s = isoMinPHT(startIso) + (datePHT(startIso) !== day ? 1440 : 0);
-    const e = it.actual_end
-      ? isoMinPHT(it.actual_end) + (datePHT(it.actual_end) !== day ? 1440 : 0)
+    const e = it.slot_end
+      ? isoMinPHT(it.slot_end) + (datePHT(it.slot_end) !== day ? 1440 : 0)
       : s + (it.duration_minutes ?? 60);
     if (overlaps(startMin, endMin, s, e)) return true;
   }

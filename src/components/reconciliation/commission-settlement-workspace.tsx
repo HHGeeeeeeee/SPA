@@ -39,7 +39,18 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { loadCommissionGroups, settleCommission, voidCommissionPeriod, type CommGroup } from '@/app/(dashboard)/reconciliation/commission/actions';
+import { adjustCommissionEntry } from '@/app/(dashboard)/reconciliation/commission/actions';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/reconciliation/status-badge';
+import { TopBarPortal } from '@/components/layout/topbar-portal';
 
 // First and last day of the current month in PHT (Asia/Manila). Used as the
 // default history filter — desk's normal workflow is "review this month".
@@ -82,6 +93,9 @@ export interface CommHistoryRow {
   total_sessions: number;
   total_commission_cents: number;
   confirmed_at: string | null;
+  // Who clicked Settle (period-level). null for legacy periods settled before
+  // confirmed_by_staff_id was stamped.
+  confirmed_by: string | null;
   therapists: string[];
   detail: {
     therapist: string;
@@ -91,7 +105,17 @@ export interface CommHistoryRow {
     sessions: number;
     gross_cents: number;
     commission_cents: number;
-    lines: { service_date: string; order_no: string; service: string; duration_minutes: number | null; gross_cents: number; rate: number; commission_cents: number; warmup: boolean }[];
+    // Adjustment trail from commission_entries: computed = engine output,
+    // adjustment = manual override (±), final = what's actually paid. entry_id
+    // is null only for legacy periods settled before entries existed.
+    entry_id: string | null;
+    computed_cents: number;
+    adjustment_cents: number;
+    final_cents: number;
+    adjustment_reason: string | null;
+    adjustment_at: string | null;
+    adjustment_by: string | null;
+    lines: { service_date: string; order_no: string; station: string; service: string; duration_minutes: number | null; gross_cents: number; rate: number; commission_cents: number; warmup: boolean }[];
   }[];
 }
 
@@ -128,6 +152,14 @@ export function CommissionSettlementWorkspace({
   const [histStatus, setHistStatus] = useState('active');
   const [histSel, setHistSel] = useState<Set<string>>(new Set());
   const [voidConfirmId, setVoidConfirmId] = useState<string | null>(null);
+  // Manual-adjustment dialog: which entry is being edited + the form fields.
+  // adjustPeso is a signed whole-peso string (e.g. "-150"); converted to cents
+  // on submit. period_no shown for context.
+  const [adjustTarget, setAdjustTarget] = useState<
+    { entryId: string; therapist: string; periodNo: string; computedCents: number } | null
+  >(null);
+  const [adjustPeso, setAdjustPeso] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
   const [loading, startLoad] = useTransition();
   const [pending, startGen] = useTransition();
 
@@ -180,6 +212,31 @@ export function CommissionSettlementWorkspace({
       const r = await voidCommissionPeriod(id);
       if (r.ok) { toast.success('Period voided'); router.refresh(); }
       else toast.error(r.error);
+    });
+  }
+
+  function openAdjust(g: CommHistoryRow['detail'][number], periodNo: string) {
+    if (!g.entry_id) return;
+    setAdjustTarget({ entryId: g.entry_id, therapist: g.therapist, periodNo, computedCents: g.computed_cents });
+    setAdjustPeso(g.adjustment_cents ? String(g.adjustment_cents / 100) : '');
+    setAdjustReason(g.adjustment_reason ?? '');
+  }
+
+  function doAdjust() {
+    if (!adjustTarget) return;
+    const peso = Number(adjustPeso.trim() || '0');
+    if (!Number.isFinite(peso)) return toast.error('Adjustment must be a number');
+    const adjustment_cents = Math.round(peso * 100);
+    if (adjustment_cents !== 0 && adjustReason.trim().length === 0) {
+      return toast.error('A reason is required for a non-zero adjustment');
+    }
+    startGen(async () => {
+      const r = await adjustCommissionEntry({ entry_id: adjustTarget.entryId, adjustment_cents, reason: adjustReason.trim() });
+      if (r.ok) {
+        toast.success('Adjustment saved');
+        setAdjustTarget(null);
+        router.refresh();
+      } else toast.error(r.error);
     });
   }
 
@@ -242,18 +299,16 @@ export function CommissionSettlementWorkspace({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {branches.map((b) => (
-          <button
-            key={b.id}
-            type="button"
-            onClick={() => setBranchId(b.id)}
-            className={cn('rounded-lg px-3 py-1.5 text-sm font-bold transition-colors', b.id === branchId ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:bg-accent')}
-          >
-            {b.code}
-          </button>
-        ))}
-      </div>
+      {/* Branch single-select hoisted into the global top bar (mirrors the
+          Calendar / Dashboard branch pickers); switching reloads the view. */}
+      <TopBarPortal>
+        <Select items={branches.map((b) => ({ value: b.id, label: b.code }))} value={branchId} onValueChange={(v) => v && setBranchId(v)}>
+          <SelectTrigger className="w-44 font-bold"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.code} — {b.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </TopBarPortal>
 
       {tab === 'generate' ? (
         <>
@@ -316,7 +371,7 @@ export function CommissionSettlementWorkspace({
                             from {g.borrowed_from}
                           </span>
                         )}
-                        <span className="text-xs font-medium text-muted-foreground">({g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross)</span>
+                        <span className="text-xs font-medium text-muted-foreground">({g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} net)</span>
                       </button>
                       <span className="ml-auto text-base font-extrabold tabular">Commission: {peso(g.commission_cents)}</span>
                     </div>
@@ -326,9 +381,10 @@ export function CommissionSettlementWorkspace({
                           <TableRow>
                             <TableHead className="w-32 font-bold">Date</TableHead>
                             <TableHead className="w-44 font-bold">Order No</TableHead>
+                            <TableHead className="w-40 font-bold">Station</TableHead>
                             <TableHead className="font-bold pl-6">Service</TableHead>
                             <TableHead className="w-16 font-bold text-right">Mins</TableHead>
-                            <TableHead className="w-28 font-bold text-right">Gross</TableHead>
+                            <TableHead className="w-28 font-bold text-right">Net</TableHead>
                             <TableHead className="w-20 font-bold text-right">Rate</TableHead>
                             <TableHead className="w-32 font-bold text-right pr-4">Commission</TableHead>
                           </TableRow>
@@ -338,6 +394,7 @@ export function CommissionSettlementWorkspace({
                             <TableRow key={it.item_id}>
                               <TableCell className="font-medium tabular text-muted-foreground">{it.service_date}</TableCell>
                               <TableCell className="font-mono font-bold">{it.order_no}</TableCell>
+                              <TableCell className="font-medium text-muted-foreground">{it.station}</TableCell>
                               <TableCell className="font-medium pl-6">
                                 {it.service}
                                 {it.warmup && <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">warm-up</span>}
@@ -461,7 +518,9 @@ export function CommissionSettlementWorkspace({
                             <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
                             <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
                             <TableCell className="font-medium tabular text-muted-foreground pl-6">{p.period_from} → {p.period_to}</TableCell>
-                            <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}</TableCell>
+                            <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}
+                              {p.confirmed_by && <span className="block text-[11px] font-medium text-muted-foreground">by {p.confirmed_by}</span>}
+                            </TableCell>
                             <TableCell className="font-bold tabular text-right">{p.total_sessions}</TableCell>
                             <TableCell className="font-bold tabular text-right">{peso(p.total_commission_cents)}</TableCell>
                             <TableCell className="pl-6"><StatusBadge status={p.status} kind="commission" /></TableCell>
@@ -488,7 +547,8 @@ export function CommissionSettlementWorkspace({
                                       numeric cols stay (small payloads). */}
                                   <colgroup>
                                     <col className="w-40" />
-                                    <col className="w-60" />
+                                    <col className="w-44" />
+                                    <col className="w-40" />
                                     <col />
                                     <col className="w-14" />
                                     <col className="w-28" />
@@ -501,9 +561,9 @@ export function CommissionSettlementWorkspace({
                                     {p.detail.map((g) => {
                                       const initials = g.therapist.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
                                       return (
-                                      <Fragment key={g.therapist}>
+                                      <Fragment key={g.entry_id ?? g.therapist}>
                                         <TableRow className="border-t-2 border-primary/20 bg-primary/[0.07] hover:bg-primary/[0.07]">
-                                          <TableCell colSpan={6} className="py-2.5 pl-6">
+                                          <TableCell colSpan={7} className="py-2.5 pl-6">
                                             <span className="mr-2 inline-flex size-6 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary align-middle">{initials}</span>
                                             <span className="align-middle text-sm font-extrabold text-primary">{g.therapist}</span>
                                             {/* Borrowed-from badge — same convention as Settle workspace
@@ -514,18 +574,41 @@ export function CommissionSettlementWorkspace({
                                                 from {g.borrowed_from}
                                               </span>
                                             )}
-                                            <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">{g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} gross</span>
+                                            <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">{g.sessions} session{g.sessions > 1 ? 's' : ''} · {peso(g.gross_cents)} net</span>
+                                            {/* Manual-adjustment trail: when adjusted, show computed → ± so
+                                                the final figure is auditable inline. */}
+                                            {g.adjustment_cents !== 0 && (
+                                              <span className="ml-2 align-middle text-xs font-semibold text-muted-foreground">
+                                                · computed {peso(g.computed_cents)}{' '}
+                                                <span className="align-middle text-base font-extrabold text-red-600 dark:text-red-500">Adjustment {g.adjustment_cents < 0 ? '−' : '+'}{peso(Math.abs(g.adjustment_cents))}</span>
+                                                {g.adjustment_reason && <span className="italic text-red-600 dark:text-red-500"> ({g.adjustment_reason})</span>}
+                                                {g.adjustment_by && <span className="text-muted-foreground/80"> · by {g.adjustment_by}</span>}
+                                                {g.adjustment_at && <span className="text-muted-foreground/80"> · {fmtDateTime(g.adjustment_at)}</span>}
+                                              </span>
+                                            )}
                                           </TableCell>
-                                          <TableCell className="py-2.5 font-extrabold tabular text-right text-primary">{peso(g.commission_cents)}</TableCell>
+                                          <TableCell className="py-2.5 font-extrabold tabular text-right text-primary">{peso(g.final_cents)}</TableCell>
                                           <TableCell className="w-24" />
-                                          <TableCell className="w-20" />
+                                          <TableCell className="w-20 pr-4">
+                                            {/* Adjust only on a still-open (closed-status) period; void is reversed. */}
+                                            {p.status === 'closed' && g.entry_id && (
+                                              <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); openAdjust(g, p.period_no); }}
+                                                className="text-xs font-bold text-primary hover:underline"
+                                              >
+                                                {g.adjustment_cents !== 0 ? 'Edit adj.' : 'Adjust'}
+                                              </button>
+                                            )}
+                                          </TableCell>
                                         </TableRow>
                                         <TableRow className="border-b border-border">
                                           <TableCell className="w-40 pl-12 pr-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Date</TableCell>
-                                          <TableCell className="w-60 pr-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
+                                          <TableCell className="w-44 pr-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Order No</TableCell>
+                                          <TableCell className="w-40 pr-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Station</TableCell>
                                           <TableCell className="pl-4 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Service</TableCell>
                                           <TableCell className="w-14 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Mins</TableCell>
-                                          <TableCell className="w-28 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Gross</TableCell>
+                                          <TableCell className="w-28 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Net</TableCell>
                                           <TableCell className="w-16 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Rate</TableCell>
                                           <TableCell className="w-32 py-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground text-right">Commission</TableCell>
                                           <TableCell className="w-24" />
@@ -535,6 +618,7 @@ export function CommissionSettlementWorkspace({
                                           <TableRow key={`${g.therapist}-${i}`}>
                                             <TableCell className="font-medium tabular text-muted-foreground pl-12 pr-4">{l.service_date}</TableCell>
                                             <TableCell className="font-mono font-bold pr-4">{l.order_no}</TableCell>
+                                            <TableCell className="font-medium text-muted-foreground pr-4">{l.station}</TableCell>
                                             <TableCell className="font-medium pl-4">
                                               {l.service}
                                               {l.warmup && <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">warm-up</span>}
@@ -602,6 +686,57 @@ export function CommissionSettlementWorkspace({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Manual commission adjustment — the exception path. Posts a signed
+          override onto the therapist's settled entry; final = computed + adj. */}
+      <Dialog open={!!adjustTarget} onOpenChange={(o) => { if (!o) setAdjustTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adjust commission</DialogTitle>
+            <DialogDescription>
+              {adjustTarget && (<>
+                {adjustTarget.therapist} · {adjustTarget.periodNo} · computed <span className="font-bold">{peso(adjustTarget.computedCents)}</span>
+              </>)}
+            </DialogDescription>
+          </DialogHeader>
+          {adjustTarget && (() => {
+            const peso0 = Number(adjustPeso.trim() || '0');
+            const adjCents = Number.isFinite(peso0) ? Math.round(peso0 * 100) : 0;
+            const finalCents = adjustTarget.computedCents + adjCents;
+            return (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Adjustment (₱, can be negative)</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="e.g. -150 or 200"
+                    value={adjustPeso}
+                    onChange={(e) => setAdjustPeso(e.target.value)}
+                    className="w-48"
+                  />
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    Final payable: <span className="font-bold text-foreground">{peso(finalCents)}</span>
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Reason {adjCents !== 0 && <span className="text-destructive">*</span>}</Label>
+                  <Textarea
+                    rows={3}
+                    placeholder="Why is this commission being adjusted?"
+                    value={adjustReason}
+                    onChange={(e) => setAdjustReason(e.target.value)}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdjustTarget(null)} disabled={pending}>Cancel</Button>
+            <Button onClick={doAdjust} disabled={pending}>{pending ? 'Saving…' : 'Save adjustment'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

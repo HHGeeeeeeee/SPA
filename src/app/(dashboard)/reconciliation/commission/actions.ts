@@ -16,6 +16,9 @@ export interface CommItemLine {
   item_id: string;
   service_date: string;
   order_no: string;
+  // Full station info: "{station branch code} - {station name}", e.g.
+  // "HSPA2 - 2F Bed 1". '—' when the line had no station (external room).
+  station: string;
   service: string;
   duration_minutes: number | null;
   occurrence: number;
@@ -46,9 +49,10 @@ async function loadEligible(from: string, to: string, branchId: string) {
   const { data, error } = await supabase
     .from('order_items')
     .select(`
-      id, list_price_cents, duration_minutes, actual_start, created_at, therapist_id, therapist_home_branch_id, commission_settlement_id, status,
+      id, list_price_cents, discount_amount_cents, final_amount_cents, duration_minutes, actual_start, created_at, therapist_id, therapist_home_branch_id, resource_id, commission_settlement_id, status,
       service:service_items!order_items_service_item_id_fkey ( name, commission_applicable ),
       therapist:employees!order_items_therapist_id_fkey ( name ),
+      resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ),
       order:orders!order_items_order_id_fkey ( order_no, status, service_date, branch_id )
     `)
     .is('commission_settlement_id', null)
@@ -56,13 +60,20 @@ async function loadEligible(from: string, to: string, branchId: string) {
   if (error) throw new Error(error.message);
 
   return (data ?? [])
-    .map((it) => ({ it, ord: one(it.order), svc: one(it.service), th: one(it.therapist) }))
-    .filter((r) =>
-      r.ord && r.ord.branch_id === branchId && r.ord.status === 'closed' &&
-      r.it.status === 'service_completed' &&
-      r.ord.service_date >= from && r.ord.service_date <= to &&
-      r.svc?.commission_applicable && r.it.therapist_id,
-    );
+    .map((it) => ({ it, ord: one(it.order), svc: one(it.service), th: one(it.therapist), res: one(it.resource) }))
+    .filter((r) => {
+      // Commission settles to the STATION's branch (where the work physically
+      // happened), matching how revenue is recognised. A line with no station
+      // (external room) falls back to the order branch.
+      const stationBranch = r.it.resource_id ? r.res?.branch_id ?? null : null;
+      const effectiveBranch = stationBranch ?? r.ord?.branch_id ?? null;
+      return (
+        r.ord && effectiveBranch === branchId && r.ord.status === 'closed' &&
+        r.it.status === 'service_completed' &&
+        r.ord.service_date >= from && r.ord.service_date <= to &&
+        r.svc?.commission_applicable && r.it.therapist_id
+      );
+    });
 }
 
 // The commission engine (read-only): groups eligible items per therapist with
@@ -135,11 +146,16 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
       const classRate = resolveRate(r.it.therapist_id as string);
       const warm = warmupEnabled && occurrence === warmupOccurrence ? warmupRate(r.it.duration_minutes ?? 0) : null;
       const effRate = warm != null ? warm : classRate;
-      const commission = Math.round((r.it.list_price_cents ?? 0) * effRate);
+      // Commission base = NET (final_amount_cents = list_price − discount), not
+      // the list price. The discount is shared with the therapist: their
+      // commission is computed on what the customer actually paid for the line.
+      // gross_cents below also carries net (the field name predates this rule).
+      const base = r.it.final_amount_cents ?? r.it.list_price_cents ?? 0;
+      const commission = Math.round(base * effRate);
       const tid = r.it.therapist_id as string;
       const g = groups.get(tid) ?? { therapist_id: tid, therapist_name: r.th?.name ?? '—', sessions: 0, gross_cents: 0, commission_cents: 0, borrowed_from: null, items: [] };
       g.sessions += 1;
-      g.gross_cents += (r.it.list_price_cents ?? 0);
+      g.gross_cents += base;
       g.commission_cents += commission;
       // Borrowed-from: snapshot on the item; once set on the group, leave it
       // (a therapist has one home at a time, all line snapshots agree).
@@ -150,11 +166,14 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
         item_id: r.it.id,
         service_date: r.ord!.service_date,
         order_no: r.ord!.order_no,
+        station: r.it.resource_id && r.res
+          ? `${branchCode.get(r.res.branch_id) ?? '?'} - ${r.res.resource_name ?? '—'}`
+          : '—',
         service: r.svc?.name ?? 'Service',
         duration_minutes: r.it.duration_minutes ?? null,
         occurrence,
         warmup: warm != null,
-        gross_cents: (r.it.list_price_cents ?? 0),
+        gross_cents: base,
         rate: effRate,
         commission_cents: commission,
       });
@@ -209,7 +228,8 @@ export async function settleCommission(input: unknown): Promise<ActionResult<{ i
   const { data: period, error: pe } = await supabase
     .from('commission_periods')
     .insert({
-      period_no, branch_id, period_from: from, period_to: to, status: 'closed', confirmed_at: new Date().toISOString(),
+      period_no, branch_id, period_from: from, period_to: to, status: 'closed',
+      confirmed_at: new Date().toISOString(), confirmed_by_staff_id: session?.staffUserId ?? null,
       total_sessions: totals.sessions, total_gross_sales_cents: totals.gross, total_commission_cents: totals.commission,
     })
     .select('id')
@@ -237,6 +257,71 @@ export async function settleCommission(input: unknown): Promise<ActionResult<{ i
 
   revalidatePath('/reconciliation/commission');
   return { ok: true, data: { id: period.id, therapists: groups.length } };
+}
+
+const adjustSchema = z.object({
+  entry_id: z.string().uuid(),
+  // Manual override on top of the computed commission. Can be negative (claw
+  // back) or positive (make-good); peso whole-units from the UI, stored as cents.
+  adjustment_cents: z.number().int(),
+  reason: z.string().trim().max(500),
+});
+
+/**
+ * Post a manual adjustment onto a settled commission entry (the exception path).
+ * final = computed + adjustment; the parent period's total is recomputed from
+ * the sum of its entries' final amounts so History + Grand Totals stay in sync.
+ * Only entries on a *closed* period can be adjusted (void is reversed already).
+ */
+export async function adjustCommissionEntry(input: unknown): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
+  const parsed = adjustSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const { entry_id, adjustment_cents, reason } = parsed.data;
+  // A non-zero adjustment must carry a reason — that's the whole point of the
+  // exception trail. Clearing it back to zero may drop the reason.
+  if (adjustment_cents !== 0 && reason.length === 0) {
+    return { ok: false, error: 'A reason is required for a non-zero adjustment' };
+  }
+
+  const supabase = await createAuditedClient();
+  const { data: entry, error: ge } = await supabase
+    .from('commission_entries')
+    .select('id, period_id, branch_id, computed_commission_cents, period:commission_periods!commission_entries_period_id_fkey ( status )')
+    .eq('id', entry_id)
+    .maybeSingle();
+  if (ge || !entry) return { ok: false, error: ge?.message ?? 'Entry not found' };
+  if (!(await canAccessBranch(entry.branch_id))) return { ok: false, error: 'No access to this branch' };
+  if (one(entry.period)?.status !== 'closed') {
+    return { ok: false, error: 'Only entries on a closed period can be adjusted' };
+  }
+  try { await assertNoBlockedClose(entry.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
+
+  const final_amount_cents = (entry.computed_commission_cents ?? 0) + adjustment_cents;
+  const { error: ue } = await supabase
+    .from('commission_entries')
+    .update({
+      adjustment_cents,
+      adjustment_reason: adjustment_cents === 0 ? null : reason,
+      adjustment_by_staff_id: session?.staffUserId ?? null,
+      adjustment_at: new Date().toISOString(),
+      final_amount_cents,
+    })
+    .eq('id', entry_id);
+  if (ue) return { ok: false, error: ue.message };
+
+  // Recompute the period total from the sum of its entries' final amounts so
+  // the History row + Grand Totals reflect the adjustment.
+  const { data: siblings } = await supabase
+    .from('commission_entries')
+    .select('final_amount_cents')
+    .eq('period_id', entry.period_id);
+  const total = (siblings ?? []).reduce((s, r) => s + (r.final_amount_cents ?? 0), 0);
+  await supabase.from('commission_periods').update({ total_commission_cents: total }).eq('id', entry.period_id);
+
+  revalidatePath('/reconciliation/commission');
+  return { ok: true };
 }
 
 export async function voidCommissionPeriod(id: string): Promise<ActionResult> {

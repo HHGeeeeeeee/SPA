@@ -56,7 +56,7 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
   const { shiftId } = await params;
   const d = await loadShiftDetail(shiftId);
   if (!d) notFound();
-  const [session, checks] = await Promise.all([currentSession(), loadRemittanceChecks([d.branchId])]);
+  const [session, checks] = await Promise.all([currentSession(), loadRemittanceChecks([d.branchId], d.businessDate)]);
   const canReopen = isManager(session);
 
   return (

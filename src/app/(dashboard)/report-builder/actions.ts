@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
 import { getAllowedBranchIds, getAllowedBranches } from '@/lib/branch-access';
 import { computeDayOccupancy, type DayOccupancy } from '@/lib/occupancy';
-import { REVENUE_DIMENSION_KEYS, SERVICE_LINE_STATUSES, DEFAULT_STATUSES } from './dimensions';
+import { REVENUE_DIMENSION_KEYS, SERVICE_LINE_STATUSES, DEFAULT_STATUSES, OCCUPANCY_DIMS } from './dimensions';
 
 export type ReportResult<T> = { ok: true; rows: T[] } | { ok: false; error: string };
 
@@ -66,8 +66,8 @@ export async function generateRevenueReport(params: RevenueParams): Promise<Repo
 // Report 2 can group by date and/or station branch (the only dimensions an
 // occupancy ratio has a denominator for). RevPATH = net revenue per available
 // therapist-hour (the spa analogue of hotel RevPAR).
-export const OCCUPANCY_DIMS = ['service_date', 'station_branch'] as const;
-export type OccupancyDim = (typeof OCCUPANCY_DIMS)[number];
+// OCCUPANCY_DIMS imported from ./dimensions (a 'use server' file can't export
+// non-function values like an array).
 
 export interface OccupancyRow {
   date: string | null;          // null when not grouped by date

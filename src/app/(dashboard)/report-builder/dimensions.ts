@@ -26,6 +26,12 @@ export const REVENUE_DIMENSIONS: DimensionDef[] = [
 
 export const REVENUE_DIMENSION_KEYS = REVENUE_DIMENSIONS.map((d) => d.key);
 
+// Report 2 (occupancy) group-by options — the only dimensions an occupancy
+// ratio has a denominator for. Lives here (not in the 'use server' actions
+// file, which may only export async functions).
+export const OCCUPANCY_DIMS = ['service_date', 'station_branch'] as const;
+export type OccupancyDim = (typeof OCCUPANCY_DIMS)[number];
+
 // order_items.status — valid values from the v2 status machine. `cancelled` is
 // excluded by default so cancelled lines don't inflate net revenue.
 export const SERVICE_LINE_STATUSES = [

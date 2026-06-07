@@ -73,7 +73,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
-      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
     // Pull the full roster (with employee identity + position) instead of bare
@@ -128,6 +128,9 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       variant, draggable, orderId: ord.id,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
+      listPriceCents: it.list_price_cents ?? null,
+      discountCents: it.discount_amount_cents ?? null,
+      finalAmountCents: it.final_amount_cents ?? null,
       therapistId: it.therapist_id ?? null,
       // On a bed already; red only when it still lacks a therapist.
       needsAssignment: it.status === 'draft' && !it.therapist_id,
@@ -295,7 +298,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
     // Every active station in the share group — candidates for the People
     // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
@@ -419,6 +422,9 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       orderId: ord.id, therapistId, untimed,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
+      listPriceCents: it.list_price_cents ?? null,
+      discountCents: it.discount_amount_cents ?? null,
+      finalAmountCents: it.final_amount_cents ?? null,
       bedUnassigned, allowedResourceTypes,
       // Red "needs assignment" when a not-yet-started booking lacks a therapist
       // or (on-site) a bed.

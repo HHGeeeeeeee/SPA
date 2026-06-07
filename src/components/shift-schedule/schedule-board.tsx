@@ -91,6 +91,12 @@ export interface BoardBlock {
   /** Order's outstanding balance in cents (total − paid). Shown in the detail
    *  popover, painted red whenever it isn't zero. */
   balanceCents?: number;
+  /** This line's own pricing — list price, discount applied, and the net amount
+   *  booked as revenue at Finish. Drives the Finish confirmation's discount
+   *  breakdown (mirrors the order page), so the desk can check it on the board. */
+  listPriceCents?: number | null;
+  discountCents?: number | null;
+  finalAmountCents?: number | null;
   editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
   /** Therapist on this block. Used by the hover popup to mark staff busy at
    *  a hovered minute (block's own variant decides if it actually occupies
@@ -586,8 +592,9 @@ export function ScheduleBoard({
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
   // Block-detail popover (opened by clicking a booking; "Open order" navigates).
   const [detail, setDetail] = useState<{ block: BoardBlock; x: number; y: number } | null>(null);
-  // Finish confirmation — revenue is recognised at finish, so confirm before it.
-  const [finishConfirm, setFinishConfirm] = useState<{ itemId: string; orderId: string } | null>(null);
+  // Finish confirmation — revenue is recognised at finish, so confirm before it,
+  // carrying this line's pricing so the discount can be checked on the board.
+  const [finishConfirm, setFinishConfirm] = useState<{ itemId: string; orderId: string; serviceName: string; listPriceCents: number | null; discountCents: number | null; finalAmountCents: number | null } | null>(null);
   // Station rail: 'bookings' (unallocated) vs 'staff' (on-shift therapists to
   // drag onto unassigned services). staffDragId is set while a staff card drags,
   // to light up the droppable (unassigned) blocks.
@@ -1451,7 +1458,7 @@ export function ScheduleBoard({
                 {/* Finish an in-service line — stamps the end time, same as the
                     order page's Finish. */}
                 {b.variant === 'in_service' && b.orderId && (
-                  <Button size="sm" disabled={pending} onClick={() => setFinishConfirm({ itemId: b.refId, orderId: b.orderId! })}>
+                  <Button size="sm" disabled={pending} onClick={() => setFinishConfirm({ itemId: b.refId, orderId: b.orderId!, serviceName: b.line1, listPriceCents: b.listPriceCents ?? null, discountCents: b.discountCents ?? null, finalAmountCents: b.finalAmountCents ?? null })}>
                     Finish
                   </Button>
                 )}
@@ -1464,17 +1471,24 @@ export function ScheduleBoard({
       <AlertDialog open={!!finishConfirm} onOpenChange={(o) => { if (!o) setFinishConfirm(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Finish this service?</AlertDialogTitle>
+            <AlertDialogTitle>Finish {finishConfirm?.serviceName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Finishing recognises the service revenue now — confirm the discount amount is correct on the order first.
+              Confirm the discount is correct — this final amount is booked as revenue now.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">List price</span><span className="tabular-nums font-medium">{formatPHP(finishConfirm?.listPriceCents)}</span></div>
+            {(finishConfirm?.discountCents ?? 0) > 0 && (
+              <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums font-medium text-red-600 dark:text-red-400">−{formatPHP(finishConfirm?.discountCents)}</span></div>
+            )}
+            <div className="mt-1 flex justify-between border-t border-border pt-1 font-bold"><span>Revenue to book</span><span className="tabular-nums">{formatPHP(finishConfirm?.finalAmountCents)}</span></div>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => { if (finishConfirm) doFinishFromBoard(finishConfirm.itemId, finishConfirm.orderId); setFinishConfirm(null); }}
             >
-              Finish
+              Finish &amp; book {formatPHP(finishConfirm?.finalAmountCents)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -30,6 +30,13 @@ import {
 
 interface Branch { id: string; code: string; name: string }
 
+// Report 2 group-by options — the only dimensions an occupancy ratio can be
+// sliced by (a denominator exists per date / per station branch).
+const OCCUPANCY_GROUP_OPTIONS: { key: string; label: string }[] = [
+  { key: 'service_date', label: 'Date' },
+  { key: 'station_branch', label: 'Station Branch' },
+];
+
 function todayPHT(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
@@ -54,9 +61,12 @@ export function ReportBuilder({ branches }: { branches: Branch[] }) {
   const [statuses, setStatuses] = useState<ServiceLineStatus[]>(DEFAULT_STATUSES);
   const [settledOnly, setSettledOnly] = useState(false);
 
-  // Results (snapshot the dimensions used, so columns match the data)
+  // Occupancy controls
+  const [occGroupBy, setOccGroupBy] = useState<string[]>(['service_date']);
+
+  // Results (snapshot the grouping used, so columns match the data)
   const [revResult, setRevResult] = useState<{ dims: string[]; rows: RevenueRow[] } | null>(null);
-  const [occResult, setOccResult] = useState<OccupancyRow[] | null>(null);
+  const [occResult, setOccResult] = useState<{ groupBy: string[]; rows: OccupancyRow[] } | null>(null);
   const [pending, start] = useTransition();
 
   function toggleBranch(id: string) {
@@ -68,6 +78,9 @@ export function ReportBuilder({ branches }: { branches: Branch[] }) {
   function toggleStatus(s: ServiceLineStatus) {
     setStatuses((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
   }
+  function toggleOccGroup(key: string) {
+    setOccGroupBy((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }
 
   function generate() {
     start(async () => {
@@ -76,8 +89,8 @@ export function ReportBuilder({ branches }: { branches: Branch[] }) {
         if (r.ok) setRevResult({ dims: [...dimensions], rows: r.rows });
         else toast.error(r.error);
       } else {
-        const r = await generateOccupancyReport({ from, to, branchIds });
-        if (r.ok) setOccResult(r.rows);
+        const r = await generateOccupancyReport({ from, to, branchIds, groupBy: occGroupBy });
+        if (r.ok) setOccResult({ groupBy: [...occGroupBy], rows: r.rows });
         else toast.error(r.error);
       }
     });
@@ -190,11 +203,30 @@ export function ReportBuilder({ branches }: { branches: Branch[] }) {
               </label>
             </TabsContent>
 
-            <TabsContent value="occupancy">
+            <TabsContent value="occupancy" className="flex flex-col gap-4">
+              {/* Group-by (constrained to date / station branch) */}
+              <div className="flex flex-col gap-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Group By</Label>
+                <div className="flex flex-wrap gap-2">
+                  {OCCUPANCY_GROUP_OPTIONS.map((o) => (
+                    <label
+                      key={o.key}
+                      className={cn(
+                        'flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors',
+                        occGroupBy.includes(o.key) ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent',
+                      )}
+                    >
+                      <Checkbox checked={occGroupBy.includes(o.key)} onCheckedChange={() => toggleOccGroup(o.key)} />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
               <p className="text-sm font-medium text-muted-foreground">
-                Occupancy & utilization are ratios against capacity (rostered therapist-hours, station-hours) — they
-                only break down by date, branch, and hour, not by service / source / category. This report is one row
-                per day for the selected branches.
+                Occupancy &amp; utilization are ratios against capacity (rostered therapist-hours, station-hours), so
+                they only break down by date and station branch — not by service / source / category. Ratios over a
+                range are summed numerator ÷ summed denominator, not averaged. <span className="font-semibold">RevPATH</span> =
+                net revenue per available therapist-hour.
               </p>
             </TabsContent>
 
@@ -209,7 +241,7 @@ export function ReportBuilder({ branches }: { branches: Branch[] }) {
 
       {/* Results */}
       {tab === 'revenue' && revResult && <RevenueTable dims={revResult.dims} rows={revResult.rows} dimLabel={dimLabel} />}
-      {tab === 'occupancy' && occResult && <OccupancyTable rows={occResult} />}
+      {tab === 'occupancy' && occResult && <OccupancyTable groupBy={occResult.groupBy} rows={occResult.rows} />}
     </div>
   );
 }
@@ -270,25 +302,32 @@ function RevenueTable({ dims, rows, dimLabel }: { dims: string[]; rows: RevenueR
   );
 }
 
-function OccupancyTable({ rows }: { rows: OccupancyRow[] }) {
+function OccupancyTable({ groupBy, rows }: { groupBy: string[]; rows: OccupancyRow[] }) {
+  const showDate = groupBy.includes('service_date');
+  const showBranch = groupBy.includes('station_branch');
+  const OCC_COLS = 9; // occupancy metric columns spanned by the "not computable" note
+
   return (
     <Card className="p-0 overflow-hidden">
       <div className="flex items-center gap-2 border-b border-border p-4">
-        <h3 className="text-base font-bold">Occupancy by Day</h3>
-        <span className="ml-auto text-sm font-semibold text-muted-foreground">{rows.length} day(s)</span>
+        <h3 className="text-base font-bold">Occupancy</h3>
+        <span className="ml-auto text-sm font-semibold text-muted-foreground">{rows.length} row(s)</span>
       </div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Date</TableHead>
+            {showDate && <TableHead>Date</TableHead>}
+            {showBranch && <TableHead>Station Branch</TableHead>}
             <TableHead className="text-right">Utilization</TableHead>
             <TableHead className="text-right">Station Occ</TableHead>
             <TableHead className="text-right">Therapist Occ</TableHead>
             <TableHead className="text-right">Capacity hrs</TableHead>
+            <TableHead className="text-right">Therapist hrs</TableHead>
             <TableHead className="text-right">Actual hrs</TableHead>
             <TableHead className="text-right">Stations</TableHead>
             <TableHead className="text-right">Therapists</TableHead>
             <TableHead className="text-right">Absent hrs</TableHead>
+            <TableHead className="text-right">RevPATH</TableHead>
             <TableHead className="text-right">Sales</TableHead>
             <TableHead className="text-right">Discount</TableHead>
             <TableHead className="text-right">Net</TableHead>
@@ -297,30 +336,37 @@ function OccupancyTable({ rows }: { rows: OccupancyRow[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((r) => (
-            <TableRow key={r.date}>
-              <TableCell className="font-semibold">{r.date}</TableCell>
-              {r.computable ? (
-                <>
-                  <TableCell className="text-right tabular-nums font-bold">{pct(r.utilizationPct)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{pct(r.stationOccPct)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{pct(r.therapistOccPct)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{hrs(r.capacityHours)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{hrs(r.actualHours)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{r.stationCount}</TableCell>
-                  <TableCell className="text-right tabular-nums">{r.therapistCount}</TableCell>
-                  <TableCell className="text-right tabular-nums">{hrs(r.absentHours)}</TableCell>
-                </>
-              ) : (
-                <TableCell colSpan={8} className="text-muted-foreground">{r.note ?? 'not computable'}</TableCell>
-              )}
-              <TableCell className="text-right tabular-nums">{formatPHP(r.sales_cents)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatPHP(r.discount_cents)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatPHP(r.net_cents)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatPHP(r.commission_cents)}</TableCell>
-              <TableCell className="text-right tabular-nums font-bold">{formatPHP(r.net_of_commission_cents)}</TableCell>
-            </TableRow>
-          ))}
+          {rows.length === 0 ? (
+            <TableRow><TableCell colSpan={(showDate ? 1 : 0) + (showBranch ? 1 : 0) + OCC_COLS + 6} className="text-center text-muted-foreground py-6">No data for this selection.</TableCell></TableRow>
+          ) : (
+            rows.map((r, i) => (
+              <TableRow key={i}>
+                {showDate && <TableCell className="font-semibold">{r.date ?? '—'}</TableCell>}
+                {showBranch && <TableCell className="font-semibold">{r.branchLabel ?? <span className="text-muted-foreground">Unassigned</span>}</TableCell>}
+                {r.computable ? (
+                  <>
+                    <TableCell className="text-right tabular-nums font-bold">{pct(r.utilizationPct)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{pct(r.stationOccPct)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{pct(r.therapistOccPct)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{hrs(r.capacityHours)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{hrs(r.therapistHours)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{hrs(r.actualHours)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.stationCount}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.therapistCount}</TableCell>
+                    <TableCell className="text-right tabular-nums">{hrs(r.absentHours)}</TableCell>
+                  </>
+                ) : (
+                  <TableCell colSpan={OCC_COLS} className="text-muted-foreground">{r.note ?? 'not computable'}</TableCell>
+                )}
+                <TableCell className="text-right tabular-nums font-bold">{r.revpathCents == null ? '—' : formatPHP(r.revpathCents)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPHP(r.sales_cents)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPHP(r.discount_cents)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPHP(r.net_cents)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPHP(r.commission_cents)}</TableCell>
+                <TableCell className="text-right tabular-nums font-bold">{formatPHP(r.net_of_commission_cents)}</TableCell>
+              </TableRow>
+            ))
+          )}
         </TableBody>
       </Table>
     </Card>

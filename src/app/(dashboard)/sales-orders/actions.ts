@@ -600,11 +600,43 @@ async function recomputeTotals(orderId: string) {
     .select('amount_cents')
     .eq('order_id', orderId)
     .eq('kind', 'tip');
-  const total = serviceTotal + (tipLines ?? []).reduce((s, t) => s + (t.amount_cents ?? 0), 0);
+  const tipTotal = (tipLines ?? []).reduce((s, t) => s + (t.amount_cents ?? 0), 0);
+  // Manual folio adjustments — "Add revenue" (positive) and "Adjust charge"
+  // (negative) — are kind=revenue lines with NO order_item_id, so they aren't
+  // part of serviceTotal (which is item-based). Fold them in too, or the bill
+  // ignores every manual correction. Service-revenue postings carry an
+  // order_item_id and are excluded here to avoid double-counting serviceTotal.
+  const { data: adjLines } = await supabase
+    .from('folio_lines')
+    .select('amount_cents')
+    .eq('order_id', orderId)
+    .eq('kind', 'revenue')
+    .is('order_item_id', null);
+  const manualAdjustments = (adjLines ?? []).reduce((s, a) => s + (a.amount_cents ?? 0), 0);
+  const total = serviceTotal + tipTotal + manualAdjustments;
   await supabase
     .from('orders')
     .update({ subtotal_cents: subtotal, discount_cents: discount, total_cents: total })
     .eq('id', orderId);
+}
+
+// After the order total changes (manual revenue / adjust charge), the paid-vs-
+// total relationship may have crossed a terminal boundary: an added charge can
+// reopen a fully-paid (closed) order, and a downward adjustment can settle a
+// completed one outright. Reconcile just those two money states — mirrors the
+// flips already done in takePayment (→ closed) and recordRefund (→ completed).
+async function reconcilePaidStatus(orderId: string) {
+  const supabase = await createAuditedClient();
+  const { data: o } = await supabase
+    .from('orders').select('status, total_cents, paid_cents').eq('id', orderId).single();
+  if (!o) return;
+  if (o.status === 'closed' && o.paid_cents < o.total_cents) {
+    await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
+    await logStatus(orderId, 'closed', 'completed', 'Charge added — balance reopened', null);
+  } else if (o.status === 'completed' && o.total_cents > 0 && o.paid_cents >= o.total_cents) {
+    await supabase.from('orders').update({ status: 'closed' }).eq('id', orderId);
+    await logStatus(orderId, 'completed', 'closed', 'Charge adjusted — balance settled', null);
+  }
 }
 
 // Wrap up an order once no line is still scheduled or running — works from
@@ -2272,6 +2304,11 @@ export async function addRevenue(input: unknown): Promise<ActionResult> {
   });
   if (error) return { ok: false, error: error.message };
 
+  // Manual revenue is part of the bill — refresh the total and reopen the order
+  // if it had already been settled.
+  await recomputeTotals(d.order_id);
+  await reconcilePaidStatus(d.order_id);
+
   revalidatePath(`/sales-orders/${d.order_id}`);
   revalidatePath('/reconciliation/cash');
   revalidatePath('/reconciliation');
@@ -2318,6 +2355,11 @@ export async function adjustCharge(input: unknown): Promise<ActionResult> {
     transaction_code_id: txCodeId,
   });
   if (error) return { ok: false, error: error.message };
+
+  // The downward correction lowers the bill — refresh the total and settle the
+  // order if the adjustment cleared the remaining balance.
+  await recomputeTotals(d.order_id);
+  await reconcilePaidStatus(d.order_id);
 
   revalidatePath(`/sales-orders/${d.order_id}`);
   revalidatePath('/reconciliation/cash');

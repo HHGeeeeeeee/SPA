@@ -1616,6 +1616,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "folio_lines_transaction_code_id_fkey"
+            columns: ["transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "folio_lines_soa_session_id_fkey"
             columns: ["soa_session_id"]
             isOneToOne: false

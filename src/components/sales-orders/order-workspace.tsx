@@ -125,7 +125,12 @@ interface FolioLineRecord {
   created_by: string | null;
   created_at: string;
   customer_label: string | null;
+  service_name: string | null;
   ref: string | null;
+  note: string | null;
+  billing_name: string | null;
+  card_no: string | null;
+  tx_code: string | null;
 }
 interface Props {
   order: {
@@ -186,13 +191,14 @@ function hm(ts: string | null): string {
 function dtm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short' }) : '';
 }
-// One folio posting row: branch / shift / method, with created-by + created-at underneath.
+// One folio posting row. Title line = branch / method / bill-to / card / guest /
+// note; sub-line = who posted it / shift / when. Amount sits on the right.
 function FolioRow({ l }: { l: FolioLineRecord }) {
   return (
     <div className="flex items-start justify-between gap-2 py-2 text-sm">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name, l.customer_label].filter(Boolean).join(' / ') || l.kind}</span>
-        <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at), l.ref].filter(Boolean).join(' - ') || '-'}</span>
+        <span className="truncate font-medium text-foreground">{[l.branch_code, l.method_name, l.billing_name, l.card_no, l.customer_label, l.service_name, l.note].filter(Boolean).join(' - ') || l.kind}</span>
+        <span className="text-xs text-muted-foreground">{[l.created_by, l.shift_label, dtm(l.created_at), l.tx_code].filter(Boolean).join(' - ') || '-'}</span>
       </div>
       <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' || l.amount_cents < 0 ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
     </div>

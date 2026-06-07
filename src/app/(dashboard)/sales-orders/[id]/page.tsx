@@ -39,9 +39,12 @@ async function fetchData(id: string) {
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
       order_customers ( id, customer_name, customer_phone, seq_no, gender ),
       folio_lines (
-        id, order_customer_id, kind, amount_cents, payment_ref, posted_at,
+        id, order_customer_id, order_item_id, kind, amount_cents, payment_ref, note, posted_at,
         method:payment_methods ( display_name ),
         shift:shifts ( label, branch:branches!shifts_branch_id_fkey ( code ) ),
+        billing:billing_destinations!folio_lines_billing_destination_id_fkey ( name ),
+        card:stored_value_cards!folio_lines_stored_value_card_id_fkey ( card_no ),
+        tx_code:transaction_codes!folio_lines_transaction_code_id_fkey ( code ),
         posted_by_staff:staff_users!folio_lines_posted_by_fkey ( display_name )
       ),
       feedback ( order_item_id, score ),
@@ -292,11 +295,30 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const signedAmt = (l: { kind: string; amount_cents: number }) => (l.kind === 'refund' ? -l.amount_cents : l.amount_cents);
   const payLines = orderLines.filter((l) => l.kind === 'payment' || l.kind === 'refund');
   const tipTotal = orderLines.filter((l) => l.kind === 'tip').reduce((s, l) => s + l.amount_cents, 0);
+  // Manual folio adjustments (Add revenue / Adjust charge): kind=revenue lines
+  // with no order_item_id. Net of positive add-revenue and negative adjust-charge
+  // — already folded into total_cents server-side; surfaced as its own Totals line.
+  const adjustmentTotal = orderLines
+    .filter((l) => l.kind === 'revenue' && !l.order_item_id)
+    .reduce((s, l) => s + l.amount_cents, 0);
   const customerLabel = new Map(
     (order.order_customers ?? []).map((c) => [c.id, `#${c.seq_no} · ${c.customer_name}`]),
   );
+  // A service-revenue folio line carries no guest of its own — it's posted from
+  // an order_item. Map each item → its service name + the guest it serves, so a
+  // revenue row can surface both even though they don't live on the line.
+  const itemInfo = new Map(
+    (order.order_items ?? []).map((it) => [it.id, {
+      service: one<{ name: string }>(it.service ?? null)?.name ?? one<{ name: string }>(it.category ?? null)?.name ?? null,
+      guestId: it.order_customer_id ?? null,
+    }]),
+  );
   const folioLines = orderLines.map((l) => {
     const sh = one(l.shift);
+    const item = l.order_item_id ? itemInfo.get(l.order_item_id) ?? null : null;
+    // Guest: prefer the line's own guest (AR payments), else the served guest
+    // inherited from the order_item (service-revenue lines).
+    const guestId = l.order_customer_id ?? item?.guestId ?? null;
     return {
       id: l.id,
       kind: l.kind,
@@ -307,8 +329,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       branch_code: one<{ code: string }>(sh?.branch ?? null)?.code ?? null,
       created_by: one(l.posted_by_staff)?.display_name ?? null,
       created_at: l.posted_at,
-      customer_label: l.order_customer_id ? customerLabel.get(l.order_customer_id) ?? null : null,
+      customer_label: guestId ? customerLabel.get(guestId) ?? null : null,
+      service_name: item?.service ?? null,
       ref: l.payment_ref ?? null,
+      note: l.note ?? null,
+      billing_name: one<{ name: string }>(l.billing ?? null)?.name ?? null,
+      card_no: one<{ card_no: string }>(l.card ?? null)?.card_no ?? null,
+      tx_code: one<{ code: string }>(l.tx_code ?? null)?.code ?? null,
     };
   });
   const customers = (order.order_customers ?? []).map((c) => {
@@ -520,6 +547,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Discount</dt><dd className="font-bold tabular text-destructive">-{peso(order.discount_cents)}</dd></div>
               {tipTotal > 0 && (
                 <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Tips (PAYMAYA)</dt><dd className="font-bold tabular text-primary">+{peso(tipTotal)}</dd></div>
+              )}
+              {adjustmentTotal !== 0 && (
+                <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Adjustments</dt><dd className={`font-bold tabular ${adjustmentTotal < 0 ? 'text-destructive' : ''}`}>{adjustmentTotal < 0 ? '-' : '+'}{peso(Math.abs(adjustmentTotal))}</dd></div>
               )}
               <div className="flex justify-between border-t border-border pt-2"><dt className="font-bold">Total</dt><dd className="font-extrabold tabular text-lg">{peso(order.total_cents)}</dd></div>
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Paid</dt><dd className="font-bold tabular">{peso(order.paid_cents)}</dd></div>

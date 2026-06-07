@@ -58,7 +58,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_8.5rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_6.5rem_6.5rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -834,7 +834,8 @@ export function OrderWorkspace({
                       <span>Category</span>
                       <span>Service</span>
                       <span>Duration</span>
-                      <span>Plan / Act</span>
+                      <span>Plan</span>
+                      <span>Act</span>
                       <span>Therapist</span>
                       <span>{dispatch ? 'Room' : 'Station'}</span>
                       <span className="text-right">Price</span>
@@ -920,9 +921,11 @@ export function OrderWorkspace({
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
                             </span>
-                            <span className="flex flex-col gap-0.5 text-[11px] font-medium text-muted-foreground tabular leading-tight">
-                              <span title="Planned (booked) start-end">P {toHHmm(it.scheduled_start) || '—'}-{planEndHHmm(it.scheduled_start, it.duration_minutes)}</span>
-                              <span title="Actual start-end (real button press)" className={it.actual_start ? '' : 'opacity-60'}>A {toHHmm(it.actual_start) || '—'}-{toHHmm(it.actual_end) || '—'}</span>
+                            <span className="text-xs font-medium text-muted-foreground tabular truncate" title="Planned (booked) start-end">
+                              {toHHmm(it.scheduled_start) || '—'}-{planEndHHmm(it.scheduled_start, it.duration_minutes)}
+                            </span>
+                            <span className={`text-xs font-medium text-muted-foreground tabular truncate ${it.actual_start ? '' : 'opacity-60'}`} title="Actual start-end (real button press)">
+                              {toHHmm(it.actual_start) || '—'}-{toHHmm(it.actual_end) || '—'}
                             </span>
                             <span className="font-medium text-muted-foreground truncate">
                               {it.therapist_name ?? 'Unassigned'}

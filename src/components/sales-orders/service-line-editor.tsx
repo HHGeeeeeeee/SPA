@@ -276,6 +276,9 @@ export function ServiceLineEditor({
       <div className="min-w-0">
         <Input type="time" className={`h-8 w-full ${miss(!draft.start)}`} value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
       </div>
+      {/* Act column — no actual time until the service starts, so a placeholder
+          dash keeps the not-yet-started row aligned under the Plan/Act split. */}
+      <div className="min-w-0 text-xs font-medium text-muted-foreground">—</div>
       <div className="min-w-0">
         <Select items={[{ value: NONE, label: 'Unassigned' }, ...(assignedOption ? [assignedOption] : []), ...allOptions]} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className={`h-8 w-full ${miss(draft.therapistId === NONE)}`}><SelectValue /></SelectTrigger>

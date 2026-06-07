@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/layout/sidebar';
 import { SidebarProvider } from '@/components/layout/sidebar-context';
 import { TopBar } from '@/components/layout/topbar';
-import { currentSession, isAdmin, isManager } from '@/lib/auth';
+import { currentSession, isAdmin, isManager, isExternalBooker } from '@/lib/auth';
 
 export default async function DashboardLayout({
   children,
@@ -12,6 +12,8 @@ export default async function DashboardLayout({
 }) {
   const session = await currentSession();
   if (!session) redirect('/login');
+  // external_booker has no place in the full back-office shell — lock them to /book.
+  if (isExternalBooker(session)) redirect('/book');
   const viewerIsAdmin = isAdmin(session);
   const viewerIsManager = isManager(session);
 

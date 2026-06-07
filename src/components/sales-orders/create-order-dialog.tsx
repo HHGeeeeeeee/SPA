@@ -92,6 +92,9 @@ interface Props {
   /** Controlled usage (board click): the parent owns open state. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** When set, called with the new order id instead of navigating to the order
+   *  screen — used by surfaces (e.g. /book) where the user can't open that page. */
+  onCreated?: (orderId: string) => void;
 }
 
 let GUEST_SEQ = 1;
@@ -112,7 +115,7 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
 
 export function CreateOrderDialog({
   dialog, initialBranchId, prefillStartIso, prefillResourceId, prefillTherapistId, prefillLabel,
-  trigger, open: openProp, onOpenChange,
+  trigger, open: openProp, onOpenChange, onCreated,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -213,7 +216,8 @@ export function CreateOrderDialog({
       });
       if (r.ok && r.data) {
         setOpen(false);
-        router.push(`/sales-orders/${r.data.orderId}`);
+        if (onCreated) onCreated(r.data.orderId);
+        else router.push(`/sales-orders/${r.data.orderId}`);
       } else if (!r.ok) {
         toast.error(r.error);
       }

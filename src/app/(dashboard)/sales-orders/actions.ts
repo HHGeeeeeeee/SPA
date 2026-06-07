@@ -225,6 +225,7 @@ export async function createOrderDirect(input: unknown): Promise<ActionResult<{ 
   const d = parsed.data;
 
   const supabase = await createAuditedClient();
+  const session = await currentSession();
 
   const { data: branch, error: be } = await supabase
     .from('branches')
@@ -275,6 +276,7 @@ export async function createOrderDirect(input: unknown): Promise<ActionResult<{ 
       service_date: d.service_date,
       note: d.note || null,
       status: 'draft',
+      created_by_staff_user_id: session?.staffUserId ?? null,
     })
     .select('id')
     .single();

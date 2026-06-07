@@ -2432,6 +2432,7 @@ export type Database = {
           business_unit_id: string | null
           created_at: string
           created_by: string | null
+          created_by_staff_user_id: string | null
           deleted_at: string | null
           discount_cents: number
           external_hotel_id: string | null
@@ -2460,6 +2461,7 @@ export type Database = {
           business_unit_id?: string | null
           created_at?: string
           created_by?: string | null
+          created_by_staff_user_id?: string | null
           deleted_at?: string | null
           discount_cents?: number
           external_hotel_id?: string | null
@@ -2488,6 +2490,7 @@ export type Database = {
           business_unit_id?: string | null
           created_at?: string
           created_by?: string | null
+          created_by_staff_user_id?: string | null
           deleted_at?: string | null
           discount_cents?: number
           external_hotel_id?: string | null

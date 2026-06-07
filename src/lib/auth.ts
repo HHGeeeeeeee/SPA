@@ -301,6 +301,11 @@ export function isAdmin(s: SessionPayload | null): boolean {
   return !!s && s.role === 'admin';
 }
 
+/** External hotel-front-desk booker — reservation-only; locked to the /book page. */
+export function isExternalBooker(s: SessionPayload | null): boolean {
+  return !!s && s.role === 'external_booker';
+}
+
 /**
  * Server-action guard: returns null when the caller is admin, or a friendly
  * error string otherwise.

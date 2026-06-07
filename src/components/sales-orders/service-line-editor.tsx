@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { canPerformGroup, matchesGender } from '@/lib/therapist-availability';
+import { canPerformGroup, matchesGender, therapistPlanStatus, type PlanStatus } from '@/lib/therapist-availability';
 import { RESOURCE_TYPE_LABEL } from '@/lib/resource-types';
 
 const NONE = '__none__';
@@ -55,6 +55,12 @@ export function ServiceLineEditor({
   busyTherapistIds,
   busyTherapistEndMap,
   busyResourceIds,
+  shiftWindows = {},
+  bookingWindows = {},
+  blockWindows = {},
+  lineupRank = {},
+  serviceDate,
+  lineItemId,
   guestGender,
   sourceDiscountLocked,
   defaultDiscountId,
@@ -77,6 +83,16 @@ export function ServiceLineEditor({
   busyTherapistIds: string[];
   busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
+  /** Plan-start availability inputs (epoch-ms windows on the service date) +
+   *  the day's line-up order. Optional so other callers can omit them (they then
+   *  fall back to the "in service right now" split). */
+  shiftWindows?: Record<string, { s: number; e: number }[]>;
+  bookingWindows?: Record<string, { s: number; e: number; item: string }[]>;
+  blockWindows?: Record<string, { s: number; e: number }[]>;
+  lineupRank?: Record<string, number>;
+  serviceDate?: string;
+  /** This line's own order_item id, excluded from its own clash check. */
+  lineItemId?: string;
   guestGender: string;
   sourceDiscountLocked: boolean;
   defaultDiscountId: string;
@@ -105,29 +121,49 @@ export function ServiceLineEditor({
   const canDoGroup = (id: string) => canPerformGroup(capabilityByEmployee[id] ?? [], draft.groupSel || null);
   const genderOf = new Map<string, string | null>([...employees, ...borrowableEmployees].map((e) => [e.id, e.gender ?? null]));
   const matchGender = (id: string) => matchesGender(genderOf.get(id), guestGender);
-  const freeAtLabel = (id: string) => {
-    const iso = busyTherapistEndMap[id];
-    if (!iso) return 'in service';
-    const d = new Date(iso);
-    return `free ~${d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false })}`;
-  };
   const eligible = (e: { id: string }) => canDoGroup(e.id) && matchGender(e.id);
-  // This branch: available vs in-service
-  const thisBranchAvailable = employees
-    .filter((e) => eligible(e) && !busy.has(e.id))
-    .map((e) => ({ value: e.id, label: e.name, disabled: false }));
-  const thisBranchBusy = employees
-    .filter((e) => eligible(e) && busy.has(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name} · ${freeAtLabel(e.id)}`, disabled: false }));
-  // Share-group: available vs in-service
-  const borrowAvailable = borrowableEmployees
-    .filter((e) => eligible(e) && !busy.has(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''}`, disabled: false }));
-  const borrowBusy = borrowableEmployees
-    .filter((e) => eligible(e) && busy.has(e.id))
-    .map((e) => ({ value: e.id, label: `${e.name}${e.homeBranchCode ? ` · ${e.homeBranchCode}` : ''} · ${freeAtLabel(e.id)}`, disabled: false }));
+
+  // Plan-start availability: free at this line's BOOKED start, not merely "not
+  // mid-service right now". Window = [planStart, planStart + duration); with no
+  // booked time therapistPlanStatus falls back to the in-service-now signal.
+  const svcForDur = serviceItems.find((s) => s.id === draft.svcId) ?? (draft.groupSel ? serviceItems.find((s) => s.group === draft.groupSel) : undefined);
+  const durMin = svcForDur?.duration_minutes ?? 60;
+  const planStart = serviceDate && draft.start ? Date.parse(`${serviceDate}T${draft.start}:00+08:00`) : null;
+  const planEnd = planStart != null ? planStart + durMin * 60_000 : null;
+  const statusOf = (id: string): PlanStatus => therapistPlanStatus({
+    planStart, planEnd,
+    shiftWins: shiftWindows[id] ?? [],
+    bookingWins: bookingWindows[id] ?? [],
+    blockWins: blockWindows[id] ?? [],
+    excludeItem: lineItemId,
+    busyNow: busy.has(id),
+    busyNowEndIso: busyTherapistEndMap[id] ?? null,
+  });
+  const hhmm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }) : '');
+  const reasonLabel = (st: PlanStatus): string => {
+    switch (st.reason) {
+      case 'in_service': return st.freeAtIso ? `in service · free ~${hhmm(st.freeAtIso)}` : 'in service';
+      case 'booked': return st.freeAtIso ? `busy · free ~${hhmm(st.freeAtIso)}` : 'busy';
+      case 'off': return 'off shift';
+      case 'absent': return 'absent';
+      default: return '';
+    }
+  };
+  // Available therapists list in the day's line-up order (then name); the
+  // unavailable ones stay pickable (override) and sort by name.
+  const rankOf = (id: string) => lineupRank[id] ?? Number.POSITIVE_INFINITY;
+  const byLineup = (a: { id: string; name: string }, b: { id: string; name: string }) => (rankOf(a.id) - rankOf(b.id)) || a.name.localeCompare(b.name);
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  const brTag = (code: string | null | undefined) => (code ? ` · ${code}` : '');
+
+  const thisElig = employees.filter(eligible).map((e) => ({ e, st: statusOf(e.id) }));
+  const thisBranchAvailable = thisElig.filter((x) => x.st.available).sort((a, b) => byLineup(a.e, b.e)).map((x) => ({ value: x.e.id, label: x.e.name }));
+  const thisBranchBusy = thisElig.filter((x) => !x.st.available).sort((a, b) => byName(a.e, b.e)).map((x) => ({ value: x.e.id, label: `${x.e.name} · ${reasonLabel(x.st)}` }));
+  const borrowElig = borrowableEmployees.filter(eligible).map((e) => ({ e, st: statusOf(e.id) }));
+  const borrowAvailable = borrowElig.filter((x) => x.st.available).sort((a, b) => byLineup(a.e, b.e)).map((x) => ({ value: x.e.id, label: `${x.e.name}${brTag(x.e.homeBranchCode)}` }));
+  const borrowBusy = borrowElig.filter((x) => !x.st.available).sort((a, b) => byName(a.e, b.e)).map((x) => ({ value: x.e.id, label: `${x.e.name}${brTag(x.e.homeBranchCode)} · ${reasonLabel(x.st)}` }));
   // Keep the line's currently-assigned therapist on the list even if today's
-  // skill/gender/busy filters would drop them (a share-group loan, or the
+  // skill/gender/availability filters would drop them (a share-group loan, or the
   // service group changed after assignment). Without this the trigger can't
   // resolve the name and shows a raw id.
   const allOptions = [...thisBranchAvailable, ...thisBranchBusy, ...borrowAvailable, ...borrowBusy];
@@ -240,6 +276,9 @@ export function ServiceLineEditor({
       <div className="min-w-0">
         <Input type="time" className={`h-8 w-full ${miss(!draft.start)}`} value={draft.start} onChange={(e) => onChange({ start: e.target.value })} disabled={disabled} />
       </div>
+      {/* Act column — no actual time until the service starts, so a placeholder
+          dash keeps the not-yet-started row aligned under the Plan/Act split. */}
+      <div className="min-w-0 text-xs font-medium text-muted-foreground">—</div>
       <div className="min-w-0">
         <Select items={[{ value: NONE, label: 'Unassigned' }, ...(assignedOption ? [assignedOption] : []), ...allOptions]} value={draft.therapistId} onValueChange={(v) => onChange({ therapistId: v ?? NONE })} disabled={disabled}>
           <SelectTrigger className={`h-8 w-full ${miss(draft.therapistId === NONE)}`}><SelectValue /></SelectTrigger>
@@ -259,7 +298,7 @@ export function ServiceLineEditor({
             )}
             {thisBranchBusy.length > 0 && (
               <SelectGroup>
-                <SelectLabel>In service</SelectLabel>
+                <SelectLabel>Unavailable</SelectLabel>
                 {thisBranchBusy.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
               </SelectGroup>
             )}
@@ -280,7 +319,7 @@ export function ServiceLineEditor({
                 )}
                 {borrowBusy.length > 0 && (
                   <SelectGroup>
-                    <SelectLabel>Other branches · in service</SelectLabel>
+                    <SelectLabel>Other branches · unavailable</SelectLabel>
                     {borrowBusy.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                   </SelectGroup>
                 )}

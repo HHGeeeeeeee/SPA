@@ -19,9 +19,19 @@ function longDate(ymd: string): string {
 interface PdfCommLine { service_date: string; order_no: string; service: string; minutes: number | null; gross: number; rate: number; commission: number; warmup: boolean }
 interface PdfCommGroup {
   therapist_name: string;
+  therapist_id: string | null;
   sessions: number;
   gross: number;
+  // `commission` = sum of the line commissions (the engine-computed figure,
+  // used for the per-line subtotal). `final` = what's actually paid =
+  // computed + manual adjustment (from commission_entries). They differ only
+  // when finance posted a manual adjustment on this therapist's entry.
   commission: number;
+  adjustment: number;
+  adjustment_reason: string | null;
+  adjustment_by: string | null;
+  adjustment_at: string | null;
+  final: number;
   lines: PdfCommLine[];
   // When the therapist's home branch ≠ the settlement's branch, the work was
   // done as a borrow (cross-branch share) — surface the home branch code so
@@ -35,6 +45,7 @@ interface PdfData {
   period_from: string;
   period_to: string;
   confirmed_at: string | null;
+  confirmed_by: string | null;
   branch_name: string;
   total_sessions: number;
   total_commission: number;
@@ -49,8 +60,13 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
       period_no, status, period_from, period_to, confirmed_at, branch_id,
       total_sessions, total_commission_cents,
       branch:branches!commission_periods_branch_id_fkey ( name ),
+      confirmer:staff_users!commission_periods_confirmed_by_staff_id_fkey ( display_name, email ),
+      entries:commission_entries!commission_entries_period_id_fkey (
+        therapist_id, computed_commission_cents, adjustment_cents, adjustment_reason, adjustment_at, final_amount_cents,
+        adjuster:staff_users!commission_entries_adjustment_by_staff_id_fkey ( display_name, email )
+      ),
       items:order_items!fk_order_items_commission_period (
-        list_price_cents, duration_minutes, commission_rate, commission_amount_cents, status, actual_start,
+        list_price_cents, final_amount_cents, duration_minutes, commission_rate, commission_amount_cents, status, actual_start,
         therapist_home_branch_id,
         therapist:employees!order_items_therapist_id_fkey ( id, name ),
         order:orders!order_items_order_id_fkey ( order_no, service_date ),
@@ -66,6 +82,11 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
   const { data: branches } = await supabase.from('branches').select('id, code');
   const branchCode = new Map((branches ?? []).map((b) => [b.id as string, b.code as string]));
 
+  // Entry (therapist × period) lookup — carries the computed figure + manual
+  // adjustment. The group subtotal is taken from here (final_amount_cents) so
+  // the PDF reflects adjustments; the per-line breakdown stays computed.
+  const entryByTh = new Map((p.entries ?? []).map((e) => [e.therapist_id as string, e]));
+
   // Bucket lines by therapist; compute warmup (earliest session of the day).
   // Borrowed-from is per-line (snapshotted on order_items.therapist_home_branch_id
   // at booking time) but rolls up to the group: a therapist is shown as
@@ -79,9 +100,10 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
     const th = one(it.therapist);
     if (!th) continue;
     const name = th.name ?? '—';
-    const g = byTh.get(th.id ?? name) ?? { therapist_name: name, sessions: 0, gross: 0, commission: 0, lines: [], borrowed_from: null };
+    const g = byTh.get(th.id ?? name) ?? { therapist_name: name, therapist_id: th.id ?? null, sessions: 0, gross: 0, commission: 0, adjustment: 0, adjustment_reason: null, adjustment_by: null, adjustment_at: null, final: 0, lines: [], borrowed_from: null };
     g.sessions += 1;
-    g.gross += it.list_price_cents ?? 0;
+    // gross = NET (final_amount = list_price − discount): the commission base.
+    g.gross += it.final_amount_cents ?? it.list_price_cents ?? 0;
     g.commission += it.commission_amount_cents ?? 0;
     // Resolve borrowed-from once per group: settlement branch ≠ therapist's
     // snapshot home branch ⇒ loaner; remember the home code for the badge.
@@ -95,7 +117,7 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
       order_no: one(it.order)?.order_no ?? '—',
       service: one(it.service)?.name ?? 'Service',
       minutes: it.duration_minutes ?? null,
-      gross: it.list_price_cents ?? 0,
+      gross: it.final_amount_cents ?? it.list_price_cents ?? 0,
       rate: Number(it.commission_rate ?? 0),
       commission: it.commission_amount_cents ?? 0,
       actual_start: it.actual_start ?? '',
@@ -117,8 +139,17 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
         warmup: !!l.actual_start && l.actual_start === earliest.get(l.service_date),
       }))
       .sort((a, b) => (a.service_date < b.service_date ? -1 : 1));
+    // Merge the settled entry's adjustment trail onto the group. Fall back to
+    // the computed line-sum for legacy periods that have no entry row.
+    const entry = g.therapist_id ? entryByTh.get(g.therapist_id) : undefined;
+    g.adjustment = entry?.adjustment_cents ?? 0;
+    g.adjustment_reason = entry?.adjustment_reason ?? null;
+    const adjuster = entry ? one(entry.adjuster) : null;
+    g.adjustment_by = adjuster?.display_name ?? adjuster?.email ?? null;
+    g.adjustment_at = entry?.adjustment_at ?? null;
+    g.final = entry?.final_amount_cents ?? g.commission;
   }
-  const sortedGroups = [...byTh.values()].sort((a, b) => b.commission - a.commission);
+  const sortedGroups = [...byTh.values()].sort((a, b) => b.final - a.final);
 
   return {
     period_no: p.period_no,
@@ -126,6 +157,7 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
     period_from: p.period_from,
     period_to: p.period_to,
     confirmed_at: p.confirmed_at ?? null,
+    confirmed_by: one(p.confirmer)?.display_name ?? one(p.confirmer)?.email ?? null,
     branch_name: one(p.branch)?.name ?? 'HHG-SPA',
     total_sessions: p.total_sessions ?? 0,
     total_commission: p.total_commission_cents ?? 0,
@@ -133,7 +165,7 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
   };
 }
 
-const C = '#0f172a', MUTED = '#64748b', LINE = '#e2e8f0', GROUPBG = '#f8fafc', WARM = '#92400e', WARMBG = '#fef3c7';
+const C = '#0f172a', MUTED = '#64748b', LINE = '#e2e8f0', GROUPBG = '#f8fafc', WARM = '#92400e', WARMBG = '#fef3c7', RED = '#dc2626';
 const styles = StyleSheet.create({
   page: { padding: 36, fontSize: 9, color: C, fontFamily: 'Helvetica' },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
@@ -156,18 +188,26 @@ const styles = StyleSheet.create({
   // visible without scanning every line.
   borrowed: { fontSize: 7, color: WARM, backgroundColor: WARMBG, paddingHorizontal: 3, paddingVertical: 1, marginLeft: 6, borderRadius: 2, fontFamily: 'Helvetica-Bold' },
 
+  // Adjustment note under a therapist's group header — only shown when finance
+  // posted a manual adjustment, so the final figure stays auditable on paper.
+  adjNote: { flexDirection: 'row', justifyContent: 'flex-end', backgroundColor: GROUPBG, paddingHorizontal: 6, paddingBottom: 6 },
+  // Same size as the therapist name (10pt) — the adjustment must be impossible
+  // to miss on the printed sheet.
+  adjNoteText: { fontSize: 10, color: C, fontFamily: 'Helvetica-Bold' },
+  adjNoteVal: { fontSize: 10, color: RED, fontFamily: 'Helvetica-Bold' },
+  // Who/when of the adjustment — small + muted so the amount stays the hero.
+  adjNoteWho: { fontSize: 8, color: MUTED, fontFamily: 'Helvetica' },
+
   rowHead: { flexDirection: 'row', backgroundColor: '#fafafa', borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 3, paddingHorizontal: 6 },
   rowHeadCell: { fontSize: 7, color: MUTED, fontFamily: 'Helvetica-Bold', letterSpacing: 0.5 },
 
   row: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 4, paddingHorizontal: 6 },
   td: { fontSize: 9 },
-  // Column widths — A4 usable ≈ 523pt. Reclaim slack from the right-side
-  // numeric columns (max payload "999,999" / "100%" — all comfortably narrow)
-  // so Service has room for "Filipino Traditional [warm-up]" (~140pt) without
-  // clipping. Service stays flex:1 to absorb any residual slack.
-  // Layout: cDate 60 + cOrder 110 + cSvc(flex≈155) + cMins 26 + cGross 72 + cRate 32 + cComm 68 = 523pt
+  // Column widths — A4 usable ≈ 523pt. Order No shows only the last 4 (the
+  // sequence). Service stays flex:1 to absorb residual slack.
+  // Layout: cDate 60 + cOrder 44 + cSvc(flex≈221) + cMins 26 + cGross 72 + cRate 32 + cComm 68 = 523pt
   cDate: { width: 60, paddingRight: 8 },
-  cOrder: { width: 110, paddingRight: 8 },
+  cOrder: { width: 44, paddingRight: 8 },
   cSvc: { flex: 1, paddingRight: 8 },
   cMins: { width: 26, paddingRight: 6, textAlign: 'right' },
   cGross: { width: 72, paddingRight: 8, textAlign: 'right' },
@@ -189,13 +229,14 @@ function CommDoc({ d }: { d: PdfData }) {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.brand}>{d.branch_name}</Text>
-            <Text style={styles.sub}>COMMISSION SETTLEMENT  ·  CURRENCY PHP</Text>
+            <Text style={styles.sub}>COMMISSION SETTLEMENT</Text>
           </View>
           <View>
             <Text style={styles.metaLabel}>Settlement No.</Text>
             <Text style={styles.metaVal}>{d.period_no}</Text>
             <Text style={[styles.metaLabel, { marginTop: 4 }]}>Confirmed</Text>
             <Text style={styles.metaVal}>{longDate(d.confirmed_at ? d.confirmed_at.slice(0, 10) : todayPHT())}</Text>
+            {d.confirmed_by && <Text style={[styles.metaLabel, { marginTop: 1 }]}>Settled by {d.confirmed_by}</Text>}
           </View>
         </View>
 
@@ -225,22 +266,33 @@ function CommDoc({ d }: { d: PdfData }) {
                 <Text style={styles.groupName}>{g.therapist_name}</Text>
                 {g.borrowed_from && <Text style={styles.borrowed}>from {g.borrowed_from}</Text>}
               </View>
-              <Text style={styles.groupSub}>{g.sessions} session{g.sessions === 1 ? '' : 's'} · {php(g.gross)} gross</Text>
-              <Text style={styles.groupTotal}>{php(g.commission)}</Text>
+              <Text style={styles.groupSub}>{g.sessions} session{g.sessions === 1 ? '' : 's'} · {php(g.gross)} net</Text>
+              <Text style={styles.groupTotal}>{php(g.final)}</Text>
             </View>
+            {g.adjustment !== 0 && (
+              <View style={styles.adjNote}>
+                <Text style={styles.adjNoteText}>
+                  Computed {php(g.commission)}  ·  Adjustment <Text style={styles.adjNoteVal}>{g.adjustment < 0 ? '-' : '+'}{php(Math.abs(g.adjustment))}</Text>
+                  {g.adjustment_reason ? `  (${g.adjustment_reason})` : ''}
+                  {(g.adjustment_by || g.adjustment_at) && (
+                    <Text style={styles.adjNoteWho}>{`   by ${g.adjustment_by ?? '—'}${g.adjustment_at ? ` · ${longDate(g.adjustment_at.slice(0, 10))}` : ''}`}</Text>
+                  )}
+                </Text>
+              </View>
+            )}
             <View style={styles.rowHead}>
               <Text style={[styles.rowHeadCell, styles.cDate]}>DATE</Text>
-              <Text style={[styles.rowHeadCell, styles.cOrder]}>ORDER NO</Text>
+              <Text style={[styles.rowHeadCell, styles.cOrder]}>ORDER</Text>
               <Text style={[styles.rowHeadCell, styles.cSvc]}>SERVICE</Text>
               <Text style={[styles.rowHeadCell, styles.cMins]}>MINS</Text>
-              <Text style={[styles.rowHeadCell, styles.cGross]}>GROSS</Text>
+              <Text style={[styles.rowHeadCell, styles.cGross]}>NET</Text>
               <Text style={[styles.rowHeadCell, styles.cRate]}>RATE</Text>
               <Text style={[styles.rowHeadCell, styles.cComm]}>COMMISSION</Text>
             </View>
             {g.lines.map((l, li) => (
               <View key={li} style={styles.row}>
                 <Text style={[styles.td, styles.cDate]}>{l.service_date}</Text>
-                <Text style={[styles.td, styles.cOrder]}>{l.order_no}</Text>
+                <Text style={[styles.td, styles.cOrder]}>{l.order_no.slice(-4)}</Text>
                 <View style={[styles.cSvc, { flexDirection: 'row', alignItems: 'center' }]}>
                   <Text style={styles.td}>{l.service}</Text>
                   {l.warmup && <Text style={styles.warm}>warm-up</Text>}

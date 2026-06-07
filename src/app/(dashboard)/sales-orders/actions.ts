@@ -225,6 +225,7 @@ export async function createOrderDirect(input: unknown): Promise<ActionResult<{ 
   const d = parsed.data;
 
   const supabase = await createAuditedClient();
+  const session = await currentSession();
 
   const { data: branch, error: be } = await supabase
     .from('branches')
@@ -275,6 +276,7 @@ export async function createOrderDirect(input: unknown): Promise<ActionResult<{ 
       service_date: d.service_date,
       note: d.note || null,
       status: 'draft',
+      created_by_staff_user_id: session?.staffUserId ?? null,
     })
     .select('id')
     .single();
@@ -600,11 +602,43 @@ async function recomputeTotals(orderId: string) {
     .select('amount_cents')
     .eq('order_id', orderId)
     .eq('kind', 'tip');
-  const total = serviceTotal + (tipLines ?? []).reduce((s, t) => s + (t.amount_cents ?? 0), 0);
+  const tipTotal = (tipLines ?? []).reduce((s, t) => s + (t.amount_cents ?? 0), 0);
+  // Manual folio adjustments — "Add revenue" (positive) and "Adjust charge"
+  // (negative) — are kind=revenue lines with NO order_item_id, so they aren't
+  // part of serviceTotal (which is item-based). Fold them in too, or the bill
+  // ignores every manual correction. Service-revenue postings carry an
+  // order_item_id and are excluded here to avoid double-counting serviceTotal.
+  const { data: adjLines } = await supabase
+    .from('folio_lines')
+    .select('amount_cents')
+    .eq('order_id', orderId)
+    .eq('kind', 'revenue')
+    .is('order_item_id', null);
+  const manualAdjustments = (adjLines ?? []).reduce((s, a) => s + (a.amount_cents ?? 0), 0);
+  const total = serviceTotal + tipTotal + manualAdjustments;
   await supabase
     .from('orders')
     .update({ subtotal_cents: subtotal, discount_cents: discount, total_cents: total })
     .eq('id', orderId);
+}
+
+// After the order total changes (manual revenue / adjust charge), the paid-vs-
+// total relationship may have crossed a terminal boundary: an added charge can
+// reopen a fully-paid (closed) order, and a downward adjustment can settle a
+// completed one outright. Reconcile just those two money states — mirrors the
+// flips already done in takePayment (→ closed) and recordRefund (→ completed).
+async function reconcilePaidStatus(orderId: string) {
+  const supabase = await createAuditedClient();
+  const { data: o } = await supabase
+    .from('orders').select('status, total_cents, paid_cents').eq('id', orderId).single();
+  if (!o) return;
+  if (o.status === 'closed' && o.paid_cents < o.total_cents) {
+    await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
+    await logStatus(orderId, 'closed', 'completed', 'Charge added — balance reopened', null);
+  } else if (o.status === 'completed' && o.total_cents > 0 && o.paid_cents >= o.total_cents) {
+    await supabase.from('orders').update({ status: 'closed' }).eq('id', orderId);
+    await logStatus(orderId, 'completed', 'closed', 'Charge adjusted — balance settled', null);
+  }
 }
 
 // Wrap up an order once no line is still scheduled or running — works from
@@ -1096,7 +1130,7 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
   // on another line.
   const { data: item } = await supabase
     .from('order_items')
-    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, service:service_items ( commission_applicable, allowed_resource_types, service_group, category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
+    .select('therapist_id, resource_id, service_item_id, order_customer_id, final_amount_cents, scheduled_start, duration_minutes, service:service_items ( commission_applicable, allowed_resource_types, service_group, category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
     .eq('id', itemId)
     .single();
 
@@ -1106,21 +1140,8 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     return { ok: false, error: 'Choose the service for this line before starting it.' };
   }
 
-  // Revenue posts to the folio the moment a service starts, so an open cash
-  // shift must exist to receive it.
-  const { data: ordForShift } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
-  // Revenue follows the STATION's branch: a service posts to the open shift of the
-  // branch where its station physically sits, so a cross-branch booking lands in
-  // that branch's shift, not the order's. A line with no station (dispatch / rest)
-  // falls back to the order branch. You can therefore only start a service whose
-  // branch has an open shift — i.e. your own branch's work.
-  const itemResource = Array.isArray(item?.resource) ? item?.resource[0] : item?.resource;
-  const stationBranchId = item?.resource_id ? itemResource?.branch_id ?? null : null;
-  const shiftBranchId = stationBranchId ?? ordForShift?.branch_id ?? null;
-  const openShift = shiftBranchId ? await getCurrentOpenShift(shiftBranchId) : null;
-  if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this service’s branch — open one on the Sales Remittance page before starting it.' };
-  }
+  // Revenue is now recognised at FINISH (not Start), so starting a service no
+  // longer posts to the folio or requires an open shift — those move to finish.
 
   // Can't start a hands-on service with nobody to do it, or a service that needs
   // a station/bed without one assigned. (Rest-room style lines need neither.)
@@ -1197,36 +1218,22 @@ export async function startOrderItem(itemId: string, orderId: string): Promise<A
     if (busy && busy.length > 0) return { ok: false, error: 'This station is occupied by another in-service line' };
   }
 
-  // The service's revenue line must carry a transaction code (the category's
-  // bound revenue code). Resolve + require it BEFORE flipping the line live, so
-  // a category with no code blocks the start cleanly instead of half-starting.
-  const svcCategory = Array.isArray(svc?.category) ? svc?.category[0] : svc?.category;
-  const revenueTxCodeId = svcCategory?.revenue_transaction_code_id ?? null;
-  if (!revenueTxCodeId) {
-    return { ok: false, error: 'This service category has no revenue transaction code — set one in Settings → Service Categories before starting.' };
-  }
-
+  // actual_start records the REAL Start press. slot_* drive the calendar's
+  // display block: it opens at the planned start (not the press time — the desk
+  // starts the line only after seating the guest) and runs to the planned end
+  // until Finish trims/caps it.
+  const planStartIso = item?.scheduled_start ?? now;
+  const planEndIso = item?.scheduled_start && item.duration_minutes != null
+    ? new Date(Date.parse(item.scheduled_start) + item.duration_minutes * 60000).toISOString()
+    : null;
   const { error } = await supabase
     .from('order_items')
-    .update({ status: 'in_service', actual_start: item?.scheduled_start ?? now, service_start: item?.scheduled_start ?? now })
+    .update({ status: 'in_service', actual_start: now, slot_start: planStartIso, slot_end: planEndIso })
     .eq('id', itemId);
   if (error) return { ok: false, error: error.message };
 
-  // Post the service's revenue to the folio, bound to the open shift. The line
-  // carries the posting branch and the category's revenue transaction code (the
-  // GL code rides the order, set on the service category) so the ERP post reads
-  // it straight off the line instead of re-deriving it later.
-  const startSession = await currentSession();
-  await supabase.from('folio_lines').insert({
-    order_id: orderId,
-    shift_id: openShift.id,
-    kind: 'revenue',
-    amount_cents: item?.final_amount_cents ?? 0,
-    posted_by: startSession?.staffUserId ?? null,
-    order_item_id: itemId,
-    branch_id: shiftBranchId,
-    transaction_code_id: revenueTxCodeId,
-  });
+  // Revenue is recognised at finish / a charged interrupt, not here — see
+  // resolveServiceRevenuePosting + finishOrderItem / interruptOrderItem.
 
   // Starting the first service moves the order into service automatically —
   // no separate "Start Service" step. Per-line starts still stamp each time.
@@ -1274,6 +1281,57 @@ export async function startAllServices(orderId: string): Promise<ActionResult<{ 
   return { ok: true, data: { started, skipped: picked.length - started } };
 }
 
+// Resolve where a service line's revenue posts: the open shift of the station's
+// branch (falling back to the order branch) and the category's revenue code.
+// Revenue is recognised at finish (and at a charged interrupt), so this guards
+// those transitions — a missing shift or category code blocks them cleanly.
+async function resolveServiceRevenuePosting(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  itemId: string,
+  orderId: string,
+): Promise<{ ok: true; shiftId: string; branchId: string | null; txCodeId: string } | { ok: false; error: string }> {
+  const { data: item } = await supabase
+    .from('order_items')
+    .select('resource_id, service:service_items ( category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
+    .eq('id', itemId)
+    .single();
+  const { data: ord } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
+  // Revenue follows the STATION's branch (cross-branch work lands in that
+  // branch's shift); a line with no station falls back to the order branch.
+  const itemResource = Array.isArray(item?.resource) ? item?.resource[0] : item?.resource;
+  const stationBranchId = item?.resource_id ? itemResource?.branch_id ?? null : null;
+  const shiftBranchId = stationBranchId ?? ord?.branch_id ?? null;
+  const openShift = shiftBranchId ? await getCurrentOpenShift(shiftBranchId) : null;
+  if (!openShift) {
+    return { ok: false, error: 'No cash shift is open for this service’s branch — open one on the Sales Remittance page first.' };
+  }
+  const svc = Array.isArray(item?.service) ? item?.service[0] : item?.service;
+  const svcCategory = Array.isArray(svc?.category) ? svc?.category[0] : svc?.category;
+  const txCodeId = svcCategory?.revenue_transaction_code_id ?? null;
+  if (!txCodeId) {
+    return { ok: false, error: 'This service category has no revenue transaction code — set one in Settings → Service Categories first.' };
+  }
+  return { ok: true, shiftId: openShift.id, branchId: shiftBranchId, txCodeId };
+}
+
+// Insert a kind=revenue folio line for a service line at its recognition moment.
+async function postServiceRevenueLine(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  args: { orderId: string; itemId: string; amountCents: number; shiftId: string; branchId: string | null; txCodeId: string },
+): Promise<void> {
+  const session = await currentSession();
+  await supabase.from('folio_lines').insert({
+    order_id: args.orderId,
+    shift_id: args.shiftId,
+    kind: 'revenue',
+    amount_cents: args.amountCents,
+    posted_by: session?.staffUserId ?? null,
+    order_item_id: args.itemId,
+    branch_id: args.branchId,
+    transaction_code_id: args.txCodeId,
+  });
+}
+
 export async function finishOrderItem(itemId: string, orderId: string): Promise<ActionResult> {
   const auth = await requireOrderBranchAccess(orderId);
   if (!auth.ok) return auth;
@@ -1281,36 +1339,48 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   const nowMs = Date.now();
   const { data: item } = await supabase
     .from('order_items')
-    .select('actual_start, scheduled_start, slot_end, duration_minutes, status')
+    .select('actual_start, scheduled_start, slot_start, duration_minutes, status, final_amount_cents')
     .eq('id', itemId)
     .single();
   if (!item) return { ok: false, error: 'Service line not found' };
   if (item.status !== 'in_service') return { ok: false, error: 'Only an in-service line can be finished' };
 
-  // The end time is capped at the planned end (booked start + duration, or the
-  // stored slot_end): finishing early records the real end, but finishing late
-  // can't push the line past its plan — an overrun never extends the booked block.
-  const planEndMs = item.slot_end
-    ? Date.parse(item.slot_end)
-    : (item.scheduled_start && item.duration_minutes != null)
-      ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
-      : null;
-  let endMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
-  // Never before the service actually started (a line started after its own plan
-  // end would otherwise read end < start).
-  if (item.actual_start) endMs = Math.max(endMs, Date.parse(item.actual_start));
-  const end = new Date(endMs).toISOString();
+  // Revenue is recognised at finish, so resolve the posting shift + code BEFORE
+  // completing — a missing open shift / category code blocks the finish cleanly.
+  const rev = await resolveServiceRevenuePosting(supabase, itemId, orderId);
+  if (!rev.ok) return rev;
 
-  const patch: { status: string; actual_end: string; service_end: string; actual_duration_minutes?: number } = {
+  const now = new Date(nowMs).toISOString();
+  // Planned end = booked start + duration. The calendar block (slot_end) is
+  // capped here: finishing early trims it, finishing late holds it at the plan
+  // (the desk may press End after the guest has already left). actual_end always
+  // records the REAL press time, for the operational record.
+  const planEndMs = item.scheduled_start && item.duration_minutes != null
+    ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
+    : null;
+  const slotStartMs = item.slot_start
+    ? Date.parse(item.slot_start)
+    : item.scheduled_start ? Date.parse(item.scheduled_start) : nowMs;
+  let slotEndMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
+  if (slotEndMs < slotStartMs) slotEndMs = slotStartMs; // never a negative-length block
+  const slotEnd = new Date(slotEndMs).toISOString();
+
+  const patch: { status: string; actual_end: string; slot_end: string; actual_duration_minutes?: number } = {
     status: 'service_completed',
-    actual_end: end,
-    service_end: end,
+    actual_end: now,
+    slot_end: slotEnd,
   };
-  if (item?.actual_start) {
-    patch.actual_duration_minutes = Math.max(1, Math.round((endMs - Date.parse(item.actual_start)) / 60000));
+  if (item.actual_start) {
+    patch.actual_duration_minutes = Math.max(1, Math.round((nowMs - Date.parse(item.actual_start)) / 60000));
   }
   const { error } = await supabase.from('order_items').update(patch).eq('id', itemId);
   if (error) return { ok: false, error: error.message };
+
+  // Recognise the revenue now (finish), at the final discount-applied amount.
+  await postServiceRevenueLine(supabase, {
+    orderId, itemId, amountCents: item.final_amount_cents ?? 0,
+    shiftId: rev.shiftId, branchId: rev.branchId, txCodeId: rev.txCodeId,
+  });
 
   // Finishing the last active service auto-completes the order.
   await maybeAutoComplete(orderId);
@@ -1434,7 +1504,7 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
 
   const { data: item } = await supabase
     .from('order_items')
-    .select('actual_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status')
+    .select('actual_start, scheduled_start, slot_start, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, status')
     .eq('id', d.item_id)
     .single();
   if (!item) return { ok: false, error: 'Service line not found' };
@@ -1444,12 +1514,39 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
   const actualMin = item.actual_start
     ? Math.max(1, Math.round((Date.parse(now) - Date.parse(item.actual_start)) / 60000))
     : 0;
+  // Calendar block ends at the interrupt point, capped at the planned end.
+  const nowMs = Date.parse(now);
+  const planEndMs = item.scheduled_start && item.duration_minutes != null
+    ? Date.parse(item.scheduled_start) + item.duration_minutes * 60000
+    : null;
+  const slotStartMs = item.slot_start
+    ? Date.parse(item.slot_start)
+    : item.scheduled_start ? Date.parse(item.scheduled_start) : nowMs;
+  let slotEndMs = planEndMs != null ? Math.min(nowMs, planEndMs) : nowMs;
+  if (slotEndMs < slotStartMs) slotEndMs = slotStartMs;
+  const slotEnd = new Date(slotEndMs).toISOString();
 
-  // Interrupt is "keep posted": the revenue folio_line stamped at Start stays
-  // at its full amount and the line's billed amount is NOT auto-reduced here.
-  // The handling mode is recorded as intent only; any actual waive/reduction is
-  // a deliberate discount edit by the desk afterwards, so folio revenue and the
-  // order total never silently diverge.
+  // Revenue is recognised on a CHARGED interrupt — the service was (partly)
+  // delivered and billed, so it books straight to the folio like a finish:
+  //   · full_charge    → the full amount
+  //   · partial_charge → prorated by actual vs planned minutes (legacy path)
+  //   · no_charge / reschedule → nothing; the waive is the manager-approved
+  //     (PIN) audit record instead of a revenue line.
+  // Resolved BEFORE the line flips so a missing open shift / category code
+  // blocks the interrupt cleanly.
+  const planned = item.duration_minutes ?? 0;
+  const revenueCents =
+    d.handling === 'full_charge'
+      ? (item.final_amount_cents ?? 0)
+      : d.handling === 'partial_charge'
+        ? (planned > 0 ? Math.round((item.final_amount_cents ?? 0) * Math.min(actualMin, planned) / planned) : (item.final_amount_cents ?? 0))
+        : 0;
+  let revCtx: { shiftId: string; branchId: string | null; txCodeId: string } | null = null;
+  if (revenueCents > 0) {
+    const rev = await resolveServiceRevenuePosting(supabase, d.item_id, d.order_id);
+    if (!rev.ok) return rev;
+    revCtx = { shiftId: rev.shiftId, branchId: rev.branchId, txCodeId: rev.txCodeId };
+  }
 
   // The legacy `interruption_reason` column keeps showing a human label so
   // existing Change History UI keeps working without a join. New rows fill
@@ -1468,6 +1565,7 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
       interruption_notes: d.notes ?? null,
       interruption_at: now,
       actual_end: now,
+      slot_end: slotEnd,
       actual_duration_minutes: actualMin,
       // Reschedule starts in the "pending follow-up" state. Manager clears it
       // from the Pending Reschedules list once the make-up service has been
@@ -1479,6 +1577,12 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
     })
     .eq('id', d.item_id);
   if (error) return { ok: false, error: error.message };
+
+  // Book the charged-interrupt revenue (none for a waive).
+  if (revCtx) {
+    await postServiceRevenueLine(supabase, { orderId: d.order_id, itemId: d.item_id, amountCents: revenueCents, shiftId: revCtx.shiftId, branchId: revCtx.branchId, txCodeId: revCtx.txCodeId });
+  }
+
   await recomputeTotals(d.order_id);
   // Interrupting the last active service also wraps up the order.
   await maybeAutoComplete(d.order_id);
@@ -2223,6 +2327,11 @@ export async function addRevenue(input: unknown): Promise<ActionResult> {
   });
   if (error) return { ok: false, error: error.message };
 
+  // Manual revenue is part of the bill — refresh the total and reopen the order
+  // if it had already been settled.
+  await recomputeTotals(d.order_id);
+  await reconcilePaidStatus(d.order_id);
+
   revalidatePath(`/sales-orders/${d.order_id}`);
   revalidatePath('/reconciliation/cash');
   revalidatePath('/reconciliation');
@@ -2269,6 +2378,11 @@ export async function adjustCharge(input: unknown): Promise<ActionResult> {
     transaction_code_id: txCodeId,
   });
   if (error) return { ok: false, error: error.message };
+
+  // The downward correction lowers the bill — refresh the total and settle the
+  // order if the adjustment cleared the remaining balance.
+  await recomputeTotals(d.order_id);
+  await reconcilePaidStatus(d.order_id);
 
   revalidatePath(`/sales-orders/${d.order_id}`);
   revalidatePath('/reconciliation/cash');

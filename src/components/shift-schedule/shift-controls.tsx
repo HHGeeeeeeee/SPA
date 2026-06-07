@@ -75,11 +75,11 @@ export function ShiftControls({ branches, branchId, selected, day, view, dialog 
       {/* subject axis: Station = the per-bed board, People = the same board
           keyed on therapists (each row a person, shift hours as a faint band). */}
       <div className="inline-flex rounded-lg border border-border p-0.5">
-        <button type="button" onClick={() => go({ view: 'station' })} className={tabBtn(view === 'station')}>
-          <BedDouble className="size-4" /> Station
-        </button>
         <button type="button" onClick={() => go({ view: 'people' })} className={tabBtn(view === 'people')}>
           <Users className="size-4" /> People
+        </button>
+        <button type="button" onClick={() => go({ view: 'station' })} className={tabBtn(view === 'station')}>
+          <BedDouble className="size-4" /> Station
         </button>
       </div>
 
@@ -98,8 +98,8 @@ export function ShiftControls({ branches, branchId, selected, day, view, dialog 
           via the topbar portal slot. */}
       <TopBarPortal>
         {/* Multi-select branch picker — tick which branches the board shows.
-            Defaults to just the selected branch; add more to see them together
-            (grouped by Branch). At least one stays selected. */}
+            Defaults to ALL accessible branches; untick to narrow (grouped by
+            Branch). At least one stays selected. */}
         <div className="relative">
           <button
             type="button"

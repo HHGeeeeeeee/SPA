@@ -20,10 +20,11 @@ const baseSchema = z.object({
   payment_method_id: z.string().uuid().optional().nullable(),
   debit_account: z.string().max(20).optional().nullable().or(z.literal('')),
   debit_subaccount: noDash.max(20).optional().nullable().or(z.literal('')),
-  debit_branch_id: z.string().uuid().optional().nullable(),
+  // Free-text Acumatica branch segment override (empty = use header branch).
+  debit_branch_id: z.string().max(30).optional().nullable().or(z.literal('')),
   credit_account: z.string().max(20).optional().nullable().or(z.literal('')),
   credit_subaccount: noDash.max(20).optional().nullable().or(z.literal('')),
-  credit_branch_id: z.string().uuid().optional().nullable(),
+  credit_branch_id: z.string().max(30).optional().nullable().or(z.literal('')),
 });
 
 const schema = baseSchema.superRefine((d, ctx) => {

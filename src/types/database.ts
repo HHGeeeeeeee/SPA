@@ -1139,6 +1139,119 @@ export type Database = {
           },
         ]
       }
+      daily_lineup: {
+        Row: {
+          branch_id: string
+          lineup_date: string
+          ordered_ids: string[]
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          branch_id: string
+          lineup_date: string
+          ordered_ids?: string[]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          branch_id?: string
+          lineup_date?: string
+          ordered_ids?: string[]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_lineup_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_lineup_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      therapist_block: {
+        Row: {
+          block_date: string
+          block_kind: string | null
+          branch_id: string
+          created_at: string
+          created_by: string | null
+          employee_id: string
+          end_at: string
+          id: string
+          reason: string
+          start_at: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          block_date: string
+          block_kind?: string | null
+          branch_id: string
+          created_at?: string
+          created_by?: string | null
+          employee_id: string
+          end_at: string
+          id?: string
+          reason: string
+          start_at: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          block_date?: string
+          block_kind?: string | null
+          branch_id?: string
+          created_at?: string
+          created_by?: string | null
+          employee_id?: string
+          end_at?: string
+          id?: string
+          reason?: string
+          start_at?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "therapist_block_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "therapist_block_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "therapist_block_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "therapist_block_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       employee_shifts: {
         Row: {
           branch_id: string
@@ -1613,6 +1726,13 @@ export type Database = {
             columns: ["billing_destination_id"]
             isOneToOne: false
             referencedRelation: "billing_destinations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folio_lines_transaction_code_id_fkey"
+            columns: ["transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
             referencedColumns: ["id"]
           },
           {
@@ -2100,9 +2220,7 @@ export type Database = {
           resource_id: string | null
           scheduled_start: string | null
           service_category_id: string
-          service_end: string | null
           service_item_id: string | null
-          service_start: string | null
           slot_end: string | null
           slot_start: string | null
           status: string
@@ -2140,9 +2258,7 @@ export type Database = {
           resource_id?: string | null
           scheduled_start?: string | null
           service_category_id: string
-          service_end?: string | null
           service_item_id?: string | null
-          service_start?: string | null
           slot_end?: string | null
           slot_start?: string | null
           status?: string
@@ -2180,9 +2296,7 @@ export type Database = {
           resource_id?: string | null
           scheduled_start?: string | null
           service_category_id?: string
-          service_end?: string | null
           service_item_id?: string | null
-          service_start?: string | null
           slot_end?: string | null
           slot_start?: string | null
           status?: string
@@ -2318,6 +2432,7 @@ export type Database = {
           business_unit_id: string | null
           created_at: string
           created_by: string | null
+          created_by_staff_user_id: string | null
           deleted_at: string | null
           discount_cents: number
           external_hotel_id: string | null
@@ -2346,6 +2461,7 @@ export type Database = {
           business_unit_id?: string | null
           created_at?: string
           created_by?: string | null
+          created_by_staff_user_id?: string | null
           deleted_at?: string | null
           discount_cents?: number
           external_hotel_id?: string | null
@@ -2374,6 +2490,7 @@ export type Database = {
           business_unit_id?: string | null
           created_at?: string
           created_by?: string | null
+          created_by_staff_user_id?: string | null
           deleted_at?: string | null
           discount_cents?: number
           external_hotel_id?: string | null
@@ -3910,20 +4027,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "transaction_codes_credit_branch_id_fkey"
-            columns: ["credit_branch_id"]
-            isOneToOne: false
-            referencedRelation: "branches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "transaction_codes_debit_branch_id_fkey"
-            columns: ["debit_branch_id"]
-            isOneToOne: false
-            referencedRelation: "branches"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "transaction_codes_payment_method_id_fkey"
             columns: ["payment_method_id"]
             isOneToOne: false
@@ -4046,7 +4149,17 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      report_revenue: {
+        Args: {
+          p_from: string
+          p_to: string
+          p_dimensions: string[]
+          p_statuses: string[]
+          p_branch_ids: string[]
+          p_settled_only?: boolean
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never

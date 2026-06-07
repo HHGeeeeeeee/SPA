@@ -28,6 +28,11 @@ export function DashboardUtilization({ occ }: { occ: DayOccupancy }) {
               <span className="text-2xl font-extrabold tabular-nums text-foreground">{pct(occ.therapistOccPct)}</span>
               <span className="text-sm font-medium text-muted-foreground tabular-nums">therapist ({occ.therapistCount} pax - {hrs(occ.therapistHours)} hr)</span>
             </div>
+            {occ.absentHours > 0 && (
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-sm font-bold text-red-600 tabular-nums dark:text-red-400">{hrs(occ.absentHours)} absent hr</span>
+              </div>
+            )}
           </div>
         ) : (
           <p className="mt-1 text-sm font-semibold text-muted-foreground">Unavailable — {occ.note}</p>

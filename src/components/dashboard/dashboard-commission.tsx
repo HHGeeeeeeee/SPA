@@ -41,7 +41,7 @@ export function DashboardCommission({ rows }: { rows: CommRow[] }) {
                 <TableRow>
                   <TableHead className="w-10 text-center">#</TableHead>
                   <TableHead>Therapist</TableHead>
-                  <TableHead className="text-right">Gross</TableHead>
+                  <TableHead className="text-right">Net</TableHead>
                   <TableHead className="text-right">Commission</TableHead>
                   <TableHead className="text-right">Sessions</TableHead>
                   <TableHead className="text-right">Hour Completed</TableHead>

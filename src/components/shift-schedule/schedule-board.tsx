@@ -20,11 +20,22 @@ import {
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn, formatPHP } from '@/lib/utils';
 import { CreateOrderDialog } from '@/components/sales-orders/create-order-dialog';
 import type { ReservationItem } from '@/components/reservations/new-reservation-dialog';
-import { moveScheduledOrderItem, assignTherapistToOrderItem, unassignOrderItem } from '@/app/(dashboard)/calendar/actions';
+import { moveScheduledOrderItem, assignTherapistToOrderItem, unassignOrderItem, addTherapistBlock, removeTherapistBlock, setDailyLineup } from '@/app/(dashboard)/calendar/actions';
 import { startOrderItem, finishOrderItem } from '@/app/(dashboard)/sales-orders/actions';
+import { LineupList, LINEUP_DND_MIME, type LineupTherapist } from '@/components/shift-schedule/lineup-panel';
 
 export interface BoardBed {
   id: string;
@@ -41,10 +52,10 @@ export interface BoardBed {
   branch?: string;
   zone?: string | null;
 }
-export type BlockVariant = 'pending' | 'confirmed' | 'scheduled' | 'in_service' | 'completed';
+export type BlockVariant = 'pending' | 'confirmed' | 'scheduled' | 'in_service' | 'completed' | 'blocked';
 export interface BoardBlock {
   key: string;
-  kind: 'reservation' | 'order';
+  kind: 'reservation' | 'order' | 'block';
   refId: string;
   bedId: string | null; // null = floating (top lane); see also `external` below
   /** Reservation is dispatched to a hotel room — never gets a bed. Renders in
@@ -81,6 +92,12 @@ export interface BoardBlock {
   /** Order's outstanding balance in cents (total − paid). Shown in the detail
    *  popover, painted red whenever it isn't zero. */
   balanceCents?: number;
+  /** This line's own pricing — list price, discount applied, and the net amount
+   *  booked as revenue at Finish. Drives the Finish confirmation's discount
+   *  breakdown (mirrors the order page), so the desk can check it on the board. */
+  listPriceCents?: number | null;
+  discountCents?: number | null;
+  finalAmountCents?: number | null;
   editData?: ReservationItem; // reservation blocks carry their full record for the edit dialog
   /** Therapist on this block. Used by the hover popup to mark staff busy at
    *  a hovered minute (block's own variant decides if it actually occupies
@@ -143,6 +160,7 @@ export interface BoardOccupancy {
   utilizationPct: number | null;   // actualHours / capacityHours
   stationOccPct: number | null;    // day avg occupied bed-hours / bedHours
   therapistOccPct: number | null;  // day avg occupied therapist-hours / therapistHours
+  absentHours?: number;            // shift-hours lost to therapist absence blocks (People board only)
 }
 // Option data forwarded to NewReservationDialog for click-to-add.
 interface BranchOpt { id: string; code: string; name: string; businessUnitIds: string[] }
@@ -291,6 +309,16 @@ const VARIANT_CLASS: Record<BlockVariant, string> = {
   scheduled: 'border border-primary/50 bg-primary/30 text-foreground',
   in_service: 'bg-blue-500/80 text-white',
   completed: 'bg-zinc-400/70 text-white line-through dark:bg-zinc-500/70',
+  // Absence block — a hatched amber band so "this person is away" reads clearly
+  // and never looks like a bookable/booked service.
+  blocked: 'border border-amber-600/70 bg-amber-500/25 text-amber-950 dark:text-amber-100 [background-image:repeating-linear-gradient(45deg,transparent,transparent_5px,rgba(180,83,9,0.18)_5px,rgba(180,83,9,0.18)_10px)]',
+};
+// Absence-block kinds and their short labels (shared with the server's
+// addTherapistBlock). The free reason text is the note; the kind is the rollup.
+export const BLOCK_KINDS = ['late', 'early_leave', 'stepped_out', 'absent', 'other'] as const;
+export type BlockKind = typeof BLOCK_KINDS[number];
+export const BLOCK_KIND_LABEL: Record<string, string> = {
+  late: 'Late', early_leave: 'Left early', stepped_out: 'Stepped out', absent: 'Absent', other: 'Other',
 };
 // A not-yet-started booking still missing a therapist and/or a station paints
 // red regardless of variant, so unassigned work stands out on either board.
@@ -356,8 +384,80 @@ function BlockView({ block, windowStartMin, onOpen, assignMode }: { block: Board
   );
 }
 
+// Modal to record a therapist absence block (People board). Manages its own
+// from/to + reason form; on save it hands board-minutes back to the parent.
+function AbsenceDialog({
+  name, windowStartMin, windowEndMin, defaultStartMin, pending, onSave, onClose,
+}: {
+  name: string;
+  windowStartMin: number;
+  windowEndMin: number;
+  defaultStartMin: number;
+  pending: boolean;
+  onSave: (startMin: number, endMin: number, reason: string, kind: BlockKind | null) => void;
+  onClose: () => void;
+}) {
+  const clamp = (m: number) => Math.max(windowStartMin, Math.min(windowEndMin, m));
+  const [startStr, setStartStr] = useState(hhmm(clamp(defaultStartMin)));
+  const [endStr, setEndStr] = useState(hhmm(clamp(defaultStartMin + 60)));
+  const [reason, setReason] = useState('');
+  const [kind, setKind] = useState<BlockKind | ''>('');
+  // A clock time below the board's open folds to the next day (past-midnight board).
+  const toBoardMin = (s: string) => {
+    const [h, m] = s.split(':').map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
+    let v = h * 60 + m;
+    if (v < windowStartMin) v += 1440;
+    return v;
+  };
+  const submit = () => {
+    const s = toBoardMin(startStr); const e = toBoardMin(endStr);
+    if (s == null || e == null) { toast.error('Enter a valid time'); return; }
+    if (e <= s) { toast.error('End time must be after start time'); return; }
+    if (!reason.trim()) { toast.error('A reason is required'); return; }
+    onSave(s, e, reason.trim(), kind || null);
+  };
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose} />
+      <div className="fixed left-1/2 top-1/2 z-50 w-[20rem] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold">Mark absent &middot; {name}</h3>
+          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Close">&times;</button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex gap-2">
+            <label className="flex-1">
+              <span className="text-[11px] font-semibold text-muted-foreground">From</span>
+              <input type="time" value={startStr} onChange={(e) => setStartStr(e.target.value)} className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5" />
+            </label>
+            <label className="flex-1">
+              <span className="text-[11px] font-semibold text-muted-foreground">To</span>
+              <input type="time" value={endStr} onChange={(e) => setEndStr(e.target.value)} className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5" />
+            </label>
+          </div>
+          <label>
+            <span className="text-[11px] font-semibold text-muted-foreground">Kind (optional)</span>
+            <select value={kind} onChange={(e) => setKind(e.target.value as BlockKind | '')} className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5">
+              <option value="">&mdash;</option>
+              {BLOCK_KINDS.map((k) => <option key={k} value={k}>{BLOCK_KIND_LABEL[k]}</option>)}
+            </select>
+          </label>
+          <label>
+            <span className="text-[11px] font-semibold text-muted-foreground">Reason</span>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="e.g. went home sick" className="mt-1 w-full rounded border border-input bg-transparent px-2 py-1.5" />
+          </label>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button size="sm" disabled={pending} onClick={submit}>Save</Button>
+        </div>
+      </div>
+    </>
+  );
+}
 function BedRow({
-  bed, blocks, windowStartMin, trackWidth, hours, nowMin, onOpen, onEmptyClick, assignMode,
+  bed, blocks, windowStartMin, trackWidth, hours, nowMin, onOpen, onEmptyClick, assignMode, onAddBlock, onAddToLineup,
 }: {
   bed: BoardBed;
   blocks: BoardBlock[];
@@ -368,6 +468,11 @@ function BedRow({
   onOpen: (b: BoardBlock, e: React.MouseEvent) => void;
   onEmptyClick: (bedId: string, min: number) => void;
   assignMode?: boolean;
+  /** People board only: record an absence for this therapist. */
+  onAddBlock?: (bed: BoardBed) => void;
+  /** People board only: add this therapist to today's line-up (also enables
+   *  dragging the name cell onto the line-up list). */
+  onAddToLineup?: (bed: BoardBed) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bed:${bed.id}` });
   // Pack lanes by the bed-occupied span (service + cleanup tail) so a block's
@@ -375,8 +480,22 @@ function BedRow({
   const { lanes, count } = assignLanes(blocks.map((b) => ({ startMin: b.startMin, endMin: b.endMin + b.cleanupMin })));
   return (
     <div className="flex border-b border-border last:border-0">
-      <div className="w-40 shrink-0 p-2 text-center flex flex-col justify-center sticky left-0 z-20 bg-card">
+      <div
+        className="w-40 shrink-0 p-2 text-center flex flex-col justify-center gap-0.5 sticky left-0 z-20 bg-card group"
+        draggable={!!onAddToLineup}
+        onDragStart={onAddToLineup ? (e) => { e.dataTransfer.setData(LINEUP_DND_MIME, bed.id); e.dataTransfer.effectAllowed = "copy"; } : undefined}
+      >
         <div className="font-semibold text-sm">{bed.name}</div>
+        {(onAddBlock || onAddToLineup) && (
+          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            {onAddToLineup && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onAddToLineup(bed); }} className="rounded px-1 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/10" title="Add to todays line-up">+ line-up</button>
+            )}
+            {onAddBlock && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onAddBlock(bed); }} className="rounded px-1 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-500/15 dark:text-amber-400" title="Mark this therapist absent for part of the day">+ absent</button>
+            )}
+          </div>
+        )}
       </div>
       <div
         ref={setNodeRef}
@@ -537,7 +656,7 @@ function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, inde
 
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
-  axis = 'bed', subjectLabel = 'Station', assignBeds = [], occupancy,
+  axis = 'bed', subjectLabel = 'Station', assignBeds = [], occupancy, lineup = [],
 }: {
   branchId: string;
   day: string;
@@ -560,6 +679,9 @@ export function ScheduleBoard({
   /** Capacity / occupancy / utilization summary for the selected branch(es).
    *  Drives the day-total strip + the two per-hour occupancy bands. */
   occupancy?: BoardOccupancy;
+  /** Saved daily line-up order (therapist ids), axis='person' only. Drives the
+   *  left-column line-up editor and the row sort (time > line-up > name). */
+  lineup?: string[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -576,6 +698,9 @@ export function ScheduleBoard({
   const [add, setAdd] = useState<{ bedId: string; min: number } | null>(null);
   // Block-detail popover (opened by clicking a booking; "Open order" navigates).
   const [detail, setDetail] = useState<{ block: BoardBlock; x: number; y: number } | null>(null);
+  // Finish confirmation — revenue is recognised at finish, so confirm before it,
+  // carrying this line's pricing so the discount can be checked on the board.
+  const [finishConfirm, setFinishConfirm] = useState<{ itemId: string; orderId: string; serviceName: string; listPriceCents: number | null; discountCents: number | null; finalAmountCents: number | null } | null>(null);
   // Station rail: 'bookings' (unallocated) vs 'staff' (on-shift therapists to
   // drag onto unassigned services). staffDragId is set while a staff card drags,
   // to light up the droppable (unassigned) blocks.
@@ -583,6 +708,42 @@ export function ScheduleBoard({
   const [staffDragId, setStaffDragId] = useState<string | null>(null);
   const [activeStaffName, setActiveStaffName] = useState<string | null>(null);
   const [staffSearch, setStaffSearch] = useState('');
+  // Add-absence dialog target (People board) — the therapist a block is being
+  // recorded against, opened from the row's "absent" button.
+  const [blockFor, setBlockFor] = useState<{ therapistId: string; name: string } | null>(null);
+
+  // ── Daily line-up (person axis): a draft order committed on Save ──────────
+  // The board's row sort uses the SAVED order (prop); the draft only affects the
+  // left-column editor until Save persists it (then the page refreshes).
+  const [draftLineup, setDraftLineup] = useState<string[]>(lineup);
+  const savedLineupKey = lineup.join(',');
+  useEffect(() => {
+    // Re-sync the draft when the saved order changes (after Save, or a new day).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDraftLineup(lineup);
+  }, [savedLineupKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lineupDirty = draftLineup.join(',') !== savedLineupKey;
+  const lineupRank = new Map(lineup.map((id, i) => [id, i] as const));
+  const lineupBlockedIds = new Set(blocks.filter((b) => b.variant === 'blocked' && b.therapistId).map((b) => b.therapistId!));
+  const lineupById = new Map<string, LineupTherapist>(
+    beds.map((b) => [b.id, {
+      name: b.name,
+      positionCode: b.type === '_other' ? null : b.type,
+      onShift: b.shiftStartMin != null && b.shiftEndMin != null,
+      blocked: lineupBlockedIds.has(b.id),
+    }] as const),
+  );
+  const lineupAdd = (id: string) => { if (lineupById.has(id)) setDraftLineup((o) => (o.includes(id) ? o : [...o, id])); };
+  const lineupRemove = (id: string) => setDraftLineup((o) => o.filter((x) => x !== id));
+  const lineupToBack = (id: string) => setDraftLineup((o) => [...o.filter((x) => x !== id), id]);
+  const lineupReorder = (from: number, to: number) => setDraftLineup((o) => {
+    if (from === to || from < 0 || to < 0 || from >= o.length || to >= o.length) return o;
+    const next = o.slice(); const [m] = next.splice(from, 1); next.splice(to, 0, m); return next;
+  });
+  const lineupSave = () => startTransition(async () => {
+    const r = await setDailyLineup({ branch_id: branchId, day, ordered_ids: draftLineup.filter((id) => lineupById.has(id)) });
+    if (r.ok) { toast.success('Line-up saved'); router.refresh(); } else toast.error(r.error);
+  });
 
   const total = Math.max(60, windowEndMin - windowStartMin);
   const trackWidth = Math.round((total / 60) * PX_PER_HOUR);
@@ -690,7 +851,8 @@ export function ScheduleBoard({
   // therapists grouped by position, ordered by shift start then name.
   const loadByTherapist = (() => {
     const m = new Map<string, number>();
-    for (const b of blocks) if (b.therapistId) m.set(b.therapistId, (m.get(b.therapistId) ?? 0) + 1);
+    // Count real bookings only — an absence block isn't workload.
+    for (const b of blocks) if (b.therapistId && b.variant !== 'blocked') m.set(b.therapistId, (m.get(b.therapistId) ?? 0) + 1);
     return m;
   })();
   // When "Available only" is on, the Staff rail follows the chosen time too:
@@ -702,7 +864,7 @@ export function ScheduleBoard({
     const t = availAt;
     const busyTh = new Set(
       blocks
-        .filter((b) => b.therapistId && (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed') && t >= b.startMin && t < b.endMin)
+        .filter((b) => b.therapistId && (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed' || b.variant === 'blocked') && t >= b.startMin && t < b.endMin)
         .map((b) => b.therapistId!),
     );
     return staffShifts.filter((s) => t >= s.startMin && t < s.endMin && !busyTh.has(s.id));
@@ -740,7 +902,9 @@ export function ScheduleBoard({
     const rowBlocks = blocksByBed.get(bed.id) ?? [];
     if (axis === 'person') {
       if (bed.shiftStartMin == null || bed.shiftEndMin == null) return false;
-      return t >= bed.shiftStartMin && t < bed.shiftEndMin; // on shift at t
+      if (t < bed.shiftStartMin || t >= bed.shiftEndMin) return false; // off shift at t
+      // An absence block over `t` makes them unavailable even while on shift.
+      return !rowBlocks.some((b) => b.variant === 'blocked' && t >= b.startMin && t < b.endMin);
     }
     const busy = rowBlocks.some((b) => !b.untimed && t >= b.startMin - b.prepMin && t < b.endMin + b.cleanupMin);
     return !busy;
@@ -769,7 +933,14 @@ export function ScheduleBoard({
             for (const b of trows) { const z = b.zone ?? ''; if (!byZone.has(z)) byZone.set(z, []); byZone.get(z)!.push(b); }
             zones = [...byZone.keys()].sort().map((zone) => ({ zone, count: byZone.get(zone)!.length, rows: byZone.get(zone)! }));
           } else {
-            zones = [{ zone: '', count: trows.length, rows: trows }];
+            // Person axis: order each position group by shift start (early → mid
+            // → late), off-shift rows (no band today) last, then name. Mirrors the
+            // AM/Mid/PM reading of the roster instead of raw employee order.
+            const sorted = trows.slice().sort((a, b) =>
+              (a.shiftStartMin ?? Infinity) - (b.shiftStartMin ?? Infinity)
+              || (lineupRank.get(a.id) ?? Infinity) - (lineupRank.get(b.id) ?? Infinity)
+              || a.name.localeCompare(b.name));
+            zones = [{ zone: '', count: sorted.length, rows: sorted }];
           }
           return { type, label: groupLabel(type), Icon: groupIcon(type), count: trows.length, zones };
         }),
@@ -796,7 +967,7 @@ export function ScheduleBoard({
   const hoverStaff = hoverMin == null ? null : (() => {
     const occupiedAt = (b: BoardBlock) =>
       b.therapistId &&
-      (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed') &&
+      (b.variant === 'scheduled' || b.variant === 'in_service' || b.variant === 'confirmed' || b.variant === 'blocked') &&
       hoverMin >= b.startMin && hoverMin < b.endMin;
     const busyTh = new Set(blocks.filter(occupiedAt).map((b) => b.therapistId!));
     const onShiftIds = staffShifts.filter((s) => hoverMin >= s.startMin && hoverMin < s.endMin);
@@ -893,6 +1064,22 @@ export function ScheduleBoard({
       else toast.error(r.error);
     });
   }
+  // Record / clear a therapist absence block from the People board.
+  function doAddBlock(employeeId: string, startMin: number, endMin: number, reason: string, kind: BlockKind | null) {
+    startTransition(async () => {
+      const r = await addTherapistBlock({ employee_id: employeeId, day, start_min: startMin, end_min: endMin, reason, block_kind: kind });
+      if (r.ok) { toast.success('Absence recorded'); setBlockFor(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+  function doRemoveBlock(blockId: string) {
+    startTransition(async () => {
+      const r = await removeTherapistBlock(blockId);
+      if (r.ok) { toast.success('Absence removed'); setDetail(null); router.refresh(); }
+      else toast.error(r.error);
+    });
+  }
+
   // Staff drags only target `assign:` blocks; booking/bed drags only `bed:` rows.
   const collisionDetection: CollisionDetection = (args) => {
     const isStaff = !!args.active.data.current?.staff;
@@ -969,6 +1156,9 @@ export function ScheduleBoard({
                 <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Therapist</span>
                 <span className="text-base font-extrabold tabular-nums text-foreground">{occPct(occupancy.therapistOccPct)}</span>
                 <span className="text-xs font-medium text-muted-foreground tabular-nums">({occupancy.therapistCount} pax - {occHrs(occupancy.therapistHours)} available hr)</span>
+                {occupancy.absentHours != null && occupancy.absentHours > 0 && (
+                  <span className="text-xs font-bold text-red-600 tabular-nums dark:text-red-400">· {occHrs(occupancy.absentHours)} absent hr</span>
+                )}
               </div>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Station</span>
@@ -986,7 +1176,23 @@ export function ScheduleBoard({
       )}
       <div className="flex items-start gap-3">
       {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
-      <Card className="w-56 shrink-0 overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
+      <div className="w-56 shrink-0 flex flex-col gap-3">
+      {axis === "person" && (
+        <LineupList
+          order={draftLineup}
+          byId={lineupById}
+          dirty={lineupDirty}
+          pending={pending}
+          onReorder={lineupReorder}
+          onRemove={lineupRemove}
+          onToBack={lineupToBack}
+          onAdd={lineupAdd}
+          onSave={lineupSave}
+          onReset={() => setDraftLineup(lineup)}
+          onClear={() => setDraftLineup([])}
+        />
+      )}
+      <Card className="overflow-y-auto p-0 max-h-[calc(100vh-16rem)]">
         <div className="sticky top-0 z-10 border-b border-border bg-muted px-3 py-2">
           {axis === 'bed' ? (
             <div className="mb-1 flex rounded-md border border-border p-0.5 text-[11px] font-bold">
@@ -1057,6 +1263,7 @@ export function ScheduleBoard({
           )}
         </div>
       </Card>
+      </div>
 
       <Card ref={scrollRef} className="relative flex-1 p-0 overflow-auto max-h-[calc(100vh-16rem)]">
         <div
@@ -1223,7 +1430,7 @@ export function ScheduleBoard({
                             <Fragment key={zKey}>
                               {zg.zone && <GroupHeader label={zg.zone} count={zg.count} collapsed={zCol} onToggle={() => toggleType(zKey)} trackWidth={trackWidth} indent={2} tone="bg-muted/20" />}
                               {(!zg.zone || !zCol) && zg.rows.map((bed) => (
-                                <BedRow key={bed.id} bed={bed} blocks={blocksByBed.get(bed.id) ?? []} windowStartMin={windowStartMin} trackWidth={trackWidth} hours={hours} nowMin={nowMin} onOpen={openBlock} onEmptyClick={onEmptyClick} assignMode={staffDragId != null} />
+                                <BedRow key={bed.id} bed={bed} blocks={blocksByBed.get(bed.id) ?? []} windowStartMin={windowStartMin} trackWidth={trackWidth} hours={hours} nowMin={nowMin} onOpen={openBlock} onEmptyClick={onEmptyClick} assignMode={staffDragId != null} onAddBlock={axis === 'person' ? (b) => setBlockFor({ therapistId: b.id, name: b.name }) : undefined} onAddToLineup={axis === 'person' ? (b) => lineupAdd(b.id) : undefined} />
                               ))}
                             </Fragment>
                           );
@@ -1278,7 +1485,7 @@ export function ScheduleBoard({
 
       {/* Click-a-block detail popover — anchored at the click point; a full-screen
           backdrop closes it. Summary first; "Open order" to actually go in. */}
-      {detail && (() => {
+      {detail && detail.block.kind !== 'block' && (() => {
         const b = detail.block;
         return (
           <>
@@ -1433,7 +1640,7 @@ export function ScheduleBoard({
                 {/* Finish an in-service line — stamps the end time, same as the
                     order page's Finish. */}
                 {b.variant === 'in_service' && b.orderId && (
-                  <Button size="sm" disabled={pending} onClick={() => doFinishFromBoard(b.refId, b.orderId!)}>
+                  <Button size="sm" disabled={pending} onClick={() => setFinishConfirm({ itemId: b.refId, orderId: b.orderId!, serviceName: b.line1, listPriceCents: b.listPriceCents ?? null, discountCents: b.discountCents ?? null, finalAmountCents: b.finalAmountCents ?? null })}>
                     Finish
                   </Button>
                 )}
@@ -1442,6 +1649,71 @@ export function ScheduleBoard({
           </>
         );
       })()}
+
+      {/* Absence block detail — reason + remove (People board). */}
+      {detail && detail.block.kind === 'block' && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setDetail(null)} />
+          <div
+            className="fixed z-50 w-60 rounded-lg border border-border bg-card p-3 shadow-xl"
+            style={{ left: detail.x, top: detail.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-border pb-1.5 mb-2">
+              <span className="font-bold text-sm text-amber-700 dark:text-amber-400">Absent</span>
+              <button type="button" onClick={() => setDetail(null)} className="text-muted-foreground hover:text-foreground" aria-label="Close">&times;</button>
+            </div>
+            <dl className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-1 text-[13px]">
+              {detail.block.line2 && (<><dt className="font-medium text-muted-foreground">Kind</dt><dd className="font-semibold">{detail.block.line2}</dd></>)}
+              <dt className="font-medium text-muted-foreground">Time</dt>
+              <dd className="font-semibold tabular-nums">{hhmm(detail.block.startMin)}&ndash;{hhmm(detail.block.endMin)}</dd>
+              <dt className="font-medium text-muted-foreground">Reason</dt>
+              <dd className="font-semibold break-words">{detail.block.line1}</dd>
+            </dl>
+            <div className="mt-3 flex justify-end">
+              <Button size="sm" variant="outline" disabled={pending} onClick={() => doRemoveBlock(detail.block.refId)}>Remove</Button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Record-absence dialog (People board "+ absent" on a therapist row). */}
+      {blockFor && (
+        <AbsenceDialog
+          name={blockFor.name}
+          windowStartMin={windowStartMin}
+          windowEndMin={windowEndMin}
+          defaultStartMin={availAt}
+          pending={pending}
+          onSave={(s, e, reason, kind) => doAddBlock(blockFor.therapistId, s, e, reason, kind)}
+          onClose={() => setBlockFor(null)}
+        />
+      )}
+      <AlertDialog open={!!finishConfirm} onOpenChange={(o) => { if (!o) setFinishConfirm(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Finish {finishConfirm?.serviceName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Confirm the discount is correct — this final amount is booked as revenue now.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">List price</span><span className="tabular-nums font-medium">{formatPHP(finishConfirm?.listPriceCents)}</span></div>
+            {(finishConfirm?.discountCents ?? 0) > 0 && (
+              <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums font-medium text-red-600 dark:text-red-400">−{formatPHP(finishConfirm?.discountCents)}</span></div>
+            )}
+            <div className="mt-1 flex justify-between border-t border-border pt-1 font-bold"><span>Revenue to book</span><span className="tabular-nums">{formatPHP(finishConfirm?.finalAmountCents)}</span></div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (finishConfirm) doFinishFromBoard(finishConfirm.itemId, finishConfirm.orderId); setFinishConfirm(null); }}
+            >
+              Finish &amp; book {formatPHP(finishConfirm?.finalAmountCents)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Drag preview for staff cards — renders in a portal so it isn't clipped
           by the rail's overflow while dragging onto a far block. */}

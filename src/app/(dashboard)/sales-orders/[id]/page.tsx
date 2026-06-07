@@ -39,9 +39,12 @@ async function fetchData(id: string) {
       billing:billing_destinations!orders_billing_to_id_fkey ( code, name, settlement_type, default_payment_method_id ),
       order_customers ( id, customer_name, customer_phone, seq_no, gender ),
       folio_lines (
-        id, order_customer_id, kind, amount_cents, payment_ref, posted_at,
+        id, order_customer_id, order_item_id, kind, amount_cents, payment_ref, note, posted_at,
         method:payment_methods ( display_name ),
         shift:shifts ( label, branch:branches!shifts_branch_id_fkey ( code ) ),
+        billing:billing_destinations!folio_lines_billing_destination_id_fkey ( name ),
+        card:stored_value_cards!folio_lines_stored_value_card_id_fkey ( card_no ),
+        tx_code:transaction_codes!folio_lines_transaction_code_id_fkey ( code ),
         posted_by_staff:staff_users!folio_lines_posted_by_fkey ( display_name )
       ),
       feedback ( order_item_id, score ),
@@ -76,7 +79,7 @@ async function fetchData(id: string) {
     // branches so we can show the full share-group pool with availability.
     supabase
       .from('employee_shifts')
-      .select('employee_id, branch_id')
+      .select('employee_id, branch_id, shift_start, shift_end')
       .eq('shift_date', order.service_date)
       .in('shift_type', ['regular', 'cross_branch', 'on_call']),
     // Branches + their sharing group (to limit borrowing to the same pool).
@@ -199,6 +202,55 @@ async function fetchData(id: string) {
     }
   }
 
+  // ── Plan-start availability data (service-line therapist picker) ───────────
+  // Per therapist on the service date: shift windows (so we know if they're on
+  // shift at the line's planned start), other booked/in-service windows (clash),
+  // and absence blocks. All as epoch-ms ranges so the client just does overlap
+  // math against the line's [planStart, planEnd).
+  const SD = order.service_date as string;
+  const timeToMs = (t: string | null): number | null => (t ? Date.parse(`${SD}T${t.slice(0, 5)}:00+08:00`) : null);
+  const shiftWindowsByTherapist: Record<string, { s: number; e: number }[]> = {};
+  for (const s of shifts.data ?? []) {
+    const st = timeToMs(s.shift_start);
+    let en = timeToMs(s.shift_end);
+    if (st == null || en == null) continue;
+    if (en <= st) en += 24 * 60 * 60 * 1000; // shift trades past midnight
+    (shiftWindowsByTherapist[s.employee_id] ??= []).push({ s: st, e: en });
+  }
+
+  const dayItemsRes = await supabase
+    .from('order_items')
+    .select('id, therapist_id, scheduled_start, slot_start, slot_end, duration_minutes, order:orders!order_items_order_id_fkey ( service_date )')
+    .in('status', ['draft', 'in_service'])
+    .not('therapist_id', 'is', null);
+  const bookingWindowsByTherapist: Record<string, { s: number; e: number; item: string }[]> = {};
+  for (const it of dayItemsRes.data ?? []) {
+    if (one(it.order)?.service_date !== SD || !it.therapist_id) continue;
+    const startIso = it.slot_start ?? it.scheduled_start;
+    if (!startIso) continue;
+    const s = Date.parse(startIso);
+    const e = it.slot_end ? Date.parse(it.slot_end) : s + (it.duration_minutes ?? 60) * 60_000;
+    (bookingWindowsByTherapist[it.therapist_id] ??= []).push({ s, e, item: it.id });
+  }
+
+  const blocksRes = await supabase
+    .from('therapist_block')
+    .select('employee_id, start_at, end_at')
+    .eq('block_date', SD);
+  const blockWindowsByTherapist: Record<string, { s: number; e: number }[]> = {};
+  for (const b of blocksRes.data ?? []) {
+    (blockWindowsByTherapist[b.employee_id] ??= []).push({ s: Date.parse(b.start_at), e: Date.parse(b.end_at) });
+  }
+
+  const lineupRes = await supabase
+    .from('daily_lineup')
+    .select('ordered_ids')
+    .eq('branch_id', order.branch_id)
+    .eq('lineup_date', SD)
+    .maybeSingle();
+  const lineupRank: Record<string, number> = {};
+  (lineupRes.data?.ordered_ids ?? []).forEach((id, i) => { lineupRank[id] = i; });
+
   const allowedBranchIds = await getAllowedBranchIds();
 
   // Current open cash shift per accessible branch — shown read-only in the folio
@@ -229,6 +281,11 @@ async function fetchData(id: string) {
     busyTherapistIds,
     busyTherapistEndMap,
     busyResourceIds,
+    shiftWindowsByTherapist,
+    bookingWindowsByTherapist,
+    blockWindowsByTherapist,
+    lineupRank,
+    serviceDate: SD,
     resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null, branchCode: one(r.branch)?.code ?? null })),
     discountClasses: disc.data ?? [],
     paymentMethods: pm.data ?? [],
@@ -270,7 +327,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManage = isManager(await currentSession());
   const result = await fetchData(id);
   if (!result) notFound();
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes, openShifts } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, shiftWindowsByTherapist, bookingWindowsByTherapist, blockWindowsByTherapist, lineupRank, serviceDate, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes, openShifts } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -292,11 +349,30 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const signedAmt = (l: { kind: string; amount_cents: number }) => (l.kind === 'refund' ? -l.amount_cents : l.amount_cents);
   const payLines = orderLines.filter((l) => l.kind === 'payment' || l.kind === 'refund');
   const tipTotal = orderLines.filter((l) => l.kind === 'tip').reduce((s, l) => s + l.amount_cents, 0);
+  // Manual folio adjustments (Add revenue / Adjust charge): kind=revenue lines
+  // with no order_item_id. Net of positive add-revenue and negative adjust-charge
+  // — already folded into total_cents server-side; surfaced as its own Totals line.
+  const adjustmentTotal = orderLines
+    .filter((l) => l.kind === 'revenue' && !l.order_item_id)
+    .reduce((s, l) => s + l.amount_cents, 0);
   const customerLabel = new Map(
     (order.order_customers ?? []).map((c) => [c.id, `#${c.seq_no} · ${c.customer_name}`]),
   );
+  // A service-revenue folio line carries no guest of its own — it's posted from
+  // an order_item. Map each item → its service name + the guest it serves, so a
+  // revenue row can surface both even though they don't live on the line.
+  const itemInfo = new Map(
+    (order.order_items ?? []).map((it) => [it.id, {
+      service: one<{ name: string }>(it.service ?? null)?.name ?? one<{ name: string }>(it.category ?? null)?.name ?? null,
+      guestId: it.order_customer_id ?? null,
+    }]),
+  );
   const folioLines = orderLines.map((l) => {
     const sh = one(l.shift);
+    const item = l.order_item_id ? itemInfo.get(l.order_item_id) ?? null : null;
+    // Guest: prefer the line's own guest (AR payments), else the served guest
+    // inherited from the order_item (service-revenue lines).
+    const guestId = l.order_customer_id ?? item?.guestId ?? null;
     return {
       id: l.id,
       kind: l.kind,
@@ -307,8 +383,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       branch_code: one<{ code: string }>(sh?.branch ?? null)?.code ?? null,
       created_by: one(l.posted_by_staff)?.display_name ?? null,
       created_at: l.posted_at,
-      customer_label: l.order_customer_id ? customerLabel.get(l.order_customer_id) ?? null : null,
+      customer_label: guestId ? customerLabel.get(guestId) ?? null : null,
+      service_name: item?.service ?? null,
       ref: l.payment_ref ?? null,
+      note: l.note ?? null,
+      billing_name: one<{ name: string }>(l.billing ?? null)?.name ?? null,
+      card_no: one<{ card_no: string }>(l.card ?? null)?.card_no ?? null,
+      tx_code: one<{ code: string }>(l.tx_code ?? null)?.code ?? null,
     };
   });
   const customers = (order.order_customers ?? []).map((c) => {
@@ -521,6 +602,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               {tipTotal > 0 && (
                 <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Tips (PAYMAYA)</dt><dd className="font-bold tabular text-primary">+{peso(tipTotal)}</dd></div>
               )}
+              {adjustmentTotal !== 0 && (
+                <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Adjustments</dt><dd className={`font-bold tabular ${adjustmentTotal < 0 ? 'text-destructive' : ''}`}>{adjustmentTotal < 0 ? '-' : '+'}{peso(Math.abs(adjustmentTotal))}</dd></div>
+              )}
               <div className="flex justify-between border-t border-border pt-2"><dt className="font-bold">Total</dt><dd className="font-extrabold tabular text-lg">{peso(order.total_cents)}</dd></div>
               <div className="flex justify-between"><dt className="font-medium text-muted-foreground">Paid</dt><dd className="font-bold tabular">{peso(order.paid_cents)}</dd></div>
               <div className={`flex justify-between ${order.total_cents - order.paid_cents > 0 ? 'text-destructive' : ''}`}><dt className="font-bold">Due</dt><dd className="font-extrabold tabular text-lg">{peso(Math.max(0, order.total_cents - order.paid_cents))}</dd></div>
@@ -555,6 +639,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         busyTherapistIds={busyTherapistIds}
         busyTherapistEndMap={busyTherapistEndMap}
         busyResourceIds={busyResourceIds}
+        shiftWindowsByTherapist={shiftWindowsByTherapist}
+        bookingWindowsByTherapist={bookingWindowsByTherapist}
+        blockWindowsByTherapist={blockWindowsByTherapist}
+        lineupRank={lineupRank}
+        serviceDate={serviceDate}
         resources={resources}
         discountClasses={discountClasses}
         sourceDefaultDiscountId={source?.default_discount_class_id ?? null}

@@ -91,12 +91,9 @@ export function TransactionCodeFormDialog({
   const [paymentMethodId, setPaymentMethodId] = useState(item?.payment_method_id ?? NONE);
   const [debitAccount, setDebitAccount] = useState(item?.debit_account ?? '');
   const [debitSubaccount, setDebitSubaccount] = useState(item?.debit_subaccount ?? '');
-  const [debitBranchId, setDebitBranchId] = useState(item?.debit_branch_id ?? NONE);
+  // Branch override is a free-text Acumatica branch segment (empty = use header).
+  const [debitBranchId, setDebitBranchId] = useState(item?.debit_branch_id ?? '');
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
-  const branchOverrideOptions = [
-    { value: NONE, label: '(use header)' },
-    ...branches.map((b) => ({ value: b.id, label: b.code })),
-  ];
   const paymentMethodOptions = [
     { value: NONE, label: 'None' },
     ...paymentMethods.map((p) => ({ value: p.id, label: p.code })),
@@ -104,7 +101,7 @@ export function TransactionCodeFormDialog({
 
   const [creditAccount, setCreditAccount] = useState(item?.credit_account ?? '');
   const [creditSubaccount, setCreditSubaccount] = useState(item?.credit_subaccount ?? '');
-  const [creditBranchId, setCreditBranchId] = useState(item?.credit_branch_id ?? NONE);
+  const [creditBranchId, setCreditBranchId] = useState(item?.credit_branch_id ?? '');
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -115,10 +112,10 @@ export function TransactionCodeFormDialog({
       payment_method_id: paymentMethodId === NONE ? null : paymentMethodId,
       debit_account: debitAccount,
       debit_subaccount: debitSubaccount,
-      debit_branch_id: debitBranchId === NONE ? null : debitBranchId,
+      debit_branch_id: debitBranchId.trim() || null,
       credit_account: creditAccount,
       credit_subaccount: creditSubaccount,
-      credit_branch_id: creditBranchId === NONE ? null : creditBranchId,
+      credit_branch_id: creditBranchId.trim() || null,
     };
     startTransition(async () => {
       const r = isEdit
@@ -131,8 +128,10 @@ export function TransactionCodeFormDialog({
           setCode('');
           setDebitAccount('');
           setDebitSubaccount('');
+          setDebitBranchId('');
           setCreditAccount('');
           setCreditSubaccount('');
+          setCreditBranchId('');
         }
       } else {
         toast.error(r.error);
@@ -249,19 +248,14 @@ export function TransactionCodeFormDialog({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Branch (override)</Label>
-              <Select
-                items={branchOverrideOptions}
-                value={debitBranchId ?? NONE}
-                onValueChange={(v) => setDebitBranchId(v ?? NONE)}
-              >
-                <SelectTrigger><SelectValue placeholder="(use header)" /></SelectTrigger>
-                <SelectContent>
-                  {branchOverrideOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="tc-dbr" className="font-semibold">Branch (override)</Label>
+              <Input
+                id="tc-dbr"
+                value={debitBranchId}
+                onChange={(e) => setDebitBranchId(e.target.value)}
+                placeholder="(use header)"
+                maxLength={30}
+              />
             </div>
 
             <div className="col-span-3 mt-2">
@@ -291,19 +285,14 @@ export function TransactionCodeFormDialog({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Branch (override)</Label>
-              <Select
-                items={branchOverrideOptions}
-                value={creditBranchId ?? NONE}
-                onValueChange={(v) => setCreditBranchId(v ?? NONE)}
-              >
-                <SelectTrigger><SelectValue placeholder="(use header)" /></SelectTrigger>
-                <SelectContent>
-                  {branchOverrideOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="tc-cbr" className="font-semibold">Branch (override)</Label>
+              <Input
+                id="tc-cbr"
+                value={creditBranchId}
+                onChange={(e) => setCreditBranchId(e.target.value)}
+                placeholder="(use header)"
+                maxLength={30}
+              />
             </div>
           </div>
 

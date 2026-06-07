@@ -58,7 +58,7 @@ function peso(cents: number): string {
 // inline-editable rows, and the read-only rows all line up. The table scrolls
 // horizontally inside its card. Add a column here (+ its header + cell) when
 // surfacing more per-line fields.
-const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_7rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
+const SERVICE_GRID = 'grid grid-cols-[7rem_11rem_5.5rem_6.5rem_6.5rem_14rem_12rem_5.5rem_6.5rem_6rem_5.5rem_5.5rem_3.5rem_auto] items-center gap-x-2';
 
 interface OrderItem {
   id: string;
@@ -125,7 +125,12 @@ interface FolioLineRecord {
   created_by: string | null;
   created_at: string;
   customer_label: string | null;
+  service_name: string | null;
   ref: string | null;
+  note: string | null;
+  billing_name: string | null;
+  card_no: string | null;
+  tx_code: string | null;
 }
 interface Props {
   order: {
@@ -157,6 +162,11 @@ interface Props {
   busyTherapistIds: string[];
   busyTherapistEndMap: Record<string, string>;
   busyResourceIds: string[];
+  shiftWindowsByTherapist: Record<string, { s: number; e: number }[]>;
+  bookingWindowsByTherapist: Record<string, { s: number; e: number; item: string }[]>;
+  blockWindowsByTherapist: Record<string, { s: number; e: number }[]>;
+  lineupRank: Record<string, number>;
+  serviceDate: string;
   resources: ResourceOpt[];
   discountClasses: DiscountOpt[];
   sourceDefaultDiscountId: string | null;
@@ -179,20 +189,18 @@ const GENDER_OPTS = [
   { value: 'M', label: 'Male only' },
 ];
 
-function hm(ts: string | null): string {
-  return ts ? new Date(ts).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) : '';
-}
 // ISO → short date + time in Manila (folio "created at").
 function dtm(ts: string | null): string {
   return ts ? new Date(ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short' }) : '';
 }
-// One folio posting row: branch / shift / method, with created-by + created-at underneath.
+// One folio posting row. Title line = branch / method / bill-to / card / guest /
+// note; sub-line = who posted it / shift / when. Amount sits on the right.
 function FolioRow({ l }: { l: FolioLineRecord }) {
   return (
     <div className="flex items-start justify-between gap-2 py-2 text-sm">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate font-medium text-foreground">{[l.branch_code, l.shift_label, l.method_name, l.customer_label].filter(Boolean).join(' / ') || l.kind}</span>
-        <span className="text-xs text-muted-foreground">{[l.created_by, dtm(l.created_at), l.ref].filter(Boolean).join(' - ') || '-'}</span>
+        <span className="truncate font-medium text-foreground">{[l.branch_code, l.method_name, l.billing_name, l.card_no, l.customer_label, l.service_name, l.note].filter(Boolean).join(' - ') || l.kind}</span>
+        <span className="text-xs text-muted-foreground">{[l.created_by, l.shift_label, dtm(l.created_at), l.tx_code].filter(Boolean).join(' - ') || '-'}</span>
       </div>
       <span className={'shrink-0 font-bold tabular ' + (l.kind === 'refund' || l.amount_cents < 0 ? 'text-destructive' : '')}>{l.kind === 'refund' ? '-' : ''}{peso(l.amount_cents)}</span>
     </div>
@@ -203,18 +211,10 @@ function toHHmm(ts: string | null): string {
   return ts ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts)) : '';
 }
 
-// Time window for a service line: actual once finished, else the projected end
-// while it's running. The bed is occupied for prep + service, so the projected
-// end folds prep in. Nothing before it's started.
-function timeWindow(actualStart: string | null, actualEnd: string | null, durationMin: number | null, prepMin: number): string | null {
-  if (!actualStart) return null;
-  if (actualEnd) return `${hm(actualStart)}–${hm(actualEnd)}`;
-  const occ = (durationMin ?? 0) + (prepMin ?? 0);
-  if (occ > 0) {
-    const end = new Date(new Date(actualStart).getTime() + occ * 60000).toISOString();
-    return `${hm(actualStart)}–~${hm(end)}`;
-  }
-  return hm(actualStart);
+// Plan end = booked start + duration, as HH:mm (for the order line's Plan row).
+function planEndHHmm(start: string | null, durationMin: number | null): string {
+  if (!start || durationMin == null) return '—';
+  return toHHmm(new Date(new Date(start).getTime() + durationMin * 60000).toISOString());
 }
 
 // A service-line action button with a colour + a hover tooltip explaining it.
@@ -282,6 +282,11 @@ export function OrderWorkspace({
   busyTherapistIds,
   busyTherapistEndMap,
   busyResourceIds,
+  shiftWindowsByTherapist,
+  bookingWindowsByTherapist,
+  blockWindowsByTherapist,
+  lineupRank,
+  serviceDate,
   resources,
   discountClasses,
   sourceDefaultDiscountId,
@@ -635,13 +640,10 @@ export function OrderWorkspace({
   }
 
   function doFinishItem(it: OrderItem) {
-    // Warn if finishing before the booked duration has elapsed — a 60/90-min
-    // service (plus prep) shouldn't realistically finish sooner.
-    if (it.actual_start && it.duration_minutes) {
-      const elapsedMin = (Date.now() - new Date(it.actual_start).getTime()) / 60000;
-      if (elapsedMin < it.duration_minutes) { setConfirmFinish(it); return; }
-    }
-    finishItemNow(it.id);
+    // Always confirm before finishing — revenue is recognised at finish now, so
+    // the desk verifies the discount / final amount first (the dialog also flags
+    // an early finish when the booked duration hasn't elapsed).
+    setConfirmFinish(it);
   }
 
   function doSkipItem(id: string) {
@@ -832,7 +834,8 @@ export function OrderWorkspace({
                       <span>Category</span>
                       <span>Service</span>
                       <span>Duration</span>
-                      <span>Start</span>
+                      <span>Plan</span>
+                      <span>Act</span>
                       <span>Therapist</span>
                       <span>{dispatch ? 'Room' : 'Station'}</span>
                       <span className="text-right">Price</span>
@@ -866,6 +869,12 @@ export function OrderWorkspace({
                                 busyTherapistIds={busyTherapistIds}
                                 busyTherapistEndMap={busyTherapistEndMap}
                                 busyResourceIds={busyResourceIds}
+                                shiftWindows={shiftWindowsByTherapist}
+                                bookingWindows={bookingWindowsByTherapist}
+                                blockWindows={blockWindowsByTherapist}
+                                lineupRank={lineupRank}
+                                serviceDate={serviceDate}
+                                lineItemId={it.id}
                                 guestGender={guestGenderOf(c)}
                                 sourceDiscountLocked={sourceDiscountLocked}
                                 defaultDiscountId={defaultDiscountId}
@@ -912,7 +921,12 @@ export function OrderWorkspace({
                             <span className="text-xs font-medium text-muted-foreground truncate">
                               {it.duration_minutes ? `${it.duration_minutes} min` : '—'}
                             </span>
-                            <span className="text-xs font-medium text-muted-foreground tabular truncate">{toHHmm(it.actual_start ?? it.scheduled_start) || '—'}</span>
+                            <span className="text-xs font-medium text-muted-foreground tabular truncate" title="Planned (booked) start-end">
+                              {toHHmm(it.scheduled_start) || '—'}-{planEndHHmm(it.scheduled_start, it.duration_minutes)}
+                            </span>
+                            <span className={`text-xs font-medium text-muted-foreground tabular truncate ${it.actual_start ? '' : 'opacity-60'}`} title="Actual start-end (real button press)">
+                              {toHHmm(it.actual_start) || '—'}-{toHHmm(it.actual_end) || '—'}
+                            </span>
                             <span className="font-medium text-muted-foreground truncate">
                               {it.therapist_name ?? 'Unassigned'}
                             </span>
@@ -991,6 +1005,11 @@ export function OrderWorkspace({
                           busyTherapistIds={busyTherapistIds}
                           busyTherapistEndMap={busyTherapistEndMap}
                           busyResourceIds={busyResourceIds}
+                          shiftWindows={shiftWindowsByTherapist}
+                          bookingWindows={bookingWindowsByTherapist}
+                          blockWindows={blockWindowsByTherapist}
+                          lineupRank={lineupRank}
+                          serviceDate={serviceDate}
                           guestGender={guestGenderOf(c)}
                           sourceDiscountLocked={sourceDiscountLocked}
                           defaultDiscountId={defaultDiscountId}
@@ -1194,23 +1213,30 @@ export function OrderWorkspace({
       <AlertDialog open={!!confirmFinish} onOpenChange={(o) => { if (!o) setConfirmFinish(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Finish early?</AlertDialogTitle>
+            <AlertDialogTitle>Finish {confirmFinish?.service_name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              <strong>{confirmFinish?.service_name}</strong> has run only{' '}
-              <strong>
-                {confirmFinish?.actual_start
-                  ? Math.max(0, Math.floor((Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000))
-                  : 0} min
-              </strong>{' '}
-              of its <strong>{confirmFinish?.duration_minutes} min</strong> booking. Finish it now anyway?
+              Confirm the discount is correct — this final amount is booked as revenue now.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">List price</span><span className="tabular font-medium">{peso(confirmFinish?.list_price_cents ?? 0)}</span></div>
+            {(confirmFinish?.discount_amount_cents ?? 0) > 0 && (
+              <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular font-medium text-destructive">−{peso(confirmFinish?.discount_amount_cents ?? 0)}</span></div>
+            )}
+            <div className="mt-1 flex justify-between border-t border-border pt-1 font-bold"><span>Revenue to book</span><span className="tabular">{peso(confirmFinish?.final_amount_cents ?? 0)}</span></div>
+          </div>
+          {confirmFinish?.actual_start && confirmFinish?.duration_minutes
+            && (Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000 < confirmFinish.duration_minutes && (
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+              Finishing early — only {Math.max(0, Math.floor((Date.now() - new Date(confirmFinish.actual_start).getTime()) / 60000))} of {confirmFinish.duration_minutes} min run.
+            </p>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep running</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => { if (confirmFinish) finishItemNow(confirmFinish.id); setConfirmFinish(null); }}
             >
-              Finish anyway
+              Finish &amp; book {peso(confirmFinish?.final_amount_cents ?? 0)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

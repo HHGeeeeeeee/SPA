@@ -12,6 +12,7 @@ import {
   Building2,
   Database,
   CircleAlert,
+  BarChart3,
   LucideIcon,
 } from 'lucide-react';
 
@@ -81,14 +82,14 @@ export const mainNavItems: NavItem[] = [
       // Confirm) is off the nav. What's left is the periodic back-office cadence.
       // Periodic trio — scheduled rhythm rather than daily must-do: Tip and
       // Commission settle semi-monthly, AR cadence depends on each billing
-      // destination's credit terms. Rendered in a muted "Periodic" segment so
-      // it visually de-emphasises versus the Daily Close cluster above. All
-      // three are manager+ surfaces (back-office settlements).
-      { label: 'Tip Settlement', href: '/reconciliation/tips', section: 'Periodic', managerOnly: true },
-      { label: 'Commission Settlement', href: '/reconciliation/commission', section: 'Periodic', managerOnly: true },
-      { label: 'Accounts Receivable', href: '/reconciliation/soa', section: 'Periodic', managerOnly: true },
+      // destination's credit terms. Left un-sectioned (no header label) so they
+      // render as a plain segment. All three are manager+ surfaces.
+      { label: 'Tip Settlement', href: '/reconciliation/tips', managerOnly: true },
+      { label: 'Commission Settlement', href: '/reconciliation/commission', managerOnly: true },
+      { label: 'Accounts Receivable', href: '/reconciliation/soa', managerOnly: true },
     ],
   },
+  { label: 'Report Builder', href: '/report-builder', icon: BarChart3, managerOnly: true },
   { label: 'Incidents', href: '/incidents', icon: CircleAlert },
   { label: 'Help', href: '/help', icon: BookOpen },
   {

@@ -1,7 +1,8 @@
 import { createServiceClient } from '@/lib/supabase/server';
+import { fetchBoardDialogData } from '@/lib/board-dialog-data';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
-import { ScheduleBoard, type BoardBed, type BoardBlock, type BlockVariant, type BoardDialogData, type BoardStaffShift, type AssignBed, type BoardOccupancy } from '@/components/shift-schedule/schedule-board';
+import { ScheduleBoard, BLOCK_KIND_LABEL, type BoardBed, type BoardBlock, type BlockVariant, type BoardStaffShift, type AssignBed, type BoardOccupancy } from '@/components/shift-schedule/schedule-board';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 
 export const dynamic = 'force-dynamic';
@@ -73,7 +74,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
     supabase
       .from('order_items')
-      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, service_start, slot_start, duration_minutes, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, resource_id, therapist_id, actual_start, actual_end, scheduled_start, slot_start, slot_end, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, service:service_items ( name, prep_before_minutes, cleanup_after_minutes ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted'])
       .not('resource_id', 'is', null),
     // Pull the full roster (with employee identity + position) instead of bare
@@ -104,13 +105,18 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     let variant: BlockVariant;
     let draggable = false;
     if (it.status === 'draft') {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (!sIso) continue; // no planned time → can't place it on the axis
       startMin = place(tsToMin(sIso)); endMin = startMin + dur; variant = 'scheduled'; draggable = true;
     } else {
-      if (!it.actual_start) continue;
-      startMin = place(tsToMin(it.actual_start));
-      endMin = it.actual_end ? place(tsToMin(it.actual_end)) : startMin + dur;
+      // Display the booked block (slot_*), not the real button times: it opens at
+      // the planned start and ends at the trimmed/capped end stamped on finish —
+      // so a late Start/End press never shifts the block.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      startMin = place(tsToMin(sIso));
+      const eIso = it.slot_end ?? it.actual_end;
+      endMin = eIso ? place(tsToMin(eIso)) : startMin + dur;
       // Finished / interrupted lines render as the greyed "completed" block (they
       // still hold the bed through the cleanup buffer); only a live one is in_service.
       variant = it.status === 'in_service' ? 'in_service' : 'completed';
@@ -128,6 +134,9 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
       variant, draggable, orderId: ord.id,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
+      listPriceCents: it.list_price_cents ?? null,
+      discountCents: it.discount_amount_cents ?? null,
+      finalAmountCents: it.final_amount_cents ?? null,
       therapistId: it.therapist_id ?? null,
       // On a bed already; red only when it still lacks a therapist.
       needsAssignment: it.status === 'draft' && !it.therapist_id,
@@ -207,19 +216,22 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
     for (const it of rows ?? []) {
       const ord = one(it.order);
       if (!ord || !brSet.has(ord.branch_id) || ord.service_date !== day || ord.status === 'void') continue;
-      const r = it as { status: string; resource_id?: string | null; therapist_id?: string | null; scheduled_start?: string | null; service_start?: string | null; slot_start?: string | null; actual_start?: string | null; actual_end?: string | null; duration_minutes?: number | null };
+      const r = it as { status: string; resource_id?: string | null; therapist_id?: string | null; scheduled_start?: string | null; slot_start?: string | null; slot_end?: string | null; actual_start?: string | null; actual_end?: string | null; duration_minutes?: number | null };
       const dur = r.duration_minutes ?? 60;
       let s: number;
       let occEnd: number;
       if (r.status === 'draft') {
-        const sIso = r.scheduled_start ?? r.service_start ?? r.slot_start;
+        const sIso = r.scheduled_start ?? r.slot_start;
         if (!sIso) continue; // untimed → can't attribute to an hour
         s = place(tsToMin(sIso)); occEnd = s + dur;
       } else {
-        if (!r.actual_start) continue;
-        s = place(tsToMin(r.actual_start));
-        occEnd = r.actual_end ? place(tsToMin(r.actual_end)) : s + dur;
-        const actEnd = r.actual_end ? place(tsToMin(r.actual_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
+        // Delivered window = the booked block (slot_*), capped on finish — the
+        // truest "service hour" since button presses can lag the real service.
+        const sIso = r.slot_start ?? r.actual_start ?? r.scheduled_start;
+        if (!sIso) continue;
+        s = place(tsToMin(sIso));
+        occEnd = r.slot_end ? place(tsToMin(r.slot_end)) : s + dur;
+        const actEnd = r.slot_end ? place(tsToMin(r.slot_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
         actual.push({ s, e: actEnd });
       }
       if (r.resource_id) bedBusy.push({ s, e: occEnd });
@@ -250,7 +262,7 @@ async function fetchStationBoard(branchIds: string[], day: string): Promise<{ be
 // while bookings with no therapist yet ride the left "Unallocated" rail. Drag a
 // rail card onto a person to pre-assign them. Mirrors fetchStationBoard but keyed
 // on therapist_id instead of resource_id.
-async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[]; occupancy: BoardOccupancy }> {
+async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ beds: BoardBed[]; blocks: BoardBlock[]; windowStartMin: number; windowEndMin: number; bedCount: number; staffShifts: BoardStaffShift[]; assignBeds: AssignBed[]; occupancy: BoardOccupancy; lineup: string[] }> {
   const supabase = createServiceClient();
   const branchId = branchIds[0];
   const brSet = new Set(branchIds);
@@ -278,7 +290,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   // Therapist capacity pools the whole share group (each branch sees the full pool).
   const grpBranchSet = new Set(shareGroupBranchIds(brCodes ?? [], branchIds));
 
-  const [empRes, shiftRes, itemsRes, bedsRes] = await Promise.all([
+  const [empRes, shiftRes, itemsRes, bedsRes, blockRes, lineupRes] = await Promise.all([
     // Rows = every active service therapist whose HOME branch is in the filter,
     // rostered today or not ("these are your branch's people"). Off-shift ones
     // still get a row; the board's "Available only" toggle hides the empties.
@@ -295,11 +307,16 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
-      .select('id, status, therapist_id, resource_id, scheduled_start, service_start, slot_start, actual_start, actual_end, duration_minutes, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
+      .select('id, status, therapist_id, resource_id, scheduled_start, slot_start, slot_end, actual_start, actual_end, duration_minutes, list_price_cents, discount_amount_cents, final_amount_cents, external_room_no, service:service_items ( name, allowed_resource_types, service_category_id ), category:service_categories ( name, required_resource_type ), therapist:employees!order_items_therapist_id_fkey ( name ), guest:order_customers ( customer_name, seq_no ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( id, order_no, branch_id, service_date, status, service_location_type, total_cents, paid_cents, order_customers ( id ) )')
       .in('status', ['draft', 'in_service', 'service_completed', 'interrupted']),
     // Every active station in the share group — candidates for the People
     // popover's "Assign bed" picker (busy windows are derived from itemsRes below).
     supabase.from('resources').select('id, resource_name, resource_type, location_zone, branch_id').in('branch_id', branchIds).eq('status', 'active').order('resource_name'),
+    // Today's therapist absence blocks (late / stepped out / early leave) — drawn
+    // on each person's row and subtracted from the "available" list.
+    supabase.from('therapist_block').select('id, employee_id, start_at, end_at, reason, block_kind').eq('block_date', day),
+    // The desk's manual line-up order for the primary branch (display-only).
+    supabase.from('daily_lineup').select('ordered_ids').eq('branch_id', branchId).eq('lineup_date', day).maybeSingle(),
   ]);
 
   // Home-branch service therapists become the rows.
@@ -363,12 +380,16 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     let variant: BlockVariant;
     let untimed = false;
     if (it.status === 'in_service' || it.status === 'service_completed' || it.status === 'interrupted') {
-      if (!it.actual_start) continue;
-      startMin = place(tsToMin(it.actual_start));
-      endMin = it.actual_end ? place(tsToMin(it.actual_end)) : startMin + dur;
+      // Booked block (slot_*), not the real button times — a late Start/End press
+      // doesn't shift the displayed block.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      startMin = place(tsToMin(sIso));
+      const eIso = it.slot_end ?? it.actual_end;
+      endMin = eIso ? place(tsToMin(eIso)) : startMin + dur;
       variant = it.status === 'in_service' ? 'in_service' : 'completed';
     } else {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (sIso) { startMin = place(tsToMin(sIso)); } else { startMin = windowStartMin; untimed = true; }
       endMin = startMin + dur;
       variant = 'scheduled';
@@ -419,6 +440,9 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
       orderId: ord.id, therapistId, untimed,
       owing: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0) !== 0,
       balanceCents: (ord.total_cents ?? 0) - (ord.paid_cents ?? 0),
+      listPriceCents: it.list_price_cents ?? null,
+      discountCents: it.discount_amount_cents ?? null,
+      finalAmountCents: it.final_amount_cents ?? null,
       bedUnassigned, allowedResourceTypes,
       // Red "needs assignment" when a not-yet-started booking lacks a therapist
       // or (on-site) a bed.
@@ -426,7 +450,26 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     });
   }
 
+  // Absence blocks → a non-draggable 'blocked' block on the therapist's row.
+  // Only for therapists that have a row (home-branch service staff on the board).
+  for (const bl of blockRes.data ?? []) {
+    if (!rowsById.has(bl.employee_id)) continue;
+    const startMin = place(tsToMin(bl.start_at));
+    const endMin = place(tsToMin(bl.end_at));
+    blocks.push({
+      key: `tb:${bl.id}`, kind: 'block', refId: bl.id, bedId: bl.employee_id,
+      line1: bl.reason || 'Absent',
+      line2: bl.block_kind ? BLOCK_KIND_LABEL[bl.block_kind] ?? bl.block_kind : undefined,
+      startMin, endMin, durationMin: endMin - startMin, prepMin: 0, cleanupMin: 0,
+      variant: 'blocked', draggable: false, therapistId: bl.employee_id,
+    });
+  }
+
   const beds = [...rowsById.values()];
+  // Manual line-up order (display-only): the explicitly-ordered therapist ids
+  // that still map to a row today. Anyone not listed is "not in line-up" and the
+  // panel shows them separately — so newly-rostered staff are never lost.
+  const lineup = (lineupRes.data?.ordered_ids ?? []).filter((id) => rowsById.has(id));
   const assignBeds: AssignBed[] = (bedsRes.data ?? []).map((bd) => ({
     id: bd.id, name: bd.resource_name, branch: branchCodeById.get(bd.branch_id) ?? '—',
     type: bd.resource_type, zone: bd.location_zone ?? null, busy: bedBusy.get(bd.id) ?? [],
@@ -461,19 +504,30 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     let s: number;
     let occEnd: number;
     if (it.status === 'draft') {
-      const sIso = it.scheduled_start ?? it.service_start ?? it.slot_start;
+      const sIso = it.scheduled_start ?? it.slot_start;
       if (!sIso) continue;
       s = place(tsToMin(sIso)); occEnd = s + dur;
     } else {
-      if (!it.actual_start) continue;
-      s = place(tsToMin(it.actual_start));
-      occEnd = it.actual_end ? place(tsToMin(it.actual_end)) : s + dur;
-      const actEnd = it.actual_end ? place(tsToMin(it.actual_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
+      // Delivered window = booked block (slot_*), capped on finish.
+      const sIso = it.slot_start ?? it.actual_start ?? it.scheduled_start;
+      if (!sIso) continue;
+      s = place(tsToMin(sIso));
+      occEnd = it.slot_end ? place(tsToMin(it.slot_end)) : s + dur;
+      const actEnd = it.slot_end ? place(tsToMin(it.slot_end)) : (placedNow != null ? Math.max(s, placedNow) : s + dur);
       occActual.push({ s, e: actEnd });
     }
     if (it.resource_id) occBedBusy.push({ s, e: occEnd });
     if (it.therapist_id) occTherBusy.push({ s, e: occEnd });
   }
+  // Absent hours = each absence block's overlap with that therapist's on-shift
+  // band (off-shift absences don't cost capacity), summed across rostered rows.
+  let absentMin = 0;
+  for (const bl of blockRes.data ?? []) {
+    const band = bandByEmp.get(bl.employee_id);
+    if (!band) continue;
+    absentMin += overlap(place(tsToMin(bl.start_at)), place(tsToMin(bl.end_at)), band.start, band.end);
+  }
+
   const sg = shareGroupComputable((brHoursAll ?? []).map((b) => b.therapist_share_group ?? null));
   const occupancy = buildOccupancy({
     computable: sg.ok,
@@ -486,34 +540,10 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     therBusy: occTherBusy,
     actual: occActual,
   });
+  occupancy.absentHours = absentMin / 60;
 
-  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds, occupancy };
+  return { beds, blocks, windowStartMin, windowEndMin, bedCount: beds.length, staffShifts, assignBeds, occupancy, lineup };
 }
-// Option lists for the board's click-to-add (reuses NewReservationDialog).
-async function fetchBoardDialogData(): Promise<BoardDialogData> {
-  const supabase = createServiceClient();
-  const allowed = await getAllowedBranchIds();
-  const [br, src, cat, si] = await Promise.all([
-    supabase.from('branches').select('id, code, name, branch_business_units ( business_unit_id )').eq('active', true).order('code'),
-    supabase.from('customer_sources').select('id, code, name, phone_required').eq('active', true).order('code'),
-    supabase.from('service_categories').select('id, code, name, required_resource_type, required_resource_types, service_category_business_units ( business_unit_id )').eq('active', true).order('code'),
-    supabase.from('service_items').select('id, name, service_group, service_category_id, duration_minutes').eq('active', true).order('service_group'),
-  ]);
-  const branches = (br.data ?? []).filter((b) => allowed.has(b.id)).map((b) => ({
-    id: b.id, code: b.code, name: b.name, businessUnitIds: (b.branch_business_units ?? []).map((x) => x.business_unit_id),
-  }));
-  const serviceCategories = (cat.data ?? []).map((c) => ({
-    id: c.id, code: c.code, name: c.name,
-    businessUnitIds: (c.service_category_business_units ?? []).map((x) => x.business_unit_id),
-    requiredResourceType: c.required_resource_type,
-    requiredResourceTypes: c.required_resource_types ?? [],
-  }));
-  const serviceItems = (si.data ?? [])
-    .filter((s) => s.service_group)
-    .map((s) => ({ id: s.id, name: s.name, group: s.service_group as string, categoryId: s.service_category_id as string, durationMinutes: s.duration_minutes ?? null }));
-  return { branches, sources: src.data ?? [], serviceCategories, serviceItems };
-}
-
 function one<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
@@ -613,7 +643,9 @@ async function fetchBranches(branchParam?: string): Promise<{ branches: { id: st
   const list = (data ?? []).filter((b) => allowed.has(b.id));
   const requested = (branchParam ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   const valid = requested.filter((id) => list.some((b) => b.id === id));
-  const branchIds = valid.length ? valid : (list[0] ? [list[0].id] : []);
+  // No explicit ?branch → default to ALL accessible branches selected, not just
+  // the first one, so a multi-branch user lands on the full picture.
+  const branchIds = valid.length ? valid : list.map((b) => b.id);
   return { branches: list, branchIds };
 }
 
@@ -635,6 +667,7 @@ export default async function CalendarPage({
   // The click-to-add dialog data is shared by both boards (People's click-to-add
   // is gated off for now, but the prop is required).
   const boardDialog = (stationBoard || peopleBoard) ? await fetchBoardDialogData() : null;
+
 
   return (
     <div className="flex flex-col gap-6">
@@ -684,6 +717,7 @@ export default async function CalendarPage({
           subjectLabel="Therapist"
           assignBeds={peopleBoard.assignBeds}
           occupancy={peopleBoard.occupancy}
+          lineup={peopleBoard.lineup}
         />
       ) : (
         <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">

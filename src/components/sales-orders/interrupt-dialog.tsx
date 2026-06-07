@@ -110,6 +110,9 @@ export function InterruptDialog({
               placeholder={requireNotes ? 'Required — describe the reason' : 'Optional additional detail'}
             />
           </div>
+          <div className="rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            An interrupted service is excluded from the commission calculation. Settle any remaining accounting directly on the folio afterwards.
+          </div>
         </div>
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={pending}>Cancel</Button>

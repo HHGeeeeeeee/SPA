@@ -92,6 +92,9 @@ interface Props {
   /** Controlled usage (board click): the parent owns open state. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** When set, called with the new order id instead of navigating to the order
+   *  screen — used by surfaces (e.g. /book) where the user can't open that page. */
+  onCreated?: (orderId: string) => void;
 }
 
 let GUEST_SEQ = 1;
@@ -99,9 +102,20 @@ const newGuest = (): GuestRow => ({
   _id: GUEST_SEQ++, name: '', phone: '', gender: ANY, categoryId: NONE, serviceItemId: NONE, duration: DEFAULT_DURATION,
 });
 
+// Compact column label for the dense guest grids; a red asterisk marks the
+// fields enforced on submit (name, phone, category).
+function FieldLabel({ children, required }: { children: React.ReactNode; required?: boolean }) {
+  return (
+    <span className="text-[11px] font-semibold text-muted-foreground">
+      {children}
+      {required && <span className="text-destructive"> *</span>}
+    </span>
+  );
+}
+
 export function CreateOrderDialog({
   dialog, initialBranchId, prefillStartIso, prefillResourceId, prefillTherapistId, prefillLabel,
-  trigger, open: openProp, onOpenChange,
+  trigger, open: openProp, onOpenChange, onCreated,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -176,6 +190,8 @@ export function CreateOrderDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!branchId) { toast.error('Pick a branch'); return; }
+    if (guests.some((g) => !g.name.trim())) { toast.error('Enter a name for every guest'); return; }
+    if (guests.some((g) => !g.phone.trim())) { toast.error('Enter a phone for every guest'); return; }
     if (guests.some((g) => g.categoryId === NONE)) { toast.error('Pick a service category for every guest'); return; }
     const scheduled_start = time ? `${date}T${time}:00+08:00` : null;
     startTransition(async () => {
@@ -200,7 +216,8 @@ export function CreateOrderDialog({
       });
       if (r.ok && r.data) {
         setOpen(false);
-        router.push(`/sales-orders/${r.data.orderId}`);
+        if (onCreated) onCreated(r.data.orderId);
+        else router.push(`/sales-orders/${r.data.orderId}`);
       } else if (!r.ok) {
         toast.error(r.error);
       }
@@ -290,6 +307,11 @@ export function CreateOrderDialog({
                     </div>
 
                     {/* name · phone · gender */}
+                    <div className="grid grid-cols-[1fr_1fr_8rem] gap-2 mb-1">
+                      <FieldLabel required>Name</FieldLabel>
+                      <FieldLabel required>Phone</FieldLabel>
+                      <FieldLabel>Gender</FieldLabel>
+                    </div>
                     <div className="grid grid-cols-[1fr_1fr_8rem] gap-2">
                       <Input placeholder={`Guest ${i + 1}`} value={g.name} onChange={(e) => patchGuest(g._id, { name: e.target.value })} />
                       <Input placeholder="Phone" value={g.phone} onChange={(e) => patchGuest(g._id, { phone: e.target.value })} />
@@ -302,7 +324,12 @@ export function CreateOrderDialog({
                     </div>
 
                     {/* category · service · duration */}
-                    <div className="mt-2 grid grid-cols-[1fr_1fr_8rem] gap-2">
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_8rem] gap-2 mb-1">
+                      <FieldLabel required>Category</FieldLabel>
+                      <FieldLabel>Service</FieldLabel>
+                      <FieldLabel>Duration</FieldLabel>
+                    </div>
+                    <div className="grid grid-cols-[1fr_1fr_8rem] gap-2">
                       <Select items={categoryItems} value={g.categoryId} onValueChange={(v) => v && pickCategory(g._id, v)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>

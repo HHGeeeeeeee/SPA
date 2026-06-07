@@ -293,18 +293,23 @@ export interface UnsettledOrder {
 /** Pre-close pipeline checks across the given branches:
  *  - cancelled (void) orders that still carry a non-zero due (total ≠ paid);
  *  - orders with a non-zero due whose SO has NO in-service line right now
- *    (owe money but nothing's being served — they should be settled). */
-export async function loadRemittanceChecks(branchIds: string[]): Promise<{ cancelledWithDue: UnsettledOrder[]; dueNotInService: UnsettledOrder[] }> {
+ *    (owe money but nothing's being served — they should be settled).
+ *  `cutoffDate` is the shift's remittance (business) date: only orders dated on
+ *  or before it are checked, so closing a shift late doesn't get blocked by
+ *  future-dated orders that belong to a later shift. */
+export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: string): Promise<{ cancelledWithDue: UnsettledOrder[]; dueNotInService: UnsettledOrder[] }> {
   if (branchIds.length === 0) return { cancelledWithDue: [], dueNotInService: [] };
   const supabase = await createAuditedClient();
   const { data: brs } = await supabase.from('branches').select('id, code').in('id', branchIds);
   const codeById = new Map((brs ?? []).map((b) => [b.id, b.code]));
-  const { data: orders } = await supabase
+  let q = supabase
     .from('orders')
     .select('id, order_no, status, total_cents, paid_cents, branch_id, order_items ( status )')
     .in('branch_id', branchIds)
     .is('deleted_at', null)
     .neq('status', 'closed');
+  if (cutoffDate) q = q.lte('service_date', cutoffDate);
+  const { data: orders } = await q;
 
   const cancelledWithDue: UnsettledOrder[] = [];
   const dueNotInService: UnsettledOrder[] = [];

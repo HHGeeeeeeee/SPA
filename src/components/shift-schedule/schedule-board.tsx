@@ -781,7 +781,13 @@ export function ScheduleBoard({
             for (const b of trows) { const z = b.zone ?? ''; if (!byZone.has(z)) byZone.set(z, []); byZone.get(z)!.push(b); }
             zones = [...byZone.keys()].sort().map((zone) => ({ zone, count: byZone.get(zone)!.length, rows: byZone.get(zone)! }));
           } else {
-            zones = [{ zone: '', count: trows.length, rows: trows }];
+            // Person axis: order each position group by shift start (early → mid
+            // → late), off-shift rows (no band today) last, then name. Mirrors the
+            // AM/Mid/PM reading of the roster instead of raw employee order.
+            const sorted = trows.slice().sort((a, b) =>
+              (a.shiftStartMin ?? Infinity) - (b.shiftStartMin ?? Infinity)
+              || a.name.localeCompare(b.name));
+            zones = [{ zone: '', count: sorted.length, rows: sorted }];
           }
           return { type, label: groupLabel(type), Icon: groupIcon(type), count: trows.length, zones };
         }),

@@ -613,7 +613,9 @@ async function fetchBranches(branchParam?: string): Promise<{ branches: { id: st
   const list = (data ?? []).filter((b) => allowed.has(b.id));
   const requested = (branchParam ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   const valid = requested.filter((id) => list.some((b) => b.id === id));
-  const branchIds = valid.length ? valid : (list[0] ? [list[0].id] : []);
+  // No explicit ?branch → default to ALL accessible branches selected, not just
+  // the first one, so a multi-branch user lands on the full picture.
+  const branchIds = valid.length ? valid : list.map((b) => b.id);
   return { branches: list, branchIds };
 }
 

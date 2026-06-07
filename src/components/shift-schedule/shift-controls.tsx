@@ -98,8 +98,8 @@ export function ShiftControls({ branches, branchId, selected, day, view, dialog 
           via the topbar portal slot. */}
       <TopBarPortal>
         {/* Multi-select branch picker — tick which branches the board shows.
-            Defaults to just the selected branch; add more to see them together
-            (grouped by Branch). At least one stays selected. */}
+            Defaults to ALL accessible branches; untick to narrow (grouped by
+            Branch). At least one stays selected. */}
         <div className="relative">
           <button
             type="button"

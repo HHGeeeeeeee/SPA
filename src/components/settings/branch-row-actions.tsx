@@ -27,7 +27,7 @@ import { setBranchActive } from '@/app/(dashboard)/settings/branches/actions';
 import { BranchFormDialog } from './branch-form-dialog';
 
 interface Props {
-  branch: { id: string; code: string; name: string; business_unit_ids: string[]; open_time: string | null; close_time: string | null; therapist_share_group: string | null; commission_policy_id: string | null; commission_rate_overrides: { commission_class_id: string; rate: number }[]; active: boolean };
+  branch: { id: string; code: string; name: string; business_unit_ids: string[]; open_time: string | null; close_time: string | null; therapist_share_group: string | null; commission_policy_id: string | null; commission_rate_overrides: { commission_class_id: string; rate: number }[]; has_kiosk_passcode?: boolean; active: boolean };
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: { id: string; class_code: string; name: string; commission_rate: number }[];
@@ -87,7 +87,7 @@ export function BranchRowActions({ branch, businessUnits, commissionPolicies, co
 
       <BranchFormDialog
         mode="edit"
-        branch={{ id: branch.id, code: branch.code, name: branch.name, business_unit_ids: branch.business_unit_ids, open_time: branch.open_time, close_time: branch.close_time, therapist_share_group: branch.therapist_share_group, commission_policy_id: branch.commission_policy_id, commission_rate_overrides: branch.commission_rate_overrides }}
+        branch={{ id: branch.id, code: branch.code, name: branch.name, business_unit_ids: branch.business_unit_ids, open_time: branch.open_time, close_time: branch.close_time, therapist_share_group: branch.therapist_share_group, commission_policy_id: branch.commission_policy_id, commission_rate_overrides: branch.commission_rate_overrides, has_kiosk_passcode: branch.has_kiosk_passcode }}
         businessUnits={businessUnits}
         commissionPolicies={commissionPolicies}
         commissionClasses={commissionClasses}

@@ -30,7 +30,7 @@ const NONE = '__none__';
 interface CommissionClass { id: string; class_code: string; name: string; commission_rate: number }
 interface BranchFormDialogProps {
   mode?: 'create' | 'edit';
-  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[] };
+  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[]; has_kiosk_passcode?: boolean };
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: CommissionClass[];
@@ -62,6 +62,7 @@ export function BranchFormDialog({
   const [openTime, setOpenTime] = useState(branch?.open_time?.slice(0, 5) ?? '10:00');
   const [closeTime, setCloseTime] = useState(branch?.close_time?.slice(0, 5) ?? '02:00');
   const [shareGroup, setShareGroup] = useState(branch?.therapist_share_group ?? '');
+  const [kioskPasscode, setKioskPasscode] = useState('');
   const [policyId, setPolicyId] = useState(branch?.commission_policy_id ?? NONE);
   // Per-class rate overrides for this branch: classId → percent string ('' = use global).
   const [rates, setRates] = useState<Record<string, string>>(
@@ -91,9 +92,10 @@ export function BranchFormDialog({
         .filter((c) => (rates[c.id] ?? '').trim() !== '')
         .map((c) => ({ commission_class_id: c.id, rate: Math.max(0, Math.min(1, (Number(rates[c.id]) || 0) / 100)) }));
       const therapist_share_group = shareGroup.trim() || null;
+      const kiosk_passcode = kioskPasscode.trim() || undefined;
       const result = isEdit
-        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides })
-        : await createBranch({ code, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides });
+        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides, kiosk_passcode })
+        : await createBranch({ code, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides, kiosk_passcode });
       if (result.ok) {
         toast.success(isEdit ? 'Branch updated' : 'Branch created');
         setOpen(false);
@@ -102,6 +104,7 @@ export function BranchFormDialog({
           setName('');
           setUnitIds([]);
           setShareGroup('');
+          setKioskPasscode('');
         }
       } else {
         toast.error(result.error);
@@ -222,6 +225,25 @@ export function BranchFormDialog({
                 Branches with the same label pool their therapists — they show up in
                 each other&apos;s Calendar and can be borrowed on orders. Leave
                 blank for no sharing.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="branch-kiosk-passcode" className="font-semibold">Kiosk passcode</Label>
+              <Input
+                id="branch-kiosk-passcode"
+                type="password"
+                value={kioskPasscode}
+                onChange={(e) => setKioskPasscode(e.target.value)}
+                placeholder={isEdit && branch?.has_kiosk_passcode ? '•••••• (set — leave blank to keep)' : 'Set a passcode to enable the kiosk'}
+                autoComplete="new-password"
+                minLength={4}
+                maxLength={60}
+              />
+              <p className="text-xs font-medium text-muted-foreground">
+                Staff enter this once on the tablet to start the guest intake kiosk
+                (<span className="font-mono">/kiosk</span>) for this branch. Min 4 characters.
+                {isEdit ? ' Leave blank to keep the current passcode.' : ''}
               </p>
             </div>
 

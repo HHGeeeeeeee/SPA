@@ -210,6 +210,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           id: string
+          kiosk_passcode_hash: string | null
           name: string
           open_time: string
           therapist_share_group: string | null
@@ -224,6 +225,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           id?: string
+          kiosk_passcode_hash?: string | null
           name: string
           open_time?: string
           therapist_share_group?: string | null
@@ -238,6 +240,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           id?: string
+          kiosk_passcode_hash?: string | null
           name?: string
           open_time?: string
           therapist_share_group?: string | null
@@ -250,6 +253,113 @@ export type Database = {
             columns: ["commission_policy_id"]
             isOneToOne: false
             referencedRelation: "commission_policies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      intake_consent: {
+        Row: {
+          age: number | null
+          bound_at: string | null
+          bound_by_staff_user_id: string | null
+          branch_id: string
+          consent_text: string
+          created_at: string
+          email: string | null
+          gender: string | null
+          health: Json
+          health_note: string | null
+          id: string
+          language: string
+          name: string
+          order_customer_id: string | null
+          order_id: string | null
+          phone: string | null
+          pressure: string | null
+          service_note: string | null
+          signature_path: string
+          signed_at: string
+          status: string
+          template_version: string
+          updated_at: string
+        }
+        Insert: {
+          age?: number | null
+          bound_at?: string | null
+          bound_by_staff_user_id?: string | null
+          branch_id: string
+          consent_text: string
+          created_at?: string
+          email?: string | null
+          gender?: string | null
+          health?: Json
+          health_note?: string | null
+          id?: string
+          language: string
+          name: string
+          order_customer_id?: string | null
+          order_id?: string | null
+          phone?: string | null
+          pressure?: string | null
+          service_note?: string | null
+          signature_path: string
+          signed_at?: string
+          status?: string
+          template_version?: string
+          updated_at?: string
+        }
+        Update: {
+          age?: number | null
+          bound_at?: string | null
+          bound_by_staff_user_id?: string | null
+          branch_id?: string
+          consent_text?: string
+          created_at?: string
+          email?: string | null
+          gender?: string | null
+          health?: Json
+          health_note?: string | null
+          id?: string
+          language?: string
+          name?: string
+          order_customer_id?: string | null
+          order_id?: string | null
+          phone?: string | null
+          pressure?: string | null
+          service_note?: string | null
+          signature_path?: string
+          signed_at?: string
+          status?: string
+          template_version?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intake_consent_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intake_consent_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intake_consent_order_customer_id_fkey"
+            columns: ["order_customer_id"]
+            isOneToOne: false
+            referencedRelation: "order_customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intake_consent_bound_by_staff_user_id_fkey"
+            columns: ["bound_by_staff_user_id"]
+            isOneToOne: false
+            referencedRelation: "staff_users"
             referencedColumns: ["id"]
           },
         ]

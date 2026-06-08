@@ -4,6 +4,7 @@ import { ChevronLeft, TriangleAlert } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
+import { GuestConsents, type BoundConsentInfo } from '@/components/sales-orders/guest-consents';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
@@ -511,6 +512,29 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // rich timeline UI in the Change History tab.
   const { entries: auditTrail, names: auditNames } = await loadOrderAuditTrail(id);
 
+  // Signed intake/consent forms attached to this order's guest lines, keyed by
+  // order_customer_id for the per-guest consent panel.
+  const boundConsentByGuest: Record<string, BoundConsentInfo> = {};
+  {
+    const sb = createServiceClient();
+    const { data: bc } = await sb
+      .from('intake_consent')
+      .select('id, order_customer_id, name, signed_at, language, pressure')
+      .eq('order_id', id)
+      .eq('status', 'bound');
+    for (const c of bc ?? []) {
+      if (c.order_customer_id) {
+        boundConsentByGuest[c.order_customer_id] = {
+          id: c.id,
+          name: c.name,
+          signed_at: c.signed_at,
+          language: c.language,
+          pressure: c.pressure,
+        };
+      }
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -612,6 +636,22 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </CardContent>
         </Card>
       </div>
+
+      {customers.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-bold">Health questionnaire &amp; consent</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <GuestConsents
+              orderId={order.id}
+              branchId={order.branch_id}
+              guests={customers.map((c) => ({ id: c.id, customer_name: c.customer_name, seq_no: c.seq_no }))}
+              bound={boundConsentByGuest}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <OrderWorkspace
         order={{

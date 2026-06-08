@@ -97,8 +97,11 @@ export async function updateSession(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   const onLogin = path.startsWith('/login');
+  // The kiosk is a public, no-login tablet surface (gated by a per-branch
+  // passcode in an httpOnly cookie, not by Supabase Auth). Let it through.
+  const onKiosk = path.startsWith('/kiosk');
 
-  if (!user && !onLogin) {
+  if (!user && !onLogin && !onKiosk) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);

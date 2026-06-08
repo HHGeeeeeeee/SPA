@@ -24,7 +24,7 @@ async function fetchData() {
     supabase
       .from('branches')
       .select(`
-        id, code, name, active, open_time, close_time, therapist_share_group, commission_policy_id, created_at, updated_at,
+        id, code, name, active, open_time, close_time, therapist_share_group, commission_policy_id, kiosk_passcode_hash, created_at, updated_at,
         branch_business_units ( business_unit_id, business_units ( id, code, name ) )
       `)
       .order('code'),
@@ -122,6 +122,7 @@ export default async function BranchesPage() {
                   therapist_share_group: b.therapist_share_group,
                   commission_policy_id: b.commission_policy_id,
                   commission_rate_overrides: ratesByBranch.get(b.id) ?? [],
+                  has_kiosk_passcode: !!b.kiosk_passcode_hash,
                   active: b.active,
                 };
                 return (

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ShiftRemittancePanel } from '@/components/reconciliation/shift-remittance-panel';
 import { ShiftPostingStatus } from '@/components/reconciliation/shift-posting-status';
 import { ShiftLinesTabs } from '@/components/reconciliation/shift-lines-tabs';
-import { loadShiftDetail, loadRemittanceChecks, type UnsettledOrder } from '../actions';
+import { loadShiftDetail, loadRemittanceChecks, type UnsettledOrder, type OverdueServiceLine } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +47,35 @@ function CheckCard({ title, hint, rows }: { title: string; hint: string; rows: U
             <p className="pt-1 text-xs font-medium text-muted-foreground">{hint}</p>
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Advisory only (never blocks close): service lines started but never finished,
+// already past their planned end. Their revenue hasn't posted; the hard backstop
+// is the next day's first-shift sweep.
+function OverdueCard({ rows }: { rows: OverdueServiceLine[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <Card className="border-amber-500 bg-amber-50/50">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm font-bold text-amber-700">
+          <TriangleAlert className="size-4" />
+          {rows.length} service{rows.length === 1 ? '' : 's'} still running past planned end
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        {rows.map((l) => (
+          <div key={l.itemId} className="flex flex-wrap items-center gap-2 text-sm">
+            <Link href={`/sales-orders/${l.orderId}`} className="font-bold underline underline-offset-2">{l.orderNo}</Link>
+            {l.serviceName ? <span>{l.serviceName}</span> : null}
+            <span className="text-muted-foreground">planned end {dt(l.plannedEndIso)}</span>
+          </div>
+        ))}
+        <p className="pt-1 text-xs font-medium text-amber-700/80">
+          These look finished but End was never pressed — their revenue hasn’t posted yet. Press End on each line, or they’ll be auto-recovered when the next day’s first shift opens.
+        </p>
       </CardContent>
     </Card>
   );
@@ -96,6 +125,8 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
           rows={checks.dueNotInService}
         />
       </div>
+
+      <OverdueCard rows={checks.overdueInService} />
 
       {/* Remittance — per-method table (cash counted inline) + summary + close. */}
       <Card>

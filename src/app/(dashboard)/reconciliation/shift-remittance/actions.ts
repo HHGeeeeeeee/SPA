@@ -8,6 +8,7 @@ import { currentSession, isManager } from '@/lib/auth';
 import { canAccessBranch } from '@/lib/branch-access';
 import { getBranchShiftConfig } from '../cash/actions';
 import { isBusinessDayClosed } from '../end-of-day/actions';
+import { sweepStrandedServices, type StrandedSweepResult } from '../../sales-orders/actions';
 import { postShiftToErp } from '@/lib/shift-erp-posting';
 
 export type ActionResult<T = unknown> = ({ ok: true } & T) | { ok: false; error: string };
@@ -290,15 +291,32 @@ export interface UnsettledOrder {
   paidCents: number;
   status: string;
 }
+export interface OverdueServiceLine {
+  itemId: string;
+  orderId: string;
+  orderNo: string;
+  serviceName: string | null;
+  startedAt: string | null;
+  plannedEndIso: string | null;
+}
+export interface RemittanceChecks {
+  cancelledWithDue: UnsettledOrder[];
+  dueNotInService: UnsettledOrder[];
+  overdueInService: OverdueServiceLine[];
+}
 /** Pre-close pipeline checks across the given branches:
- *  - cancelled (void) orders that still carry a non-zero due (total ≠ paid);
+ *  - cancelled (void) orders that still carry a non-zero due (total ≠ paid)
+ *    — HARD-blocks close (see closeShift);
  *  - orders with a non-zero due whose SO has NO in-service line right now
- *    (owe money but nothing's being served — they should be settled).
+ *    (owe money but nothing's being served — they should be settled) — advisory;
+ *  - service lines still `in_service` past their planned end (started but the
+ *    desk never pressed Finish — they look done but their revenue hasn't
+ *    posted) — advisory; the hard backstop is the day's-first-shift sweep.
  *  `cutoffDate` is the shift's remittance (business) date: only orders dated on
  *  or before it are checked, so closing a shift late doesn't get blocked by
  *  future-dated orders that belong to a later shift. */
-export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: string): Promise<{ cancelledWithDue: UnsettledOrder[]; dueNotInService: UnsettledOrder[] }> {
-  if (branchIds.length === 0) return { cancelledWithDue: [], dueNotInService: [] };
+export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: string): Promise<RemittanceChecks> {
+  if (branchIds.length === 0) return { cancelledWithDue: [], dueNotInService: [], overdueInService: [] };
   const supabase = await createAuditedClient();
   const { data: brs } = await supabase.from('branches').select('id, code').in('id', branchIds);
   const codeById = new Map((brs ?? []).map((b) => [b.id, b.code]));
@@ -324,7 +342,37 @@ export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: str
     const hasInService = (o.order_items ?? []).some((it) => it.status === 'in_service');
     if (!hasInService) dueNotInService.push(row);
   }
-  return { cancelledWithDue, dueNotInService };
+
+  // Overdue in-service lines: started, but already past planned end (actual_start
+  // + duration) and never finished. Lines still inside their window are genuinely
+  // running (a legit shift handover) and are not flagged.
+  let lq = supabase
+    .from('orders')
+    .select('id, order_no, order_items ( id, status, actual_start, duration_minutes, service:service_items ( name ), category:service_categories ( name ) )')
+    .in('branch_id', branchIds)
+    .eq('status', 'in_service')
+    .is('deleted_at', null);
+  if (cutoffDate) lq = lq.lte('service_date', cutoffDate);
+  const { data: liveOrders } = await lq;
+  const nowMs = Date.now();
+  const overdueInService: OverdueServiceLine[] = [];
+  for (const o of liveOrders ?? []) {
+    for (const it of o.order_items ?? []) {
+      if (it.status !== 'in_service' || !it.actual_start) continue;
+      const startMs = Date.parse(it.actual_start);
+      const plannedEndMs = it.duration_minutes != null ? startMs + it.duration_minutes * 60000 : startMs;
+      if (plannedEndMs >= nowMs) continue; // still within its expected window
+      const svc = Array.isArray(it.service) ? it.service[0] : it.service;
+      const cat = Array.isArray(it.category) ? it.category[0] : it.category;
+      overdueInService.push({
+        itemId: it.id, orderId: o.id, orderNo: o.order_no,
+        serviceName: svc?.name ?? cat?.name ?? null,
+        startedAt: it.actual_start,
+        plannedEndIso: new Date(plannedEndMs).toISOString(),
+      });
+    }
+  }
+  return { cancelledWithDue, dueNotInService, overdueInService };
 }
 
 /** The branch's currently-open shift, or null. This is the "home" a posting
@@ -349,7 +397,7 @@ const openSchema = z.object({
 
 /** Open a shift: the cashier on duty opens their drawer before any posting can
  *  land in it. One open shift per branch at a time. */
-export async function openShift(input: unknown): Promise<ActionResult<{ id: string }>> {
+export async function openShift(input: unknown): Promise<ActionResult<{ id: string; sweep: StrandedSweepResult | null }>> {
   const session = await currentSession();
   if (!session) return { ok: false, error: 'Not signed in' };
   const parsed = openSchema.safeParse(input);
@@ -381,11 +429,14 @@ export async function openShift(input: unknown): Promise<ActionResult<{ id: stri
   }
 
   // Opening float = the handover from the last shift closed today (first shift = 0).
+  // No prior shift today (and none open — checked above) ⇒ this is the day's
+  // first shift, the hook for the stranded-service sweep.
   const { data: prev } = await supabase
     .from('shifts').select('closing_count_cents')
     .eq('branch_id', d.branch_id).eq('business_date', d.date).eq('status', 'closed')
     .order('closed_at', { ascending: false }).limit(1).maybeSingle();
   const opening = prev?.closing_count_cents ?? 0;
+  const isFirstOfDay = !prev;
 
   const { data: created, error } = await supabase
     .from('shifts')
@@ -395,8 +446,18 @@ export async function openShift(input: unknown): Promise<ActionResult<{ id: stri
     })
     .select('id').single();
   if (error) return { ok: false, error: error.message };
+
+  // Day's first shift: recover any service lines left running from a prior day
+  // (forgot to press Finish → revenue never posted). Best-effort — a failure
+  // here must never block opening the drawer.
+  let sweep: StrandedSweepResult | null = null;
+  if (isFirstOfDay) {
+    try { sweep = await sweepStrandedServices([d.branch_id], d.date); }
+    catch { sweep = null; }
+  }
+
   revalidatePath('/reconciliation/shift-remittance');
-  return { ok: true, id: created.id };
+  return { ok: true, id: created.id, sweep };
 }
 
 const closeSchema = z.object({
@@ -417,10 +478,20 @@ export async function closeShift(input: unknown): Promise<ActionResult> {
 
   const supabase = await createAuditedClient();
   const { data: shift } = await supabase
-    .from('shifts').select('id, branch_id, status, opening_float_cents').eq('id', d.shift_id).single();
+    .from('shifts').select('id, branch_id, business_date, status, opening_float_cents').eq('id', d.shift_id).single();
   if (!shift) return { ok: false, error: 'Shift not found' };
   if (!(await canAccessBranch(shift.branch_id))) return { ok: false, error: 'No access to this branch' };
   if (shift.status !== 'open') return { ok: false, error: 'This shift is already closed' };
+
+  // Hard pre-close gate: a cancelled (void) order that still carries a balance is
+  // an accounting error — it must be settled or refunded before the drawer closes.
+  // No override. (The due-not-in-service card is advisory only and does NOT block.)
+  const checks = await loadRemittanceChecks([shift.branch_id], shift.business_date);
+  if (checks.cancelledWithDue.length > 0) {
+    const nos = checks.cancelledWithDue.map((o) => o.orderNo).join(', ');
+    const plural = checks.cancelledWithDue.length === 1;
+    return { ok: false, error: `Cancelled order${plural ? '' : 's'} with a balance must be settled or refunded before closing: ${nos}` };
+  }
 
   const expected = await shiftCashExpected(supabase, shift.id, shift.opening_float_cents);
   const actual = Math.round(d.actual_count * 100);

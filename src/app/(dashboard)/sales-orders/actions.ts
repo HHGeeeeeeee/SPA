@@ -1389,6 +1389,109 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   return { ok: true };
 }
 
+export interface StrandedServiceLine {
+  itemId: string;
+  orderId: string;
+  orderNo: string;
+  serviceName: string | null;
+  serviceDate: string;
+  amountCents: number | null;
+}
+export interface StrandedSweepResult {
+  recovered: StrandedServiceLine[];                         // priced → auto-finished + revenue posted
+  needsAttention: (StrandedServiceLine & { reason: string })[]; // couldn't auto-recover — listed for a human
+}
+
+// Recover service lines stranded `in_service` from a PRIOR day: the desk never
+// pressed Finish, so their revenue (recognised at finish) never posted. Called
+// when the day's first shift opens — the only hook guaranteed to run, and the
+// prior day is definitively over so an in-service line there is unambiguously a
+// forgotten Finish (no false positives, no "is this the last shift?" guessing).
+//
+// Priced lines auto-finish at their PLANNED end (actual_start + duration,
+// mirroring finishOrderItem's late-finish cap — never a fabricated "now") and
+// post revenue to the SERVICE day's last shift (not the shift being opened, so
+// the money lands on the day it was earned). Unpriced placeholder lines (no
+// final_amount) can't be auto-posted — zeroing them would hide the loss — so
+// they're returned for manual handling, untouched.
+export async function sweepStrandedServices(branchIds: string[], today: string): Promise<StrandedSweepResult> {
+  const empty: StrandedSweepResult = { recovered: [], needsAttention: [] };
+  if (branchIds.length === 0) return empty;
+  const supabase = await createAuditedClient();
+  const pick = <T,>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null));
+
+  // An order with a running line is itself `in_service` (it only leaves that
+  // state once no line is still draft/in_service). So prior-day strays are
+  // exactly the in_service orders dated before today.
+  const { data: orders } = await supabase
+    .from('orders')
+    .select('id, order_no, branch_id, service_date')
+    .in('branch_id', branchIds)
+    .eq('status', 'in_service')
+    .lt('service_date', today)
+    .is('deleted_at', null);
+  if (!orders || orders.length === 0) return empty;
+  const orderById = new Map(orders.map((o) => [o.id, o]));
+
+  const { data: items } = await supabase
+    .from('order_items')
+    .select('id, order_id, actual_start, duration_minutes, final_amount_cents, resource_id, service:service_items ( name, category:service_categories ( revenue_transaction_code_id ) ), category:service_categories ( name ), resource:resources!order_items_resource_id_fkey ( branch_id )')
+    .in('order_id', orders.map((o) => o.id))
+    .eq('status', 'in_service');
+
+  const recovered: StrandedServiceLine[] = [];
+  const needsAttention: (StrandedServiceLine & { reason: string })[] = [];
+  const touchedOrders = new Set<string>();
+
+  for (const it of items ?? []) {
+    const ord = orderById.get(it.order_id);
+    if (!ord) continue;
+    const svc = pick(it.service);
+    const base: StrandedServiceLine = {
+      itemId: it.id,
+      orderId: it.order_id,
+      orderNo: ord.order_no,
+      serviceName: svc?.name ?? pick(it.category)?.name ?? null,
+      serviceDate: ord.service_date,
+      amountCents: it.final_amount_cents,
+    };
+    // Unpriced placeholder line — can't post a correct amount.
+    if (it.final_amount_cents == null) { needsAttention.push({ ...base, reason: 'no_price' }); continue; }
+    const txCodeId = pick(svc?.category)?.revenue_transaction_code_id ?? null;
+    if (!txCodeId) { needsAttention.push({ ...base, reason: 'no_revenue_code' }); continue; }
+    // Revenue follows the station's branch (cross-branch work), else the order's.
+    const stationBranchId = it.resource_id ? (pick(it.resource)?.branch_id ?? null) : null;
+    const postingBranch = stationBranchId ?? ord.branch_id;
+    // Attribute to the SERVICE day's last shift, not the one being opened.
+    const { data: shift } = await supabase
+      .from('shifts').select('id')
+      .eq('branch_id', postingBranch).eq('business_date', ord.service_date)
+      .order('opened_at', { ascending: false }).limit(1).maybeSingle();
+    if (!shift) { needsAttention.push({ ...base, reason: 'no_shift' }); continue; }
+
+    const startMs = it.actual_start ? Date.parse(it.actual_start) : null;
+    const plannedEndIso = startMs != null && it.duration_minutes != null
+      ? new Date(startMs + it.duration_minutes * 60000).toISOString()
+      : it.actual_start ?? null;
+    const patch: { status: string; actual_end?: string; slot_end?: string; actual_duration_minutes?: number } = { status: 'service_completed' };
+    if (plannedEndIso) { patch.actual_end = plannedEndIso; patch.slot_end = plannedEndIso; }
+    if (it.duration_minutes != null) patch.actual_duration_minutes = it.duration_minutes;
+    const { error } = await supabase.from('order_items').update(patch).eq('id', it.id).eq('status', 'in_service');
+    if (error) { needsAttention.push({ ...base, reason: 'update_failed' }); continue; }
+
+    await postServiceRevenueLine(supabase, {
+      orderId: it.order_id, itemId: it.id, amountCents: it.final_amount_cents,
+      shiftId: shift.id, branchId: postingBranch, txCodeId,
+    });
+    recovered.push(base);
+    touchedOrders.add(it.order_id);
+  }
+
+  // Wrap up each order whose last running line just finished.
+  for (const oid of touchedOrders) await maybeAutoComplete(oid);
+  return { recovered, needsAttention };
+}
+
 // "Ready now" — free a bed before its post-service cleanup buffer has elapsed.
 // A finished line holds its bed for the service's cleanup_after_minutes (the bed
 // auto-frees when that window passes); stamping bed_released_at frees it at once.

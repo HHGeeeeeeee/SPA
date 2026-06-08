@@ -77,8 +77,19 @@ export function ShiftRemittanceList({ items, branches, shiftOptions, today }: Pr
     if (!branchId || !label) return toast.error('Pick a branch and shift');
     start(async () => {
       const r = await openShift({ branch_id: branchId, date: today, label });
-      if (r.ok) { toast.success(`${label} opened`); setOpenDlg(false); router.refresh(); }
-      else toast.error(r.error);
+      if (r.ok) {
+        toast.success(`${label} opened`);
+        // Surface the stranded-service sweep that runs on the day's first open.
+        if (r.sweep && r.sweep.recovered.length > 0) {
+          toast.success(`Auto-recovered ${r.sweep.recovered.length} unfinished service${r.sweep.recovered.length === 1 ? '' : 's'} from a prior day`);
+        }
+        if (r.sweep && r.sweep.needsAttention.length > 0) {
+          const nos = [...new Set(r.sweep.needsAttention.map((l) => l.orderNo))].join(', ');
+          toast.warning(`${r.sweep.needsAttention.length} unfinished service${r.sweep.needsAttention.length === 1 ? '' : 's'} couldn’t be auto-recovered (no price set) — handle manually: ${nos}`, { duration: 10000 });
+        }
+        setOpenDlg(false);
+        router.refresh();
+      } else toast.error(r.error);
     });
   }
 

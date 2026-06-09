@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ShiftRemittancePanel } from '@/components/reconciliation/shift-remittance-panel';
 import { ShiftPostingStatus } from '@/components/reconciliation/shift-posting-status';
 import { ShiftLinesTabs } from '@/components/reconciliation/shift-lines-tabs';
-import { loadShiftDetail, loadRemittanceChecks, type UnsettledOrder, type OverdueServiceLine } from '../actions';
+import { loadShiftDetail, loadRemittanceChecks, loadShiftAttachments, type UnsettledOrder, type OverdueServiceLine } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,7 +85,11 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
   const { shiftId } = await params;
   const d = await loadShiftDetail(shiftId);
   if (!d) notFound();
-  const [session, checks] = await Promise.all([currentSession(), loadRemittanceChecks([d.branchId], d.businessDate)]);
+  const [session, checks, attachments] = await Promise.all([
+    currentSession(),
+    loadRemittanceChecks([d.branchId], d.businessDate),
+    loadShiftAttachments(shiftId),
+  ]);
   const canReopen = isManager(session);
 
   return (
@@ -163,6 +167,7 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
             paymentsExpectedTotalCents={d.paymentsExpectedTotalCents}
             openingFloatCents={d.openingFloatCents}
             firstOfDay={d.firstOfDay}
+            attachments={attachments}
           />
         </CardContent>
       </Card>

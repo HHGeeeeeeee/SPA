@@ -586,3 +586,132 @@ export async function reopenShift(input: unknown): Promise<ActionResult> {
   revalidatePath('/reconciliation/shift-remittance');
   return { ok: true };
 }
+
+// ─── Per-method remittance attachments ──────────────────────────────────────
+// Evidence files (cash drawer photo, card settlement slip/PDF, PAYMAYA batch
+// report) attached to a shift's payment-method rows. Private `shift-attachments`
+// bucket — server-role upload + short-lived signed URLs, mirroring ar-proofs.
+
+const ATTACH_BUCKET = 'shift-attachments';
+const ATTACH_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const ATTACH_OK_TYPES = /^(image\/|application\/pdf$)/i;
+
+export interface ShiftAttachment {
+  id: string;
+  methodCode: string;
+  fileName: string;
+  contentType: string | null;
+  uploadedAt: string;
+  uploadedByName: string | null;
+}
+
+/** All evidence files for a shift, newest first. The panel groups them by
+ *  methodCode onto each payment-method row. */
+export async function loadShiftAttachments(shiftId: string): Promise<ShiftAttachment[]> {
+  const supabase = await createAuditedClient();
+  const { data: shift } = await supabase.from('shifts').select('branch_id').eq('id', shiftId).maybeSingle();
+  if (!shift || !(await canAccessBranch(shift.branch_id))) return [];
+  const { data } = await supabase
+    .from('shift_attachments')
+    .select('id, method_code, file_name, content_type, uploaded_at, uploader:staff_users!shift_attachments_uploaded_by_fkey ( display_name, email )')
+    .eq('shift_id', shiftId)
+    .order('uploaded_at', { ascending: false });
+  return (data ?? []).map((r) => {
+    const up = one(r.uploader);
+    return {
+      id: r.id,
+      methodCode: r.method_code,
+      fileName: r.file_name,
+      contentType: r.content_type,
+      uploadedAt: r.uploaded_at,
+      uploadedByName: up?.display_name ?? up?.email ?? null,
+    };
+  });
+}
+
+/** Upload one evidence file for a (shift, payment method). Allowed whether the
+ *  shift is open or closed — settlement details often land the next day. */
+export async function uploadShiftAttachment(formData: FormData): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!session) return { ok: false, error: 'Not signed in' };
+  const file = formData.get('file');
+  const shiftId = formData.get('shift_id');
+  const methodCode = formData.get('method_code');
+  if (typeof shiftId !== 'string' || typeof methodCode !== 'string') return { ok: false, error: 'Missing shift or method' };
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: 'Choose a file to upload' };
+  if (file.size > ATTACH_MAX_BYTES) return { ok: false, error: 'File is too large (max 10 MB)' };
+  if (!ATTACH_OK_TYPES.test(file.type || '')) return { ok: false, error: 'Only images or PDF files are allowed' };
+
+  const supabase = await createAuditedClient();
+  const { data: shift } = await supabase.from('shifts').select('branch_id').eq('id', shiftId).maybeSingle();
+  if (!shift) return { ok: false, error: 'Shift not found' };
+  if (!(await canAccessBranch(shift.branch_id))) return { ok: false, error: 'No access to this branch' };
+
+  const code = methodCode.toLowerCase();
+  const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+  const path = `${shiftId}/${code}/${Date.now()}.${ext}`;
+  const buf = Buffer.from(await file.arrayBuffer());
+  const { error: upErr } = await supabase.storage
+    .from(ATTACH_BUCKET)
+    .upload(path, buf, { contentType: file.type || 'application/octet-stream', upsert: false });
+  if (upErr) return { ok: false, error: upErr.message };
+
+  const { error } = await supabase.from('shift_attachments').insert({
+    shift_id: shiftId,
+    method_code: code,
+    file_path: path,
+    file_name: file.name.slice(0, 200),
+    content_type: file.type || null,
+    size_bytes: file.size,
+    uploaded_by: session.staffUserId,
+  });
+  if (error) {
+    // Don't orphan the object if the row insert fails.
+    await supabase.storage.from(ATTACH_BUCKET).remove([path]);
+    return { ok: false, error: error.message };
+  }
+  revalidatePath(`/reconciliation/shift-remittance/${shiftId}`);
+  return { ok: true };
+}
+
+/** Short-lived signed URL to view a stored attachment (bucket is private). */
+export async function getShiftAttachmentUrl(id: string): Promise<ActionResult<{ url: string }>> {
+  const session = await currentSession();
+  if (!session) return { ok: false, error: 'Not signed in' };
+  const supabase = await createAuditedClient();
+  const { data: row } = await supabase
+    .from('shift_attachments')
+    .select('file_path, shift:shifts!shift_attachments_shift_id_fkey ( branch_id )')
+    .eq('id', id)
+    .maybeSingle();
+  if (!row) return { ok: false, error: 'Attachment not found' };
+  const branchId = one(row.shift)?.branch_id;
+  if (!branchId || !(await canAccessBranch(branchId))) return { ok: false, error: 'No access' };
+  const { data, error } = await supabase.storage.from(ATTACH_BUCKET).createSignedUrl(row.file_path, 600);
+  if (error || !data) return { ok: false, error: error?.message ?? 'Could not generate link' };
+  return { ok: true, url: data.signedUrl };
+}
+
+/** Remove an attachment. Allowed while the shift is open (anyone with branch
+ *  access — fix a wrong upload); once closed, manager only. */
+export async function deleteShiftAttachment(id: string): Promise<ActionResult> {
+  const session = await currentSession();
+  if (!session) return { ok: false, error: 'Not signed in' };
+  const supabase = await createAuditedClient();
+  const { data: row } = await supabase
+    .from('shift_attachments')
+    .select('file_path, shift_id, shift:shifts!shift_attachments_shift_id_fkey ( branch_id, status )')
+    .eq('id', id)
+    .maybeSingle();
+  if (!row) return { ok: false, error: 'Attachment not found' };
+  const shift = one(row.shift);
+  if (!shift?.branch_id || !(await canAccessBranch(shift.branch_id))) return { ok: false, error: 'No access' };
+  if (shift.status === 'closed' && !isManager(session)) {
+    return { ok: false, error: 'Manager permission required to remove from a closed shift' };
+  }
+  await supabase.storage.from(ATTACH_BUCKET).remove([row.file_path]);
+  const { error } = await supabase.from('shift_attachments').delete().eq('id', id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/reconciliation/shift-remittance/${row.shift_id}`);
+  return { ok: true };
+}

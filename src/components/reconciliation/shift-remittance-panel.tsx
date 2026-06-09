@@ -27,7 +27,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { closeShift, reopenShift, type ShiftMethodRow } from '@/app/(dashboard)/reconciliation/shift-remittance/actions';
+import { closeShift, reopenShift, type ShiftMethodRow, type ShiftAttachment } from '@/app/(dashboard)/reconciliation/shift-remittance/actions';
+import { ShiftMethodAttachments } from './shift-method-attachments';
 
 function peso(c: number | null): string {
   return ((c ?? 0) / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
@@ -48,6 +49,7 @@ interface Props {
   paymentsExpectedTotalCents: number;
   openingFloatCents: number;
   firstOfDay: boolean;
+  attachments: ShiftAttachment[];
 }
 
 // Group the integer part with thousand separators for display, leaving any
@@ -65,10 +67,15 @@ function groupThousands(s: string): string {
 // cash-drawer summary and the close / reopen action — no separate count field.
 export function ShiftRemittancePanel({
   shiftId, label, status, methodRows, cashExpectedCents, closingCountCents, varianceCents, varianceReason,
-  canReopen, revenueByCategory, revenueTotalCents, paymentsExpectedTotalCents, openingFloatCents, firstOfDay,
+  canReopen, revenueByCategory, revenueTotalCents, paymentsExpectedTotalCents, openingFloatCents, firstOfDay, attachments,
 }: Props) {
   const router = useRouter();
   const open = status === 'open';
+  // Evidence files bucketed onto each payment-method row by its (lowercased) code.
+  const attachmentsByMethod = attachments.reduce<Record<string, ShiftAttachment[]>>((acc, a) => {
+    (acc[a.methodCode] ??= []).push(a);
+    return acc;
+  }, {});
   const [actual, setActual] = useState(closingCountCents != null ? String(closingCountCents / 100) : '');
   const [reason, setReason] = useState(varianceReason ?? '');
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -112,6 +119,7 @@ export function ShiftRemittancePanel({
               <TableHead className="text-right">Expected</TableHead>
               <TableHead className="text-right">Declared</TableHead>
               <TableHead className="text-right">Over / Short</TableHead>
+              <TableHead className="text-right">Proof</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -142,6 +150,16 @@ export function ShiftRemittancePanel({
                     ? <span className="text-muted-foreground">—</span>
                     : <span className={`font-bold tabular-nums ${overShort[i] === 0 ? 'text-primary' : 'text-destructive'}`}>{peso(overShort[i])}</span>}
                 </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end">
+                    <ShiftMethodAttachments
+                      shiftId={shiftId}
+                      methodCode={r.code}
+                      methodLabel={r.method}
+                      items={attachmentsByMethod[r.code] ?? []}
+                    />
+                  </div>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -151,6 +169,7 @@ export function ShiftRemittancePanel({
               <TableCell className="text-right font-bold tabular-nums">{peso(expectedTotal)}</TableCell>
               <TableCell className="text-right font-bold tabular-nums">{declaredTotal == null ? '—' : peso(declaredTotal)}</TableCell>
               <TableCell className="text-right font-bold tabular-nums">{overShortTotal == null ? '—' : peso(overShortTotal)}</TableCell>
+              <TableCell />
             </TableRow>
           </TableFooter>
         </Table>

@@ -38,7 +38,9 @@ export function ArmScreen({ branches }: { branches: KioskBranchOpt[] }) {
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <TabletSmartphone className="size-10 text-primary" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/kiosk-logo.png" alt="H Signature" className="h-16 w-auto" />
+          <TabletSmartphone className="size-8 text-primary" />
           <div>
             <h1 className="text-xl font-bold">Set up this tablet</h1>
             <p className="mt-1 text-sm font-medium text-muted-foreground">

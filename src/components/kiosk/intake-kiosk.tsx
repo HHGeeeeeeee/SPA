@@ -50,7 +50,7 @@ function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
           className={`min-w-20 flex-1 rounded-xl border-2 px-4 py-3 text-base font-semibold transition ${
             value === o.value
-              ? 'border-primary bg-primary text-primary-foreground'
+              ? 'border-teal-600 bg-teal-600 text-white'
               : 'border-border bg-background hover:bg-accent'
           }`}
         >
@@ -147,6 +147,8 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
   if (done) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-6 p-8 text-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/kiosk-logo.png" alt="H Signature" className="mb-2 h-16 w-auto" />
         <CheckCircle2 className="size-20 text-green-600" />
         <h1 className="text-3xl font-bold">{t.thankTitle}</h1>
         <p className="max-w-md text-lg font-medium text-muted-foreground">{t.thankMsg}</p>
@@ -164,6 +166,12 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
 
   return (
     <div className="mx-auto w-full max-w-2xl p-5 pb-24">
+      {/* Brand */}
+      <div className="mb-5 flex justify-center pt-2">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/kiosk-logo.png" alt="H Signature" className="h-20 w-auto" />
+      </div>
+
       {/* Header: branch + language switch + exit */}
       <div className="mb-4 flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-muted-foreground">
@@ -203,7 +211,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
             type="button"
             onClick={() => setLocale(l)}
             className={`rounded-full border px-3 py-1 text-sm font-semibold transition ${
-              locale === l ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-accent'
+              locale === l ? 'border-teal-600 bg-teal-600 text-white' : 'border-border hover:bg-accent'
             }`}
           >
             {KIOSK_DICTS[l].nativeName}

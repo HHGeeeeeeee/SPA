@@ -301,12 +301,16 @@ export interface OverdueServiceLine {
 }
 export interface RemittanceChecks {
   cancelledWithDue: UnsettledOrder[];
+  completedWithDue: UnsettledOrder[];
   dueNotInService: UnsettledOrder[];
   overdueInService: OverdueServiceLine[];
 }
 /** Pre-close pipeline checks across the given branches:
  *  - cancelled (void) orders that still carry a non-zero due (total ≠ paid)
  *    — HARD-blocks close (see closeShift);
+ *  - completed orders that still carry a non-zero due (service rendered but the
+ *    customer hasn't fully paid — a `completed` SO flips to `closed` only once
+ *    paid) — HARD-blocks close (see closeShift);
  *  - orders with a non-zero due whose SO has NO in-service line right now
  *    (owe money but nothing's being served — they should be settled) — advisory;
  *  - service lines still `in_service` past their planned end (started but the
@@ -316,7 +320,7 @@ export interface RemittanceChecks {
  *  or before it are checked, so closing a shift late doesn't get blocked by
  *  future-dated orders that belong to a later shift. */
 export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: string): Promise<RemittanceChecks> {
-  if (branchIds.length === 0) return { cancelledWithDue: [], dueNotInService: [], overdueInService: [] };
+  if (branchIds.length === 0) return { cancelledWithDue: [], completedWithDue: [], dueNotInService: [], overdueInService: [] };
   const supabase = await createAuditedClient();
   const { data: brs } = await supabase.from('branches').select('id, code').in('id', branchIds);
   const codeById = new Map((brs ?? []).map((b) => [b.id, b.code]));
@@ -330,6 +334,7 @@ export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: str
   const { data: orders } = await q;
 
   const cancelledWithDue: UnsettledOrder[] = [];
+  const completedWithDue: UnsettledOrder[] = [];
   const dueNotInService: UnsettledOrder[] = [];
   for (const o of orders ?? []) {
     const due = (o.total_cents ?? 0) - (o.paid_cents ?? 0);
@@ -339,6 +344,7 @@ export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: str
       totalCents: o.total_cents ?? 0, paidCents: o.paid_cents ?? 0, status: o.status,
     };
     if (o.status === 'void') { cancelledWithDue.push(row); continue; }
+    if (o.status === 'completed') { completedWithDue.push(row); continue; }
     const hasInService = (o.order_items ?? []).some((it) => it.status === 'in_service');
     if (!hasInService) dueNotInService.push(row);
   }
@@ -372,7 +378,7 @@ export async function loadRemittanceChecks(branchIds: string[], cutoffDate?: str
       });
     }
   }
-  return { cancelledWithDue, dueNotInService, overdueInService };
+  return { cancelledWithDue, completedWithDue, dueNotInService, overdueInService };
 }
 
 /** The branch's currently-open shift, or null. This is the "home" a posting
@@ -485,12 +491,19 @@ export async function closeShift(input: unknown): Promise<ActionResult> {
 
   // Hard pre-close gate: a cancelled (void) order that still carries a balance is
   // an accounting error — it must be settled or refunded before the drawer closes.
-  // No override. (The due-not-in-service card is advisory only and does NOT block.)
+  // A completed order with a balance is service rendered but not fully paid — it
+  // must be collected (or written off) before close. No override on either.
+  // (The due-not-in-service card is advisory only and does NOT block.)
   const checks = await loadRemittanceChecks([shift.branch_id], shift.business_date);
   if (checks.cancelledWithDue.length > 0) {
     const nos = checks.cancelledWithDue.map((o) => o.orderNo).join(', ');
     const plural = checks.cancelledWithDue.length === 1;
     return { ok: false, error: `Cancelled order${plural ? '' : 's'} with a balance must be settled or refunded before closing: ${nos}` };
+  }
+  if (checks.completedWithDue.length > 0) {
+    const nos = checks.completedWithDue.map((o) => o.orderNo).join(', ');
+    const plural = checks.completedWithDue.length === 1;
+    return { ok: false, error: `Completed order${plural ? '' : 's'} with a balance must be collected before closing: ${nos}` };
   }
 
   const expected = await shiftCashExpected(supabase, shift.id, shift.opening_float_cents);

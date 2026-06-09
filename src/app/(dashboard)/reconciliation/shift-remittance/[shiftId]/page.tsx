@@ -120,6 +120,11 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
           rows={checks.cancelledWithDue}
         />
         <CheckCard
+          title={`completed order${checks.completedWithDue.length === 1 ? '' : 's'} with a balance`}
+          hint="Completed orders where the customer hasn't fully paid — collect the balance before closing."
+          rows={checks.completedWithDue}
+        />
+        <CheckCard
           title={`unsettled order${checks.dueNotInService.length === 1 ? '' : 's'} not in service`}
           hint="Orders that owe money but have no service running right now — collect or settle them before closing."
           rows={checks.dueNotInService}

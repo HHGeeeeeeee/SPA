@@ -215,7 +215,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
 
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">{t.title}</h1>
+          <h1 className="text-2xl font-bold text-teal-600">{t.title}</h1>
           <p className="mt-1 font-medium text-muted-foreground">{t.subtitle}</p>
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}

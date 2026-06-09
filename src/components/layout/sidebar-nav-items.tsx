@@ -13,6 +13,7 @@ import {
   Database,
   CircleAlert,
   BarChart3,
+  Scale,
   LucideIcon,
 } from 'lucide-react';
 
@@ -90,6 +91,7 @@ export const mainNavItems: NavItem[] = [
     ],
   },
   { label: 'Report Builder', href: '/report-builder', icon: BarChart3, managerOnly: true },
+  { label: 'System Compare', href: '/system-compare', icon: Scale, managerOnly: true },
   { label: 'Incidents', href: '/incidents', icon: CircleAlert },
   { label: 'Help', href: '/help', icon: BookOpen },
   {

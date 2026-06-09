@@ -4,5 +4,9 @@
 export const dynamic = 'force-dynamic';
 
 export default function KioskLayout({ children }: { children: React.ReactNode }) {
-  return <div className="min-h-screen bg-background text-foreground">{children}</div>;
+  return (
+    <div className="min-h-screen bg-background bg-gradient-to-b from-[#3E6352]/12 via-[#3E6352]/4 to-transparent text-foreground">
+      {children}
+    </div>
+  );
 }

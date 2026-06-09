@@ -48,10 +48,10 @@ function Segmented<T extends string>({
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
-          className={`min-w-20 flex-1 rounded-xl border-2 px-4 py-3 text-base font-semibold transition ${
+          className={`min-w-20 flex-1 rounded-xl border-2 px-4 py-3 text-base font-semibold transition active:scale-[0.98] ${
             value === o.value
-              ? 'border-[#3E6352] bg-[#3E6352] text-white'
-              : 'border-border bg-background hover:bg-accent'
+              ? 'border-[#3E6352] bg-[#3E6352] text-white shadow-md shadow-[#3E6352]/25'
+              : 'border-border bg-background shadow-sm hover:border-[#3E6352]/40 hover:bg-accent'
           }`}
         >
           {o.label}
@@ -152,7 +152,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         <CheckCircle2 className="size-20 text-green-600" />
         <h1 className="text-3xl font-bold">{t.thankTitle}</h1>
         <p className="max-w-md text-lg font-medium text-muted-foreground">{t.thankMsg}</p>
-        <Button size="lg" className="mt-2 h-14 px-10 text-lg" onClick={reset}>
+        <Button size="lg" className="mt-2 h-14 bg-[#3E6352] px-10 text-lg shadow-lg shadow-[#3E6352]/25 hover:bg-[#3E6352]/90" onClick={reset}>
           {t.next}
         </Button>
       </div>
@@ -164,10 +164,14 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
     { value: 'no', label: t.no },
   ] as const;
 
+  // Shared input styling with a brand-green focus ring (overrides the default
+  // ring via tailwind-merge).
+  const fieldCls = 'h-12 text-base focus-visible:border-[#3E6352] focus-visible:ring-[#3E6352]/25';
+
   return (
-    <div className="mx-auto w-full max-w-2xl p-5 pb-24">
-      {/* Header: branch + language switch + exit */}
-      <div className="mb-4 flex items-center justify-between gap-2">
+    <div className="mx-auto w-full max-w-2xl px-4 py-8">
+      {/* Utility bar: branch + staff exit (sits on the tinted page, above the card) */}
+      <div className="mb-3 flex items-center justify-between gap-2 px-1">
         <span className="text-sm font-semibold text-muted-foreground">
           {branchName} <span className="font-mono">({branchCode})</span>
         </span>
@@ -197,6 +201,8 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         </div>
       )}
 
+      {/* Form card — lifts the form off the tinted page for depth */}
+      <div className="rounded-3xl border border-black/[0.06] bg-white p-6 shadow-[0_24px_60px_-28px_rgba(62,99,82,0.55)] sm:p-8">
       {/* Language switch */}
       <div className="mb-5 flex flex-wrap gap-1.5">
         {KIOSK_LOCALES.map((l) => (
@@ -205,7 +211,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
             type="button"
             onClick={() => setLocale(l)}
             className={`rounded-full border px-3 py-1 text-sm font-semibold transition ${
-              locale === l ? 'border-[#3E6352] bg-[#3E6352] text-white' : 'border-border hover:bg-accent'
+              locale === l ? 'border-[#3E6352] bg-[#3E6352] text-white shadow-md shadow-[#3E6352]/25' : 'border-border hover:bg-accent'
             }`}
           >
             {KIOSK_DICTS[l].nativeName}
@@ -213,7 +219,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         ))}
       </div>
 
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-6 flex items-start justify-between gap-4 border-b border-border/70 pb-5">
         <div>
           <h1 className="text-2xl font-bold text-[#3E6352]">{t.title}</h1>
           <p className="mt-1 font-medium text-muted-foreground">{t.subtitle}</p>
@@ -226,7 +232,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         {/* Identity */}
         <div className="flex flex-col gap-2">
           <Label className="text-base font-semibold">{t.name} *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} className="h-12 text-base" maxLength={120} />
+          <Input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} maxLength={120} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -234,13 +240,13 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
             <Label className="text-base font-semibold">
               {t.email} <span className="text-xs font-medium text-muted-foreground">({t.optional})</span>
             </Label>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-12 text-base" maxLength={160} />
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldCls} maxLength={160} />
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-base font-semibold">
               {t.phone} <span className="text-xs font-medium text-muted-foreground">({t.optional})</span>
             </Label>
-            <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="h-12 text-base" maxLength={40} />
+            <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={fieldCls} maxLength={40} />
           </div>
         </div>
 
@@ -256,7 +262,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
               max={149}
               value={age}
               onChange={(e) => setAge(e.target.value)}
-              className="h-12 text-base"
+              className={fieldCls}
             />
           </div>
           <div className="flex flex-col gap-2">
@@ -280,13 +286,13 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
             <Label className="text-base font-semibold">
               {t.nationality} <span className="text-xs font-medium text-muted-foreground">({t.optional})</span>
             </Label>
-            <Input value={nationality} onChange={(e) => setNationality(e.target.value)} className="h-12 text-base" maxLength={80} />
+            <Input value={nationality} onChange={(e) => setNationality(e.target.value)} className={fieldCls} maxLength={80} />
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-base font-semibold">
               {t.hotel} <span className="text-xs font-medium text-muted-foreground">({t.optional})</span>
             </Label>
-            <Input value={hotel} onChange={(e) => setHotel(e.target.value)} className="h-12 text-base" maxLength={120} />
+            <Input value={hotel} onChange={(e) => setHotel(e.target.value)} className={fieldCls} maxLength={120} />
           </div>
         </div>
 
@@ -298,7 +304,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
             value={serviceNote}
             onChange={(e) => setServiceNote(e.target.value)}
             placeholder={t.servicePlaceholder}
-            className="h-12 text-base"
+            className={fieldCls}
             maxLength={500}
           />
         </div>
@@ -318,7 +324,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         </div>
 
         {/* Health declaration */}
-        <div className="flex flex-col gap-3 rounded-xl border border-border p-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-muted/30 p-4 sm:p-5">
           <h2 className="text-lg font-bold">{t.healthTitle}</h2>
           {HEALTH_KEYS.map((k) => (
             <div key={k} className="flex flex-col gap-2 border-b border-border/60 pb-3 last:border-0 last:pb-0">
@@ -338,12 +344,13 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
               placeholder={t.healthNotePlaceholder}
               rows={2}
               maxLength={1000}
+              className="focus-visible:border-[#3E6352] focus-visible:ring-[#3E6352]/25"
             />
           </div>
         </div>
 
         {/* Consent */}
-        <div className="flex flex-col gap-3 rounded-xl border border-border p-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-muted/30 p-4 sm:p-5">
           <h2 className="text-lg font-bold">{t.consentTitle}</h2>
           <p className="text-sm font-medium leading-relaxed text-muted-foreground">{t.consentText}</p>
           <label className="flex cursor-pointer items-start gap-3 rounded-lg p-1">
@@ -365,12 +372,13 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
 
         <Button
           size="lg"
-          className="h-16 text-xl font-bold"
+          className="h-16 bg-[#3E6352] text-xl font-bold shadow-lg shadow-[#3E6352]/25 hover:bg-[#3E6352]/90"
           onClick={handleSubmit}
           disabled={submitting}
         >
           {submitting ? t.submitting : t.submit}
         </Button>
+      </div>
       </div>
     </div>
   );

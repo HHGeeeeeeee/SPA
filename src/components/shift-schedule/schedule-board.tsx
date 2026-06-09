@@ -654,6 +654,128 @@ function GroupHeader({ label, count, collapsed, onToggle, trackWidth, Icon, inde
   );
 }
 
+// ── Mobile read-only agenda ────────────────────────────────────────────────
+// The desktop board is a drag-grid with nested scroll containers (rail + board)
+// that trap touch on phones — you can't even scroll the page. Below `md` we
+// render this instead: one vertically-scrolling, read-only list grouped by the
+// row subject (therapist on the People board, station on Station). No drag, no
+// rail, no nested scroll — just "what's on today" at a glance.
+const AGENDA_STATUS: Record<BlockVariant, { label: string; bar: string; dot: string }> = {
+  pending: { label: 'Pending', bar: 'border-l-amber-400', dot: 'bg-amber-400' },
+  confirmed: { label: 'Confirmed', bar: 'border-l-violet-400', dot: 'bg-violet-400' },
+  scheduled: { label: 'Scheduled', bar: 'border-l-primary', dot: 'bg-primary' },
+  in_service: { label: 'In service', bar: 'border-l-blue-500', dot: 'bg-blue-500' },
+  completed: { label: 'Done', bar: 'border-l-zinc-400', dot: 'bg-zinc-400' },
+  blocked: { label: 'Away', bar: 'border-l-amber-500', dot: 'bg-amber-500' },
+};
+
+function AgendaCard({ block }: { block: BoardBlock }) {
+  const st = AGENDA_STATUS[block.variant];
+  const time = block.untimed ? 'No time yet' : `${hhmm(block.startMin)}–${hhmm(block.endMin)}`;
+  return (
+    <div className={cn('rounded-md border border-border border-l-4 bg-card px-3 py-2', block.needsAssignment ? 'border-l-red-500' : st.bar)}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-bold tabular-nums">{time}</span>
+        <span className="flex items-center gap-1 text-[11px] font-semibold text-muted-foreground">
+          <span className={cn('h-2 w-2 rounded-full', block.needsAssignment ? 'bg-red-500' : st.dot)} />
+          {block.needsAssignment ? 'Needs assignment' : st.label}
+        </span>
+      </div>
+      <div className="mt-1 text-sm font-semibold leading-snug">{block.line1}</div>
+      {block.line2 && <div className="text-xs font-medium text-muted-foreground">{block.line2}</div>}
+      {(block.guest || block.orderNo || block.owing) && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          {block.guest && (
+            <span className="font-semibold text-foreground">
+              {block.guest}{block.pax && block.pax > 1 ? ` ·${block.pax}` : ''}
+            </span>
+          )}
+          {block.orderNo && <span className="tabular-nums">#{block.orderNo.slice(-4)}</span>}
+          {block.owing && <span className="font-bold text-red-600 dark:text-red-400">● {formatPHP(block.balanceCents ?? 0)}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MobileAgenda({ beds, blocks, axis, subjectLabel }: {
+  beds: BoardBed[];
+  blocks: BoardBlock[];
+  axis: 'bed' | 'person';
+  subjectLabel: string;
+}) {
+  // Bucket every block onto its row; a block with no row (no therapist/bed yet,
+  // or one outside today's rows) falls into the Unallocated section so nothing
+  // is silently dropped.
+  const rowIds = new Set(beds.map((b) => b.id));
+  const byRow = new Map<string, BoardBlock[]>();
+  const unalloc: BoardBlock[] = [];
+  for (const b of blocks) {
+    if (b.bedId && rowIds.has(b.bedId)) {
+      const arr = byRow.get(b.bedId) ?? [];
+      arr.push(b);
+      byRow.set(b.bedId, arr);
+    } else {
+      unalloc.push(b);
+    }
+  }
+  // Timed first (by start), untimed last.
+  const sortItems = (arr: BoardBlock[]) =>
+    [...arr].sort((a, b) => (a.untimed ? 1 : 0) - (b.untimed ? 1 : 0) || a.startMin - b.startMin);
+  const earliest = (arr: BoardBlock[]) => arr.find((i) => !i.untimed)?.startMin ?? Infinity;
+  // Show a row when it has any booking, or (People board) when the person is on
+  // shift today — an empty-but-rostered therapist still reads as "free all day".
+  const rows = beds
+    .map((bed) => ({ bed, items: sortItems(byRow.get(bed.id) ?? []) }))
+    .filter((r) => r.items.length > 0 || (axis === 'person' && r.bed.shiftStartMin != null))
+    .sort((a, b) => earliest(a.items) - earliest(b.items) || a.bed.name.localeCompare(b.bed.name));
+
+  const nothing = unalloc.length === 0 && rows.length === 0;
+
+  return (
+    <div className="flex flex-col gap-4 md:hidden">
+      {nothing && (
+        <Card className="border-dashed bg-muted/30 p-8 text-center text-sm font-semibold text-muted-foreground">
+          Nothing booked today.
+        </Card>
+      )}
+      {unalloc.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-red-600 dark:text-red-400">
+            Unallocated · {unalloc.length}
+          </h3>
+          {sortItems(unalloc).map((b) => <AgendaCard key={b.key} block={b} />)}
+        </section>
+      )}
+      {rows.map(({ bed, items }) => {
+        const count = items.filter((i) => i.variant !== 'blocked').length;
+        const shift = axis === 'person' && bed.shiftStartMin != null && bed.shiftEndMin != null
+          ? `${hhmm(bed.shiftStartMin)}–${hhmm(bed.shiftEndMin)}`
+          : bed.branch && bed.branch !== '—' ? bed.branch : null;
+        return (
+          <section key={bed.id} className="flex flex-col gap-2">
+            <div className="flex items-baseline justify-between gap-2 border-b border-border pb-1">
+              <h3 className="text-sm font-bold">
+                {bed.name}
+                <span className="ml-1.5 text-xs font-semibold text-muted-foreground">· {count}</span>
+              </h3>
+              {shift && <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">{shift}</span>}
+            </div>
+            {items.length === 0 ? (
+              <p className="px-1 py-1 text-xs font-medium italic text-muted-foreground/70">No bookings — free all day</p>
+            ) : (
+              items.map((b) => <AgendaCard key={b.key} block={b} />)
+            )}
+          </section>
+        );
+      })}
+      <p className="pt-1 text-center text-[11px] font-medium italic text-muted-foreground/60">
+        Read-only on mobile · open on a larger screen to edit the {subjectLabel.toLowerCase()} board
+      </p>
+    </div>
+  );
+}
+
 export function ScheduleBoard({
   branchId, day, beds, blocks, windowStartMin, windowEndMin, bedCount, staffShifts, nowMin, dialog,
   axis = 'bed', subjectLabel = 'Station', assignBeds = [], occupancy, lineup = [],
@@ -1174,7 +1296,11 @@ export function ScheduleBoard({
           )}
         </div>
       )}
-      <div className="flex items-start gap-3">
+      {/* MOBILE — the desktop board below traps touch (nested scrollers); on
+          phones show a read-only agenda grouped by row subject instead. */}
+      <MobileAgenda beds={beds} blocks={blocks} axis={axis} subjectLabel={subjectLabel} />
+
+      <div className="hidden md:flex items-start gap-3">
       {/* LEFT RAIL — everything with no bed yet; drag a card onto a bed row. */}
       <div className="w-56 shrink-0 flex flex-col gap-3">
       {axis === "person" && (

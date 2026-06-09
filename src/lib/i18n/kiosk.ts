@@ -7,9 +7,9 @@
 // NOTE: de / es / it / ja / ko consent + health wording is a best-effort draft —
 // have a native speaker / legal review it before relying on it for liability.
 
-export const KIOSK_LOCALES = ['zh-TW', 'zh-CN', 'en', 'ja', 'ko', 'de', 'es', 'it'] as const;
+export const KIOSK_LOCALES = ['en', 'zh-TW', 'ja', 'ko', 'de', 'es', 'it'] as const;
 export type KioskLocale = (typeof KIOSK_LOCALES)[number];
-export const DEFAULT_LOCALE: KioskLocale = 'zh-TW';
+export const DEFAULT_LOCALE: KioskLocale = 'en';
 
 export const TEMPLATE_VERSION = 'v1';
 
@@ -116,55 +116,6 @@ export const KIOSK_DICTS: Record<KioskLocale, KioskDict> = {
     errAgree: '請勾選同意聲明',
     thankTitle: '已送出，謝謝您！',
     thankMsg: '請將平板交回櫃台人員。',
-    next: '下一位',
-  },
-  'zh-CN': {
-    nativeName: '简体中文',
-    title: '健康问卷与同意书',
-    subtitle: '请在开始服务前填写以下资料',
-    name: '姓名',
-    email: '电子邮箱',
-    phone: '电话',
-    age: '年龄',
-    gender: '性别',
-    genderMale: '男',
-    genderFemale: '女',
-    genderOther: '其他',
-    genderNa: '不愿透露',
-    service: '想做的服务',
-    servicePlaceholder: '例如：全身按摩、肩颈放松',
-    pressure: '按摩力度',
-    pressureSoft: '轻',
-    pressureMedium: '中',
-    pressureHard: '重',
-    healthTitle: '健康声明',
-    health: {
-      pregnant: '怀孕中或可能怀孕',
-      cardiac: '心脏病、高血压或血液循环问题',
-      injury: '近期手术、骨折、扭伤或关节问题',
-      skin: '皮肤疾病、伤口、发炎或感染',
-      allergy: '对精油、乳液或特定成分过敏',
-    },
-    yes: '是',
-    no: '否',
-    healthNote: '如以上有任何一项为“是”，请说明',
-    healthNotePlaceholder: '请说明（选填）',
-    consentTitle: '同意声明',
-    consentText:
-      '本人声明以上所填信息属实且完整。本人了解按摩／芳疗服务的性质与可能之风险，并自愿同意接受服务。对于未如实告知之健康状况，概由本人自行负责。',
-    agree: '我已阅读并同意以上声明',
-    signatureTitle: '签名',
-    signatureHint: '请在下方签名',
-    clear: '清除',
-    optional: '选填',
-    submit: '提交',
-    submitting: '提交中…',
-    errName: '请填写姓名',
-    errPressure: '请选择按摩力度',
-    errSign: '请签名',
-    errAgree: '请勾选同意声明',
-    thankTitle: '已提交，谢谢您！',
-    thankMsg: '请将平板交回前台人员。',
     next: '下一位',
   },
   en: {

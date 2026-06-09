@@ -166,12 +166,6 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
 
   return (
     <div className="mx-auto w-full max-w-2xl p-5 pb-24">
-      {/* Brand */}
-      <div className="mb-5 flex justify-center pt-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/kiosk-logo.png" alt="H Signature" className="h-20 w-auto" />
-      </div>
-
       {/* Header: branch + language switch + exit */}
       <div className="mb-4 flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-muted-foreground">
@@ -219,8 +213,14 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         ))}
       </div>
 
-      <h1 className="text-2xl font-bold">{t.title}</h1>
-      <p className="mb-6 mt-1 font-medium text-muted-foreground">{t.subtitle}</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">{t.title}</h1>
+          <p className="mt-1 font-medium text-muted-foreground">{t.subtitle}</p>
+        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/kiosk-logo.png" alt="H Signature" className="h-16 w-auto shrink-0" />
+      </div>
 
       <div className="flex flex-col gap-6">
         {/* Identity */}

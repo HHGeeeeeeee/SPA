@@ -212,13 +212,15 @@ export function GuestConsents({
                 {detail.gender && <Field label="Gender" value={GENDER_LABEL[detail.gender] ?? detail.gender} />}
                 {detail.phone && <Field label="Phone" value={detail.phone} />}
                 {detail.email && <Field label="Email" value={detail.email} />}
+                {detail.nationality && <Field label="Nationality" value={detail.nationality} />}
+                {detail.hotel && <Field label="Hotel" value={detail.hotel} />}
                 {detail.pressure && <Field label="Pressure" value={PRESSURE_LABEL[detail.pressure] ?? detail.pressure} />}
                 <Field label="Language" value={KIOSK_DICTS[detail.language as keyof typeof KIOSK_DICTS]?.nativeName ?? detail.language} />
               </div>
 
               {detail.service_note && (
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Requested service</p>
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Focus areas</p>
                   <p className="font-medium">{detail.service_note}</p>
                 </div>
               )}

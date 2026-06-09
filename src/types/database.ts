@@ -272,6 +272,8 @@ export type Database = {
           id: string
           language: string
           name: string
+          nationality: string | null
+          hotel: string | null
           order_customer_id: string | null
           order_id: string | null
           phone: string | null
@@ -297,6 +299,8 @@ export type Database = {
           id?: string
           language: string
           name: string
+          nationality?: string | null
+          hotel?: string | null
           order_customer_id?: string | null
           order_id?: string | null
           phone?: string | null
@@ -322,6 +326,8 @@ export type Database = {
           id?: string
           language?: string
           name?: string
+          nationality?: string | null
+          hotel?: string | null
           order_customer_id?: string | null
           order_id?: string | null
           phone?: string | null

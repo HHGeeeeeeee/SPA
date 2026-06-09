@@ -20,7 +20,7 @@ import {
 } from '@/lib/i18n/kiosk';
 import { submitIntake, exitKiosk } from '@/app/(kiosk)/kiosk/actions';
 
-type Gender = 'male' | 'female' | 'other' | 'na';
+type Gender = 'male' | 'female' | 'other';
 type Pressure = 'soft' | 'medium' | 'hard';
 
 const EMPTY_HEALTH: Record<HealthKey, boolean | null> = {
@@ -71,6 +71,8 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
   const [phone, setPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<Gender | null>(null);
+  const [nationality, setNationality] = useState('');
+  const [hotel, setHotel] = useState('');
   const [serviceNote, setServiceNote] = useState('');
   const [pressure, setPressure] = useState<Pressure | null>(null);
   const [health, setHealth] = useState<Record<HealthKey, boolean | null>>(EMPTY_HEALTH);
@@ -92,6 +94,8 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
     setPhone('');
     setAge('');
     setGender(null);
+    setNationality('');
+    setHotel('');
     setServiceNote('');
     setPressure(null);
     setHealth(EMPTY_HEALTH);
@@ -117,6 +121,8 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
         phone: phone.trim() || null,
         age: ageNum != null && Number.isFinite(ageNum) ? Math.trunc(ageNum) : null,
         gender,
+        nationality: nationality.trim() || null,
+        hotel: hotel.trim() || null,
         serviceNote: serviceNote.trim() || null,
         pressure,
         health: Object.fromEntries(HEALTH_KEYS.map((k) => [k, health[k] === true])),
@@ -256,9 +262,23 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
                 { value: 'male', label: t.genderMale },
                 { value: 'female', label: t.genderFemale },
                 { value: 'other', label: t.genderOther },
-                { value: 'na', label: t.genderNa },
               ]}
             />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-2">
+            <Label className="text-base font-semibold">
+              {t.nationality} <span className="text-xs font-medium text-muted-foreground">({t.optional})</span>
+            </Label>
+            <Input value={nationality} onChange={(e) => setNationality(e.target.value)} className="h-12 text-base" maxLength={80} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label className="text-base font-semibold">
+              {t.hotel} <span className="text-xs font-medium text-muted-foreground">({t.optional})</span>
+            </Label>
+            <Input value={hotel} onChange={(e) => setHotel(e.target.value)} className="h-12 text-base" maxLength={120} />
           </div>
         </div>
 

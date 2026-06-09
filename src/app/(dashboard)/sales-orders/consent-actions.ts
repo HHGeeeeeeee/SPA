@@ -64,6 +64,8 @@ export async function listUnboundConsents(branchId: string): Promise<ConsentSumm
 export interface ConsentDetail extends ConsentSummary {
   email: string | null;
   phone: string | null;
+  nationality: string | null;
+  hotel: string | null;
   consent_text: string;
   template_version: string;
   signature_url: string | null;
@@ -104,6 +106,8 @@ export async function getConsentDetail(consentId: string): Promise<ConsentDetail
     health_note: c.health_note,
     email: c.email,
     phone: c.phone,
+    nationality: c.nationality,
+    hotel: c.hotel,
     consent_text: c.consent_text,
     template_version: c.template_version,
     signature_url,

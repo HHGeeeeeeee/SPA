@@ -52,6 +52,7 @@ interface PriceRow {
   star?: boolean;
   you?: boolean;
   hl?: boolean;
+  range: React.ReactNode;
   tier: React.ReactNode;
   perUnit: React.ReactNode;
   card: string;
@@ -64,84 +65,98 @@ interface PriceRow {
 const PRICE_ROWS: PriceRow[] = [
   {
     sys: 'HSPA', sub: '你的自建', you: true,
+    range: <span className="font-bold text-primary">零授權費</span>,
     tier: <><b>零授權費</b><br />僅雲費 Vercel+Supabase，約 $0–50/月級距</>,
     perUnit: '無（單一租戶，員工/分店不另收）',
     card: '—（金流策略性延後）', free: '-', freeText: '—', setup: '開發人力（已投入）', vis: 'own',
   },
   {
     sys: 'Zenoti', star: true, hl: true,
+    range: <><span className="font-bold text-red-600 dark:text-red-400">洽詢制</span><div className="text-xs font-normal text-muted-foreground">~$300–600/店/月</div></>,
     tier: <><b>純洽詢</b>，無公開價<br />Growth / Hypergrowth / Complete 三層<br /><span className="text-xs text-muted-foreground">第三方估 $300–600/月/店；連鎖 $10k–15k+/月</span></>,
     perUnit: '按分店計（無 per-seat）。多項核心功能每店加購：2 向簡訊 $29–169、聲譽 $189、AI 聊天機器人 $150–400/店/月',
     card: '自有 Zenoti Pay，費率不公開（業界 2–4%）；BNPL 5.9%', free: 'n', freeText: '無', setup: '約 $2,000–5,000+（遷移+專業服務）', vis: 'quote',
   },
   {
     sys: 'SalesPlay', star: true,
+    range: <span className="font-bold text-emerald-600 dark:text-emerald-400">免費起</span>,
     tier: <><b>核心 POS 免費</b>（含無限銷售歷史）<br />加購：員工管理 $4/人/月、進階庫存 $20/店/月</>,
     perUnit: '員工 $4/人/月；庫存 $20/店/月。免費層限 1 個 POS app',
     card: 'n/a（不自營金流，接第三方端末機 PAX/Teya）', free: 'y', freeText: '有（真免費）', setup: '無', vis: 'part',
   },
   {
     sys: 'Mangomint',
+    range: '$165–375/月',
     tier: <>Essentials $165 / Standard $245 / Unlimited $375</>,
     perUnit: '員工含於方案（10/20/不限）；額外分店 +$95 / +$135 / +$175/月',
     card: '實體 2.45%+15¢；線上 2.9%+30¢（Stripe）', free: 'n', freeText: '僅試用', setup: '無（免費導入）', vis: 'pub',
   },
   {
     sys: 'Fresha',
+    range: '$15–20/員工',
     tier: <>Independent $19.95；Team $14.95/<b>每員工</b>；Enterprise 洽詢<br /><span className="text-xs text-muted-foreground">2025 起取消永久免費版，剩 7 天試用</span></>,
     perUnit: 'Team 按可預約員工計；各分店獨立訂閱；多項加購按店/人',
     card: '實體 2.29%+20¢ / 線上 2.79% / 手key 3.30%；市集新客抽 20%', free: 'p', freeText: '已取消（剩試用）', setup: '無', vis: 'part',
   },
   {
     sys: 'Mindbody',
+    range: '$99–699/月',
     tier: <>Starter $99 起 / Accelerate ~$259 / Ultimate ~$499 / Ultimate Plus ~$699<br /><span className="text-xs text-muted-foreground">僅 Starter 公開</span></>,
     perUnit: '按分店計，員工不限；品牌 App +$199/月',
     card: '實體 2.99%+30¢；線上 3.60%+30¢；市集新客 +20%', free: 'n', freeText: '無', setup: '小店含；大型導入第三方稱 $10,000+', vis: 'part',
   },
   {
     sys: 'Booker', sub: 'Mindbody 旗下',
+    range: '$139–599/月',
     tier: <>Starter $139 / Accelerate ~$289 / Ultimate ~$469 / Ultimate Plus ~$599<br /><span className="text-xs text-muted-foreground">僅 Starter 公開</span></>,
     perUnit: '低階限員工檔案數；Accelerate+ 不限。多店另報價',
     card: '透過 Mindbody Pay：實體 ~2.75%；線上 ~3.5%+15¢；市集 +20%', free: 'n', freeText: '無（最少 12 個月約）', setup: '無公開（第三方估 $1k–7k）', vis: 'part',
   },
   {
     sys: 'Boulevard',
+    range: '$176–410/月',
     tier: <>Essentials $176 / Premier $293 / Prestige $410（每店/月，年約）；醫美包 ~$421–468</>,
     perUnit: '按分店計；Essentials 限 5 人，Premier+ 不限。Forms 加購 $65/月起',
     card: '實體 ~2.6%+10¢；線上 ~3.5%。可開客付 3% 附加費', free: 'n', freeText: '無', setup: '無公開', vis: 'part',
   },
   {
     sys: 'Phorest',
+    range: <><span className="font-bold text-red-600 dark:text-red-400">洽詢制</span><div className="text-xs font-normal text-muted-foreground">~$99–1000+/月</div></>,
     tier: <><b>純洽詢</b>。Starter / Grow / Complete / Elite 四層<br /><span className="text-xs text-muted-foreground">第三方估 ~$99–300/月，大型 $500–1000+</span></>,
     perUnit: '含不限員工/裝置；各層差在月含簡訊量（1k–27k）。多店另報價',
     card: '多數地區洽詢；澳 1.4%+A$0.10+月租 $30。線上預約另收 ~$1/筆', free: 'n', freeText: '無（明言不提供試用）', setup: '無（免費導入+訓練）', vis: 'quote',
   },
   {
     sys: 'Meevo', sub: 'Millennium',
+    range: <><span className="font-bold text-red-600 dark:text-red-400">洽詢制</span><div className="text-xs font-normal text-muted-foreground">~$139–529/月</div></>,
     tier: <><b>純洽詢</b>。Lite / Essentials / Premier / Enterprise + 醫美 MeevoMD<br /><span className="text-xs text-muted-foreground">第三方估 ~$139–529/月；多店 $200–500/店</span></>,
     perUnit: 'Lite 限 5 人；Essentials+ 不限。多店約 $200–500/店（估）',
     card: 'MeevoPay，費率不公開（稱「透明低固定費率」）', free: 'n', freeText: '無', setup: '含訓練時數（4–6 hr）；另可能有導入費', vis: 'quote',
   },
   {
     sys: 'Vagaro',
+    range: '$30–84/月',
     tier: <>$30/月（1 行事曆，促銷 $23.99）<br />每加 1 行事曆 +$10，上限 $83.99（7+）</>,
     perUnit: '~$10/月/員工(行事曆)；多店各自訂閱。品牌 App +$100、簡訊行銷 +$20 等',
     card: '小商家 2.6%+10¢；大商家 2.2%+19¢+月租$10；線上 3.5%+15¢', free: 'n', freeText: '30 天試用', setup: '無', vis: 'pub',
   },
   {
     sys: 'Timely',
+    range: '$26–47/月',
     tier: <>Build $26 / Elevate $39 / Innovate $47（隨員工數級距上升）</>,
     perUnit: '不固定 per-seat，依員工數級距漲價；各店獨立帳號',
     card: 'TimelyPay（Stripe）：美 2.8%+30¢；英 1.95%+20p；澳 1.75%+A$0.30', free: 'n', freeText: '14 天試用', setup: '無', vis: 'pub',
   },
   {
     sys: 'GlossGenius',
+    range: '$24–148/月',
     tier: <>Standard $24 / Gold $48 / Platinum $148（年付）</>,
     perUnit: '無 per-seat（2 / 9 / 不限 人）。Payroll +$40+$6/人',
     card: '全方案統一 2.6%（無每筆固定費）；即時撥款 +1.8%', free: 'n', freeText: '14 天試用', setup: '無（免費遷移）', vis: 'pub',
   },
   {
     sys: 'Square', sub: 'Appointments',
+    range: '$0–149/月',
     tier: <>Free $0 / Plus $49 / Premium $149（每店/月）</>,
     perUnit: '按分店計，員工不限',
     card: '免費版 2.6%+15¢；Plus 2.5%+15¢；Premium 2.4%+15¢（實體）', free: 'y', freeText: '有（個人免費）', setup: '無', vis: 'pub',
@@ -278,10 +293,10 @@ export function SystemCompareReport() {
         所有金額為 2026 年 6 月擷取之官方或第三方公開價。刷卡抽成多為美國費率，亞洲不一定適用。Zenoti / Phorest / Meevo 的金額皆為第三方聚合站估算，非官方數字，僅供量級參考。
       </p>
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
-        <table className="w-full min-w-[860px] border-collapse text-[13px]">
+        <table className="w-full min-w-[980px] border-collapse text-[13px]">
           <thead>
             <tr>
-              {['系統', '月費分級（USD）', '每員工 / 每分店加價', '刷卡抽成（美國）', '免費版', '導入費', '定價透明度'].map((h) => (
+              {['系統', '月費區間（USD）', '方案明細', '每員工 / 每分店加價', '刷卡抽成（美國）', '免費版', '導入費', '定價透明度'].map((h) => (
                 <th key={h} className={thBase}>{h}</th>
               ))}
             </tr>
@@ -293,7 +308,8 @@ export function SystemCompareReport() {
                   {r.sys}{r.star ? ' ★' : ''}
                   {r.sub ? <div className="text-xs font-normal text-muted-foreground">{r.sub}</div> : null}
                 </td>
-                <td className={tdBase}>{r.tier}</td>
+                <td className={`${tdBase} text-[14px] font-semibold whitespace-nowrap ${r.you ? 'text-primary' : ''}`}>{r.range}</td>
+                <td className={`${tdBase} text-muted-foreground`}>{r.tier}</td>
                 <td className={tdBase}>{r.perUnit}</td>
                 <td className={tdBase}>{r.card}</td>
                 <td className={tdBase}>{r.free === '-' ? '—' : <MarkCell v={r.free} t={r.freeText} />}</td>

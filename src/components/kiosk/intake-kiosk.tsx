@@ -50,7 +50,7 @@ function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
           className={`min-w-20 flex-1 rounded-xl border-2 px-4 py-3 text-base font-semibold transition ${
             value === o.value
-              ? 'border-teal-600 bg-teal-600 text-white'
+              ? 'border-[#3E6352] bg-[#3E6352] text-white'
               : 'border-border bg-background hover:bg-accent'
           }`}
         >
@@ -205,7 +205,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
             type="button"
             onClick={() => setLocale(l)}
             className={`rounded-full border px-3 py-1 text-sm font-semibold transition ${
-              locale === l ? 'border-teal-600 bg-teal-600 text-white' : 'border-border hover:bg-accent'
+              locale === l ? 'border-[#3E6352] bg-[#3E6352] text-white' : 'border-border hover:bg-accent'
             }`}
           >
             {KIOSK_DICTS[l].nativeName}
@@ -215,7 +215,7 @@ export function IntakeKiosk({ branchName, branchCode }: { branchName: string; br
 
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-teal-600">{t.title}</h1>
+          <h1 className="text-2xl font-bold text-[#3E6352]">{t.title}</h1>
           <p className="mt-1 font-medium text-muted-foreground">{t.subtitle}</p>
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}

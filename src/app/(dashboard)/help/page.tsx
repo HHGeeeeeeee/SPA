@@ -13,7 +13,7 @@ export default async function HelpPage() {
   const admin = isAdmin(await currentSession());
   const { data } = await supabase
     .from('help_articles')
-    .select('id, title, category, content_markdown')
+    .select('id, slug, title, category, content_markdown')
     .eq('is_published', true)
     .order('category')
     .order('order_index');

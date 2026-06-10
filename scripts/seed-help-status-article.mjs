@@ -30,7 +30,7 @@ const row = {
   category: 'daily_ops',
   content_markdown: content,
   is_published: true,
-  order_index: 0,
+  order_index: 6,
 };
 
 async function main() {

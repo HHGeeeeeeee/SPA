@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { type MouseEvent, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Markdown } from '@/components/help/markdown';
 
 export interface HelpArticle {
   id: string;
+  slug: string;
   title: string;
   category: string;
   content_markdown: string;
@@ -31,6 +32,21 @@ const CATEGORY_ORDER = ['getting_started', 'daily_ops', 'reconciliation', 'maste
 export function HelpBrowser({ articles }: { articles: HelpArticle[] }) {
   const [selectedId, setSelectedId] = useState(articles[0]?.id ?? '');
   const selected = articles.find((a) => a.id === selectedId) ?? articles[0] ?? null;
+
+  // In-article links written as [text](#help/<slug>) jump to that article instead
+  // of navigating the browser. Handled by event delegation on the article pane.
+  const idBySlug = new Map(articles.map((a) => [a.slug, a.id]));
+  function handleArticleClick(e: MouseEvent<HTMLDivElement>) {
+    const anchor = (e.target as HTMLElement).closest('a');
+    const href = anchor?.getAttribute('href') ?? '';
+    const match = href.match(/^#help\/(.+)$/);
+    if (!match) return;
+    const targetId = idBySlug.get(decodeURIComponent(match[1]));
+    if (!targetId) return;
+    e.preventDefault();
+    setSelectedId(targetId);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   const byCategory = new Map<string, HelpArticle[]>();
   for (const a of articles) {
@@ -70,7 +86,7 @@ export function HelpBrowser({ articles }: { articles: HelpArticle[] }) {
       </nav>
 
       {/* Selected article. */}
-      <div className="min-w-0 rounded-lg border border-border bg-card p-5">
+      <div className="min-w-0 rounded-lg border border-border bg-card p-5" onClick={handleArticleClick}>
         {selected ? (
           <>
             <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-3">

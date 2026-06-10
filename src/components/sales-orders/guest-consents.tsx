@@ -39,31 +39,31 @@ export interface BoundConsentInfo {
   pressure: string | null;
 }
 
-interface Guest {
-  id: string;
-  customer_name: string;
-  seq_no: number;
-}
-
-export function GuestConsents({
+/** Inline per-guest consent status + attach/view/detach actions.
+ *  Renders compactly to sit in the guest card header row. */
+export function GuestConsentInline({
   orderId,
   branchId,
-  guests,
+  guestId,
+  guestName,
+  guestSeqNo,
   bound,
 }: {
   orderId: string;
   branchId: string;
-  guests: Guest[];
-  bound: Record<string, BoundConsentInfo>;
+  guestId: string;
+  guestName: string;
+  guestSeqNo: number;
+  bound: BoundConsentInfo | null;
 }) {
-  const [attachFor, setAttachFor] = useState<Guest | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
   const [pool, setPool] = useState<ConsentSummary[] | null>(null);
   const [viewId, setViewId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConsentDetail | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function openAttach(g: Guest) {
-    setAttachFor(g);
+  function openAttach() {
+    setAttachOpen(true);
     setPool(null);
     startTransition(async () => setPool(await listUnboundConsents(branchId)));
   }
@@ -75,13 +75,11 @@ export function GuestConsents({
   }
 
   function doBind(consentId: string) {
-    if (!attachFor) return;
-    const guestId = attachFor.id;
     startTransition(async () => {
       const res = await bindConsent(consentId, orderId, guestId);
       if (res.ok) {
         toast.success('Consent attached');
-        setAttachFor(null);
+        setAttachOpen(false);
       } else {
         toast.error(res.error);
       }
@@ -98,51 +96,34 @@ export function GuestConsents({
 
   return (
     <>
-      <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
-        {guests.map((g) => {
-          const b = bound[g.id];
-          return (
-            <div key={g.id} className="flex items-center gap-3 px-3 py-2.5">
-              <FileSignature className={`size-4 shrink-0 ${b ? 'text-green-600' : 'text-muted-foreground'}`} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">
-                  <span className="font-mono text-muted-foreground">#{g.seq_no}</span> {g.customer_name}
-                </p>
-                {b ? (
-                  <p className="truncate text-xs font-medium text-muted-foreground">
-                    Signed {fmt(b.signed_at)} · {KIOSK_DICTS[b.language as keyof typeof KIOSK_DICTS]?.nativeName ?? b.language}
-                    {b.pressure ? ` · ${PRESSURE_LABEL[b.pressure] ?? b.pressure}` : ''}
-                    {b.name && b.name !== g.customer_name ? ` · form: ${b.name}` : ''}
-                  </p>
-                ) : (
-                  <p className="text-xs font-medium text-muted-foreground">No consent attached</p>
-                )}
-              </div>
-              {b ? (
-                <div className="flex items-center gap-1">
-                  <Button variant="outline" size="sm" onClick={() => openView(b.id)}>
-                    <FileText className="size-3.5" /> View
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => doUnbind(b.id)} disabled={pending}>
-                    <X className="size-3.5" /> Detach
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="outline" size="sm" onClick={() => openAttach(g)} disabled={pending}>
-                  <Paperclip className="size-3.5" /> Attach
-                </Button>
-              )}
-            </div>
-          );
-        })}
+      <div className="flex items-center gap-1.5">
+        <FileSignature className={`size-3.5 shrink-0 ${bound ? 'text-green-600' : 'text-muted-foreground'}`} />
+        {bound ? (
+          <>
+            <span className="text-xs font-medium text-muted-foreground truncate max-w-48">
+              Signed {fmt(bound.signed_at)}
+              {bound.pressure ? ` · ${PRESSURE_LABEL[bound.pressure] ?? bound.pressure}` : ''}
+            </span>
+            <Button variant="outline" size="icon-sm" onClick={() => openView(bound.id)} title="View consent">
+              <FileText className="size-3" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={() => doUnbind(bound.id)} disabled={pending} title="Detach consent">
+              <X className="size-3" />
+            </Button>
+          </>
+        ) : (
+          <Button variant="outline" size="sm" className="h-6 text-xs gap-1" onClick={openAttach} disabled={pending}>
+            <Paperclip className="size-3" /> Attach consent
+          </Button>
+        )}
       </div>
 
       {/* Attach: pick from the branch's pending pool */}
-      <Dialog open={!!attachFor} onOpenChange={(o) => !o && setAttachFor(null)}>
+      <Dialog open={attachOpen} onOpenChange={(o) => !o && setAttachOpen(false)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-bold">
-              Attach consent to {attachFor ? `#${attachFor.seq_no} ${attachFor.customer_name}` : ''}
+              Attach consent to #{guestSeqNo} {guestName}
             </DialogTitle>
             <DialogDescription className="font-medium">
               Unsigned forms from this branch (last 2 days). Pick the one this guest filled in.
@@ -179,7 +160,7 @@ export function GuestConsents({
                       {c.pressure && <span>Pressure: {PRESSURE_LABEL[c.pressure] ?? c.pressure}</span>}
                       <span>{KIOSK_DICTS[c.language as keyof typeof KIOSK_DICTS]?.nativeName ?? c.language}</span>
                     </div>
-                    {c.service_note && <p className="text-xs font-medium">“{c.service_note}”</p>}
+                    {c.service_note && <p className="text-xs font-medium">&quot;{c.service_note}&quot;</p>}
                     {flagged.length > 0 && (
                       <p className="text-xs font-semibold text-amber-600">
                         ⚠ {flagged.length} health flag{flagged.length > 1 ? 's' : ''}

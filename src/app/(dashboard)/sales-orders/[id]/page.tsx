@@ -4,7 +4,7 @@ import { ChevronLeft, TriangleAlert } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession, isManager } from '@/lib/auth';
-import { GuestConsents, type BoundConsentInfo } from '@/components/sales-orders/guest-consents';
+import { type BoundConsentInfo } from '@/components/sales-orders/guest-consents';
 import { getAllowedBranchIds } from '@/lib/branch-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrderWorkspace } from '@/components/sales-orders/order-workspace';
@@ -325,9 +325,24 @@ async function fetchData(id: string) {
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const canManage = isManager(await currentSession());
+  const session = await currentSession();
+  const canManage = isManager(session);
   const result = await fetchData(id);
   if (!result) notFound();
+
+  // The user's own first open shift — its branch becomes the highest-priority
+  // default for folio postings, because staff rotate across branches daily.
+  const supabase = createServiceClient();
+  const { data: myShift } = await supabase
+    .from('shifts')
+    .select('branch_id')
+    .eq('status', 'open')
+    .eq('opened_by', session?.staffUserId ?? '')
+    .order('opened_at')
+    .limit(1)
+    .maybeSingle();
+  const userShiftBranchId: string | null = myShift?.branch_id ?? null;
+
   const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, shiftWindowsByTherapist, bookingWindowsByTherapist, blockWindowsByTherapist, lineupRank, serviceDate, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes, openShifts } = result;
 
   const source = one(order.source);
@@ -637,22 +652,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         </Card>
       </div>
 
-      {customers.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold">Health questionnaire &amp; consent</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <GuestConsents
-              orderId={order.id}
-              branchId={order.branch_id}
-              guests={customers.map((c) => ({ id: c.id, customer_name: c.customer_name, seq_no: c.seq_no }))}
-              bound={boundConsentByGuest}
-            />
-          </CardContent>
-        </Card>
-      )}
-
       <OrderWorkspace
         order={{
           id: order.id,
@@ -696,7 +695,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         orderBranchId={orderBranchId}
         transactionCodes={transactionCodes}
         openShifts={openShifts}
+        userShiftBranchId={userShiftBranchId}
         billingDestinations={allBilling}
+        boundConsents={boundConsentByGuest}
       />
     </div>
   );

@@ -49,6 +49,7 @@ import { FeedbackDialog } from '@/components/sales-orders/feedback-dialog';
 import { AuditTrail } from '@/components/sales-orders/audit-trail';
 import { InterruptDialog } from '@/components/sales-orders/interrupt-dialog';
 import { FolioActions } from '@/components/sales-orders/folio-actions';
+import { GuestConsentInline, type BoundConsentInfo } from '@/components/sales-orders/guest-consents';
 import { ANY_GENDER, canPerformGroup, matchesGender } from '@/lib/therapist-availability';
 
 function peso(cents: number): string {
@@ -180,7 +181,9 @@ interface Props {
   orderBranchId: string | null;
   transactionCodes: { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[];
   openShifts: { branchId: string; label: string }[];
+  userShiftBranchId: string | null;
   billingDestinations: { id: string; code: string; name: string; tx_code: string | null }[];
+  boundConsents: Record<string, BoundConsentInfo>;
 }
 
 const NONE = '__none__';
@@ -357,7 +360,9 @@ export function OrderWorkspace({
   orderBranchId,
   transactionCodes,
   openShifts,
+  userShiftBranchId,
   billingDestinations,
+  boundConsents,
 }: Props) {
   const [pending, startTransition] = useTransition();
 
@@ -864,6 +869,14 @@ export function OrderWorkspace({
                     )}
                   </CardTitle>
                 )}
+                <GuestConsentInline
+                  orderId={order.id}
+                  branchId={orderBranchId ?? ''}
+                  guestId={c.id}
+                  guestName={c.customer_name}
+                  guestSeqNo={c.seq_no}
+                  bound={boundConsents[c.id] ?? null}
+                />
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {order.editable && itemsByCustomer(c.id).some(isLineEditable) && (
@@ -1126,7 +1139,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Revenue</CardTitle>
-                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} />
+                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} userShiftBranchId={userShiftBranchId} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['revenue', 'tip'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
@@ -1136,7 +1149,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Payments & refunds</CardTitle>
-                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} billingDestinations={billingDestinations} orderBillingToId={order.billing_to_id} guests={customers.map((c) => ({ id: c.id, name: c.customer_name }))} />
+                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} userShiftBranchId={userShiftBranchId} billingDestinations={billingDestinations} orderBillingToId={order.billing_to_id} guests={customers.map((c) => ({ id: c.id, name: c.customer_name }))} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}

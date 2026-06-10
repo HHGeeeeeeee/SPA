@@ -50,6 +50,7 @@ export function FolioActions({
   orderBranchId,
   transactionCodes,
   openShifts,
+  userShiftBranchId,
   billingDestinations,
   orderBillingToId,
   guests,
@@ -64,6 +65,7 @@ export function FolioActions({
   orderBranchId: string | null;
   transactionCodes: TxCode[];
   openShifts: { branchId: string; label: string }[];
+  userShiftBranchId?: string | null;
   billingDestinations?: BillingDest[];
   orderBillingToId?: string | null;
   guests?: Guest[];
@@ -77,9 +79,16 @@ export function FolioActions({
   const billingList = billingDestinations ?? [];
   const guestList = guests ?? [];
   const defaultMethod = methodList.find((m) => m.code?.toLowerCase() === 'cash')?.id ?? methodList[0]?.id ?? '';
-  // Default posting branch: the user's only branch if they have exactly one,
-  // otherwise the order's branch. Always editable.
-  const defaultBranch = branchList.length === 1 ? branchList[0].id : (orderBranchId ?? branchList[0]?.id ?? '');
+  // Default posting branch priority (staff rotate daily):
+  //   1. The user's own first open shift's branch (most relevant)
+  //   2. The order's branch
+  //   3. First accessible branch
+  // Single-branch users short-circuit to their only option.
+  const defaultBranch = branchList.length === 1
+    ? branchList[0].id
+    : (userShiftBranchId && branchList.some((b) => b.id === userShiftBranchId)
+        ? userShiftBranchId
+        : (orderBranchId ?? branchList[0]?.id ?? ''));
   // AR (掛帳): default Bill to from the order header, guest auto-picked when sole.
   const defaultBill = orderBillingToId ?? billingList[0]?.id ?? '';
   const defaultGuest = guestList.length === 1 ? guestList[0].id : '';

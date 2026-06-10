@@ -160,7 +160,7 @@ export function GuestConsentInline({
                       {c.pressure && <span>Pressure: {PRESSURE_LABEL[c.pressure] ?? c.pressure}</span>}
                       <span>{KIOSK_DICTS[c.language as keyof typeof KIOSK_DICTS]?.nativeName ?? c.language}</span>
                     </div>
-                    {c.service_note && <p className="text-xs font-medium">&quot;{c.service_note}&quot;</p>}
+                    {c.service_note && <p className="rounded bg-orange-100 px-1.5 py-0.5 text-xs font-medium text-orange-800">&quot;{c.service_note}&quot;</p>}
                     {flagged.length > 0 && (
                       <p className="text-xs font-semibold text-amber-600">
                         ⚠ {flagged.length} health flag{flagged.length > 1 ? 's' : ''}
@@ -200,9 +200,9 @@ export function GuestConsentInline({
               </div>
 
               {detail.service_note && (
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Focus areas</p>
-                  <p className="font-medium">{detail.service_note}</p>
+                <div className="rounded-md bg-orange-100 p-2.5">
+                  <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Focus areas</p>
+                  <p className="font-semibold text-orange-900">{detail.service_note}</p>
                 </div>
               )}
 
@@ -219,7 +219,7 @@ export function GuestConsentInline({
                   ))}
                 </ul>
                 {detail.health_note && (
-                  <p className="mt-2 rounded-md bg-muted p-2 text-xs font-medium">{detail.health_note}</p>
+                  <p className="mt-2 rounded-md bg-orange-100 p-2 text-xs font-semibold text-orange-900">{detail.health_note}</p>
                 )}
               </div>
 

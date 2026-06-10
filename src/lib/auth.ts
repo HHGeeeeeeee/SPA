@@ -306,14 +306,19 @@ export function isAccountant(s: SessionPayload | null): boolean {
   return !!s && s.role === 'accountant';
 }
 
+/** Viewer — read-only access to everything a manager can see. No write operations. */
+export function isViewer(s: SessionPayload | null): boolean {
+  return !!s && s.role === 'viewer';
+}
+
 /** External hotel-front-desk booker — reservation-only; locked to the /book page. */
 export function isExternalBooker(s: SessionPayload | null): boolean {
   return !!s && s.role === 'external_booker';
 }
 
-/** Can enter the /settings tree — admin, manager, or accountant. */
+/** Can enter the /settings tree — admin, manager, accountant, or viewer. */
 export function canAccessSettings(s: SessionPayload | null): boolean {
-  return isManager(s) || isAccountant(s);
+  return isManager(s) || isAccountant(s) || isViewer(s);
 }
 
 /**

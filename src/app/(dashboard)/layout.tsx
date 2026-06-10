@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/layout/sidebar';
 import { SidebarProvider } from '@/components/layout/sidebar-context';
 import { TopBar } from '@/components/layout/topbar';
-import { currentSession, isAdmin, isManager, isAccountant, isExternalBooker } from '@/lib/auth';
+import { currentSession, isAdmin, isManager, isAccountant, isViewer, isExternalBooker } from '@/lib/auth';
 
 export default async function DashboardLayout({
   children,
@@ -17,11 +17,12 @@ export default async function DashboardLayout({
   const viewerIsAdmin = isAdmin(session);
   const viewerIsManager = isManager(session);
   const viewerIsAccountant = isAccountant(session);
+  const viewerIsViewer = isViewer(session);
 
   return (
     <SidebarProvider>
       <div className="flex h-screen overflow-hidden print:block print:h-auto print:overflow-visible">
-        <Sidebar isAdmin={viewerIsAdmin} isManager={viewerIsManager} isAccountant={viewerIsAccountant} />
+        <Sidebar isAdmin={viewerIsAdmin} isManager={viewerIsManager} isAccountant={viewerIsAccountant} isViewer={viewerIsViewer} />
         <div className="flex flex-1 flex-col overflow-hidden print:overflow-visible">
           <TopBar userName={session.displayName ?? session.email} />
           <main className="flex-1 overflow-y-auto bg-background spa-pattern p-6 print:overflow-visible print:p-0 print:text-[11px]">{children}</main>

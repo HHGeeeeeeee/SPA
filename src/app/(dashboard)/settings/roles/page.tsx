@@ -5,6 +5,7 @@ import {
   ShieldCheck,
   ShieldUser,
   Calculator,
+  Eye,
   Users,
   Building2,
   Check,
@@ -83,6 +84,21 @@ const ROLES = [
     ],
   },
   {
+    code: 'viewer',
+    label: 'Viewer',
+    icon: Eye,
+    color: 'secondary',
+    description: 'Read-only access — same visibility as Manager, no write operations',
+    capabilities: [
+      'View Dashboard, Calendar, Shift Schedule',
+      'View Sales Orders & Remittance',
+      'View Reconciliation (Tips, Commission, AR)',
+      'View Reports & System Compare',
+      'View all Settings pages (read-only)',
+      'No create / edit / delete / approve actions',
+    ],
+  },
+  {
     code: 'external_booker',
     label: 'External Booker',
     icon: Building2,
@@ -124,7 +140,7 @@ export default async function RolesPage() {
         </Link>
         <h2 className="text-3xl font-bold tracking-tight mt-1">Roles & Permissions</h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">
-          5 built-in roles · Custom permission overrides stored in <span className="font-mono">role_permissions</span> (UI coming in v2)
+          6 built-in roles · Custom permission overrides stored in <span className="font-mono">role_permissions</span> (UI coming in v2)
         </p>
       </div>
 
@@ -192,7 +208,7 @@ export default async function RolesPage() {
           <p className="text-sm font-semibold text-muted-foreground">
             ℹ Note: For v1, capabilities are hard-coded in application logic. Custom
             <span className="font-mono"> role_permissions </span>
-            overrides go in via SQL or a future admin UI. The five roles cannot be deleted.
+            overrides go in via SQL or a future admin UI. The six roles cannot be deleted.
           </p>
         </CardContent>
       </Card>

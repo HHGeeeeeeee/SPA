@@ -50,20 +50,23 @@ function NavLink({
   isAdmin,
   isManager,
   isAccountant,
+  isViewer,
 }: {
   item: NavItem;
   pathname: string;
   isAdmin: boolean;
   isManager: boolean;
   isAccountant: boolean;
+  isViewer: boolean;
 }) {
   // Strip admin-only / manager-only sub-items + sub-groups up front so the
   // chevron / active detection both see the post-filter view (a sub-group
   // that ends up empty after filtering disappears entirely rather than
   // rendering as a blank header). accountantAllowed overrides both flags.
+  // isViewer gets manager-level visibility (read-only).
   const allowed = (c: { adminOnly?: boolean; managerOnly?: boolean; accountantAllowed?: boolean }) =>
     (!c.adminOnly || isAdmin || (isAccountant && !!c.accountantAllowed)) &&
-    (!c.managerOnly || isManager || (isAccountant && !!c.accountantAllowed));
+    (!c.managerOnly || isManager || isViewer || (isAccountant && !!c.accountantAllowed));
   const filteredChildren = item.children?.filter(allowed);
   const filteredChildGroups = item.childGroups
     ?.map((g) => ({ ...g, items: g.items.filter(allowed) }))
@@ -202,6 +205,7 @@ export function Sidebar({
   isAdmin = false,
   isManager = false,
   isAccountant = false,
+  isViewer = false,
 }: {
   isAdmin?: boolean;
   /** manager-or-above (admin always counts as manager). Drives the
@@ -210,17 +214,20 @@ export function Sidebar({
   /** Accountant sees Settings + financial master data items via the
    *  accountantAllowed flag on specific nav items. */
   isAccountant?: boolean;
+  /** Viewer sees everything manager sees (read-only). */
+  isViewer?: boolean;
 }) {
   const pathname = usePathname();
   const { collapsed, toggle } = useSidebar();
   // Hide nav items flagged adminOnly / managerOnly when the viewer doesn't
   // match. accountantAllowed overrides both flags for the accountant role.
+  // isViewer gets the same visibility as isManager (read-only access).
   // Mirrors the server-side gates on those routes — keeps the menu
   // honest (no link the viewer can't actually open).
   const visibleNav = mainNavItems.filter(
     (item) =>
       (!item.adminOnly || isAdmin || (isAccountant && item.accountantAllowed)) &&
-      (!item.managerOnly || isManager || (isAccountant && item.accountantAllowed)),
+      (!item.managerOnly || isManager || isViewer || (isAccountant && item.accountantAllowed)),
   );
 
   // Sign out via POST (never a prefetchable GET <Link> — that silently logged
@@ -279,6 +286,7 @@ export function Sidebar({
               isAdmin={isAdmin}
               isManager={isManager}
               isAccountant={isAccountant}
+              isViewer={isViewer}
             />
           ))}
         </div>

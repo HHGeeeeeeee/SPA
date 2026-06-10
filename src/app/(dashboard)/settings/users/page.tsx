@@ -42,6 +42,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
   manager: 'Manager',
   accountant: 'Accountant',
   staff: 'Staff',
+  viewer: 'Viewer',
   external_booker: 'External Booker',
 };
 
@@ -51,6 +52,7 @@ function roleBadge(role: UserRole) {
     manager: 'default',
     accountant: 'default',
     staff: 'secondary',
+    viewer: 'secondary',
     external_booker: 'secondary',
   };
   return (

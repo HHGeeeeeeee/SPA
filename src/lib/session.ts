@@ -29,7 +29,7 @@ export interface SessionPayload {
   email: string;
   acumaticaUserId: string;
   displayName: string | null;
-  role: 'admin' | 'manager' | 'accountant' | 'staff' | 'external_booker';
+  role: 'admin' | 'manager' | 'accountant' | 'staff' | 'viewer' | 'external_booker';
   homeBranchId: string | null;
 }
 

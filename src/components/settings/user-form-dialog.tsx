@@ -26,7 +26,7 @@ import {
 
 import { createStaffUser, updateStaffUser } from '@/app/(dashboard)/settings/users/actions';
 
-export type UserRole = 'admin' | 'manager' | 'accountant' | 'staff' | 'external_booker';
+export type UserRole = 'admin' | 'manager' | 'accountant' | 'staff' | 'viewer' | 'external_booker';
 
 export interface StaffUserItem {
   id: string;
@@ -175,13 +175,14 @@ export function UserFormDialog({
 
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Role *</Label>
-              <Select items={[{ value: 'admin', label: 'Admin — full access' }, { value: 'manager', label: 'Manager — store ops + approvals' }, { value: 'accountant', label: 'Accountant — financial master data' }, { value: 'staff', label: 'Staff — daily POS work' }, { value: 'external_booker', label: 'External Booker — Hotel front-desk reservation only' }]} value={role} onValueChange={(v) => v && setRole(v as UserRole)}>
+              <Select items={[{ value: 'admin', label: 'Admin — full access' }, { value: 'manager', label: 'Manager — store ops + approvals' }, { value: 'accountant', label: 'Accountant — financial master data' }, { value: 'staff', label: 'Staff — daily POS work' }, { value: 'viewer', label: 'Viewer — read-only' }, { value: 'external_booker', label: 'External Booker — Hotel front-desk reservation only' }]} value={role} onValueChange={(v) => v && setRole(v as UserRole)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">Admin — full access</SelectItem>
                   <SelectItem value="manager">Manager — store ops + approvals</SelectItem>
                   <SelectItem value="accountant">Accountant — financial master data</SelectItem>
                   <SelectItem value="staff">Staff — daily POS work</SelectItem>
+                  <SelectItem value="viewer">Viewer — read-only</SelectItem>
                   <SelectItem value="external_booker">External Booker — Hotel front-desk reservation only</SelectItem>
                 </SelectContent>
               </Select>

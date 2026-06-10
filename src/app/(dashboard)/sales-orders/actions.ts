@@ -1071,6 +1071,84 @@ export async function updateOrderItem(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
+// Change the discount on a draft or in-service line. Everything else stays
+// untouched — only the discount class, discount amount, and final amount are
+// recalculated. Allowed while the service is running so the desk can correct
+// a wrong discount without interrupting the therapist.
+const updateDiscountSchema = z.object({
+  id: z.string().uuid(),
+  order_id: z.string().uuid(),
+  discount_class_id: z.string().uuid(),
+  discount_override: z.number().nullable().optional(),
+});
+
+export async function updateItemDiscount(input: unknown): Promise<ActionResult> {
+  const parsed = updateDiscountSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
+  const d = parsed.data;
+  const auth = await requireOrderBranchAccess(d.order_id);
+  if (!auth.ok) return auth;
+  const supabase = await createAuditedClient();
+
+  const { data: item } = await supabase
+    .from('order_items')
+    .select('status, service_item_id, list_price_cents')
+    .eq('id', d.id)
+    .single();
+  if (!item) return { ok: false, error: 'Service line not found' };
+  if (!['draft', 'in_service'].includes(item.status))
+    return { ok: false, error: 'Discount can only be changed on a scheduled or in-service line' };
+  if (!item.service_item_id || item.list_price_cents == null)
+    return { ok: false, error: 'Cannot set discount on a deferred (unpriced) line' };
+
+  // Resolve the discount class and compute amounts
+  const { data: ord } = await supabase
+    .from('orders')
+    .select('source:customer_sources ( discount_locked, default_discount_class_id )')
+    .eq('id', d.order_id)
+    .maybeSingle();
+  const ordSource = ord ? (Array.isArray(ord.source) ? ord.source[0] : ord.source) : null;
+  const discountClassId = ordSource?.discount_locked && ordSource.default_discount_class_id
+    ? ordSource.default_discount_class_id
+    : d.discount_class_id;
+
+  const { data: disc, error: de } = await supabase
+    .from('discount_classes')
+    .select('code, discount_percent, discount_amount_cents')
+    .eq('id', discountClassId)
+    .single();
+  if (de || !disc) return { ok: false, error: 'Discount class not found' };
+
+  if (MANAGER_DISCOUNTS.includes(disc.code) && !isManager(await currentSession())) {
+    return { ok: false, error: `${disc.code} requires manager permission` };
+  }
+
+  const listPrice = item.list_price_cents;
+  let discountAmount = 0;
+  if (disc.code === 'DIS-90') {
+    discountAmount = listPrice;
+  } else if (VARIABLE_DISCOUNTS.includes(disc.code)) {
+    const override = Math.round((d.discount_override ?? 0) * 100);
+    if (override <= 0) return { ok: false, error: `Enter a discount amount for ${disc.code}` };
+    discountAmount = Math.min(override, listPrice);
+  } else if (disc.discount_percent > 0) {
+    discountAmount = Math.round((listPrice * disc.discount_percent) / 100);
+  } else if (disc.discount_amount_cents > 0) {
+    discountAmount = Math.min(disc.discount_amount_cents, listPrice);
+  }
+  const finalAmount = Math.max(0, listPrice - discountAmount);
+
+  const { error } = await supabase.from('order_items').update({
+    discount_class_id: discountClassId,
+    discount_amount_cents: discountAmount,
+    final_amount_cents: finalAmount,
+  }).eq('id', d.id);
+  if (error) return { ok: false, error: error.message };
+  await recomputeTotals(d.order_id);
+  revalidatePath(`/sales-orders/${d.order_id}`);
+  return { ok: true };
+}
+
 // Hard-remove a service line — only on a DRAFT order, and only a not-yet-started
 // (scheduled) line. Once the order is open it is "live", so removing a service
 // goes through Skip (soft, audit-kept); a started line is ended with Interrupt.

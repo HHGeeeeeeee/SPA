@@ -14,7 +14,7 @@ export function PrintButton() {
       className="gap-2 print:hidden"
     >
       <Printer className="size-4" />
-      列印 / 存成 PDF
+      Print / Save as PDF
     </Button>
   );
 }

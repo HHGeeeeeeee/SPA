@@ -19,11 +19,11 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <div className="flex h-screen overflow-hidden">
+      <div className="flex h-screen overflow-hidden print:block print:h-auto print:overflow-visible">
         <Sidebar isAdmin={viewerIsAdmin} isManager={viewerIsManager} />
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex flex-1 flex-col overflow-hidden print:overflow-visible">
           <TopBar userName={session.displayName ?? session.email} />
-          <main className="flex-1 overflow-y-auto bg-background spa-pattern p-6">{children}</main>
+          <main className="flex-1 overflow-y-auto bg-background spa-pattern p-6 print:overflow-visible print:p-0 print:text-[11px]">{children}</main>
         </div>
       </div>
     </SidebarProvider>

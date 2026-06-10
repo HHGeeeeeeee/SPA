@@ -310,7 +310,7 @@ export function CreateOrderDialog({
                     <div className="grid grid-cols-[1fr_1fr_8rem] gap-2 mb-1">
                       <FieldLabel required>Name</FieldLabel>
                       <FieldLabel required>Phone</FieldLabel>
-                      <FieldLabel>Gender</FieldLabel>
+                      <FieldLabel>Preferred Gender</FieldLabel>
                     </div>
                     <div className="grid grid-cols-[1fr_1fr_8rem] gap-2">
                       <Input placeholder={`Guest ${i + 1}`} value={g.name} onChange={(e) => patchGuest(g._id, { name: e.target.value })} />

@@ -119,7 +119,7 @@ export function ShiftRemittancePanel({
               <TableHead className="text-right">Expected</TableHead>
               <TableHead className="text-right">Declared</TableHead>
               <TableHead className="text-right">Over / Short</TableHead>
-              <TableHead className="text-right">Proof</TableHead>
+              <TableHead className="text-right print:hidden">Proof</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -129,20 +129,23 @@ export function ShiftRemittancePanel({
                 <TableCell className="text-right font-semibold tabular-nums">{peso(r.expectedCents)}</TableCell>
                 <TableCell className="text-right">
                   {r.countable && open
-                    ? <Input
-                        type="text"
-                        inputMode="decimal"
-                        autoComplete="off"
-                        name="shift-cash-count"
-                        value={groupThousands(actual)}
-                        onChange={(e) => {
-                          // Strip the separators, keep digits + one decimal point.
-                          const raw = e.target.value.replace(/,/g, '');
-                          if (raw === '' || /^\d*\.?\d*$/.test(raw)) setActual(raw);
-                        }}
-                        className="ml-auto h-8 w-32 text-right tabular-nums"
-                        placeholder="Count…"
-                      />
+                    ? <>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          name="shift-cash-count"
+                          value={groupThousands(actual)}
+                          onChange={(e) => {
+                            // Strip the separators, keep digits + one decimal point.
+                            const raw = e.target.value.replace(/,/g, '');
+                            if (raw === '' || /^\d*\.?\d*$/.test(raw)) setActual(raw);
+                          }}
+                          className="ml-auto h-8 w-32 text-right tabular-nums print:hidden"
+                          placeholder="Count…"
+                        />
+                        <span className="hidden print:inline font-semibold tabular-nums">{declared[i] == null ? '—' : peso(declared[i])}</span>
+                      </>
                     : <span className="font-semibold tabular-nums">{declared[i] == null ? '—' : peso(declared[i])}</span>}
                 </TableCell>
                 <TableCell className="text-right">
@@ -150,7 +153,7 @@ export function ShiftRemittancePanel({
                     ? <span className="text-muted-foreground">—</span>
                     : <span className={`font-bold tabular-nums ${overShort[i] === 0 ? 'text-primary' : 'text-destructive'}`}>{peso(overShort[i])}</span>}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right print:hidden">
                   <div className="flex justify-end">
                     <ShiftMethodAttachments
                       shiftId={shiftId}
@@ -169,7 +172,7 @@ export function ShiftRemittancePanel({
               <TableCell className="text-right font-bold tabular-nums">{peso(expectedTotal)}</TableCell>
               <TableCell className="text-right font-bold tabular-nums">{declaredTotal == null ? '—' : peso(declaredTotal)}</TableCell>
               <TableCell className="text-right font-bold tabular-nums">{overShortTotal == null ? '—' : peso(overShortTotal)}</TableCell>
-              <TableCell />
+              <TableCell className="print:hidden" />
             </TableRow>
           </TableFooter>
         </Table>
@@ -204,7 +207,7 @@ export function ShiftRemittancePanel({
       </div>
 
       {open ? (
-        <div className="flex flex-col gap-3 border-t border-border pt-4">
+        <div className="flex flex-col gap-3 border-t border-border pt-4 print:hidden">
           {liveVariance !== null && liveVariance !== 0 && (
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Variance reason</Label>
@@ -216,7 +219,7 @@ export function ShiftRemittancePanel({
           </Button>
         </div>
       ) : (
-        <div className="flex flex-col gap-2 border-t border-border pt-4">
+        <div className="flex flex-col gap-2 border-t border-border pt-4 print:hidden">
           {varianceReason && <p className="text-xs font-medium text-muted-foreground">Variance reason: {varianceReason}</p>}
           {canReopen && (
             <Button size="sm" variant="outline" className="self-start" onClick={() => setReopenOpen(true)} disabled={pending}>Reopen</Button>

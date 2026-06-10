@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ShiftRemittancePanel } from '@/components/reconciliation/shift-remittance-panel';
 import { ShiftPostingStatus } from '@/components/reconciliation/shift-posting-status';
 import { ShiftLinesTabs } from '@/components/reconciliation/shift-lines-tabs';
+import { PrintButton } from '@/components/system-compare/print-button';
 import { loadShiftDetail, loadRemittanceChecks, loadShiftAttachments, type UnsettledOrder, type OverdueServiceLine } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -94,9 +95,12 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/reconciliation/shift-remittance" className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-4" /> Back to shifts
-      </Link>
+      <div className="flex items-center justify-between print:hidden">
+        <Link href="/reconciliation/shift-remittance" className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="size-4" /> Back to shifts
+        </Link>
+        <PrintButton />
+      </div>
 
       {/* Header */}
       <Card>
@@ -117,7 +121,7 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
       </Card>
 
       {/* Pre-close pipeline checks for this shift's branch. */}
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2 print:hidden">
         <CheckCard
           title={`cancelled order${checks.cancelledWithDue.length === 1 ? '' : 's'} with a balance`}
           hint="Cancelled orders that still have charges or payments on record — settle or refund them before closing."
@@ -135,20 +139,24 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
         />
       </div>
 
-      <OverdueCard rows={checks.overdueInService} />
+      <div className="print:hidden">
+        <OverdueCard rows={checks.overdueInService} />
+      </div>
 
       {/* Remittance — per-method table (cash counted inline) + summary + close. */}
       <Card>
         <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
           <CardTitle className="text-base font-bold">Remittance</CardTitle>
           {d.status === 'closed' && (
-            <ShiftPostingStatus
-              shiftId={d.id}
-              postingStatus={d.postingStatus}
-              glBatchNbr={d.glBatchNbr}
-              postingError={d.postingError}
-              canRetry={isManager(session)}
-            />
+            <div className="print:hidden">
+              <ShiftPostingStatus
+                shiftId={d.id}
+                postingStatus={d.postingStatus}
+                glBatchNbr={d.glBatchNbr}
+                postingError={d.postingError}
+                canRetry={isManager(session)}
+              />
+            </div>
           )}
         </CardHeader>
         <CardContent>
@@ -173,7 +181,7 @@ export default async function ShiftDetailPage({ params }: { params: Promise<{ sh
       </Card>
 
       {/* Posted revenue / Collected payments — tabbed so the page stays compact. */}
-      <Card>
+      <Card className="print:hidden">
         <CardContent className="pt-6">
           <ShiftLinesTabs revenueLines={d.revenueLines} folioLines={d.folioLines} />
         </CardContent>

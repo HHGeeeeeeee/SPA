@@ -7,6 +7,7 @@ import { OverdueCloseBanner } from '@/components/reconciliation/overdue-close-ba
 import { DashboardBranchPicker } from '@/components/dashboard/dashboard-branch-picker';
 import { DashboardUtilization } from '@/components/dashboard/dashboard-utilization';
 import { DashboardCommission, type CommRow } from '@/components/dashboard/dashboard-commission';
+import { PrintButton } from '@/components/system-compare/print-button';
 import { computeDayOccupancy } from '@/lib/occupancy';
 import { loadCommissionGroups } from '@/app/(dashboard)/reconciliation/commission/actions';
 import { getAllowedBranchIds } from '@/lib/branch-access';
@@ -152,12 +153,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     <div className="flex flex-col gap-6">
       <DashboardBranchPicker branches={branches} selected={selected} />
 
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-        <p className="text-sm font-semibold text-muted-foreground mt-1">Today · {d.today}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+          <p className="text-sm font-semibold text-muted-foreground mt-1">Today · {d.today}</p>
+        </div>
+        <PrintButton />
       </div>
 
-      <OverdueCloseBanner items={overdueItems} />
+      <div className="print:hidden">
+        <OverdueCloseBanner items={overdueItems} />
+      </div>
 
       {/* One KPI row: the Revenue − Discount − Commission = Net waterfall (double
           wide), then guests + services delivered + open sales-remittance shifts. */}

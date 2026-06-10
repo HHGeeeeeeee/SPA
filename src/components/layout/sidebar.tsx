@@ -231,7 +231,7 @@ export function Sidebar({
     // during the transition.
     <aside
       className={cn(
-        'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200 overflow-hidden',
+        'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200 overflow-hidden print:hidden',
         collapsed ? 'w-0 border-r-0' : 'w-64 border-r border-sidebar-border',
       )}
       aria-hidden={collapsed}

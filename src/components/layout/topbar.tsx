@@ -27,7 +27,7 @@ export function TopBar({ title, userName }: TopBarProps) {
     .toUpperCase();
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6">
+    <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6 print:hidden">
       <div className="flex items-center gap-3">
         {/* Hamburger re-opens the sidebar when collapsed; the chevron inside
             the sidebar header collapses it. Two distinct controls keep both

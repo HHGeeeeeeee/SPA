@@ -35,6 +35,7 @@ import {
   updateOrderCustomer,
   addOrderItem,
   updateOrderItem,
+  updateItemDiscount,
   markNoShow,
   startOrderItem,
   startAllServices,
@@ -224,6 +225,63 @@ function ActionBtn({ tip, children, ...props }: { tip: string } & ComponentProps
       <TooltipTrigger render={<Button size="sm" {...props}>{children}</Button>} />
       <TooltipContent>{tip}</TooltipContent>
     </Tooltip>
+  );
+}
+
+// Inline discount picker rendered in the read-only row for in_service items.
+// Spans two grid columns (Discount class + Disc. value) — auto-saves on change.
+function InServiceDiscountPicker({ item, orderId, discountClasses, sourceDiscountLocked, defaultDiscountId, pending, startTransition, router }: {
+  item: OrderItem;
+  orderId: string;
+  discountClasses: DiscountOpt[];
+  sourceDiscountLocked: boolean;
+  defaultDiscountId: string;
+  pending: boolean;
+  startTransition: (cb: () => void) => void;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const effectiveId = sourceDiscountLocked ? defaultDiscountId : (item.discount_class_id ?? defaultDiscountId);
+  const [localDisc, setLocalDisc] = useState(effectiveId);
+  const [localOverride, setLocalOverride] = useState('');
+  const selected = discountClasses.find((d) => d.id === localDisc);
+  const needsAmount = ['DIS-91', 'DIS-99'].includes(selected?.code ?? '');
+  const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
+  const discValueLabel = !selected
+    ? '—'
+    : selected.discount_percent > 0 ? `-${selected.discount_percent}%`
+    : selected.discount_amount_cents > 0 ? `-${peso(selected.discount_amount_cents)}`
+    : '—';
+
+  function save(discId: string, override: string) {
+    startTransition(async () => {
+      const code = discountClasses.find((x) => x.id === discId)?.code ?? '';
+      const r = await updateItemDiscount({
+        id: item.id,
+        order_id: orderId,
+        discount_class_id: discId,
+        discount_override: ['DIS-91', 'DIS-99'].includes(code) ? Number(override || 0) : null,
+      });
+      if (!r.ok) { toast.error(r.error); return; }
+      router.refresh();
+    });
+  }
+
+  return (
+    <>
+      <div className="min-w-0">
+        <Select items={discOptions} value={localDisc} onValueChange={(v) => { if (!v) return; setLocalDisc(v); save(v, localOverride); }} disabled={pending || sourceDiscountLocked}>
+          <SelectTrigger className="h-7 w-full text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>{discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-0">
+        {needsAmount ? (
+          <Input className="h-7 w-full text-right text-xs" type="number" min="0" step="0.01" value={localOverride} onChange={(e) => setLocalOverride(e.target.value)} onBlur={() => save(localDisc, localOverride)} placeholder="Amt" disabled={pending} />
+        ) : (
+          <span className="block text-xs font-medium text-muted-foreground tabular">{discValueLabel}</span>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -934,8 +992,23 @@ export function OrderWorkspace({
                               {dispatch ? (it.external_room_no || '—') : <>{it.station_branch_code ? `${it.station_branch_code} · ` : ''}{it.station_name ?? '—'}</>}
                             </span>
                             <span className="text-right tabular text-sm font-medium text-muted-foreground">{peso(it.list_price_cents)}</span>
-                            <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
-                            <span className="text-xs font-medium text-muted-foreground tabular truncate">{discValue}</span>
+                            {order.editable && it.status === 'in_service' ? (
+                              <InServiceDiscountPicker
+                                item={it}
+                                orderId={order.id}
+                                discountClasses={discountClasses}
+                                sourceDiscountLocked={sourceDiscountLocked}
+                                defaultDiscountId={defaultDiscountId}
+                                pending={pending}
+                                startTransition={startTransition}
+                                router={router}
+                              />
+                            ) : (
+                              <>
+                                <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
+                                <span className="text-xs font-medium text-muted-foreground tabular truncate">{discValue}</span>
+                              </>
+                            )}
                             <span className="text-right tabular text-sm">
                               {['cancelled', 'no_show'].includes(it.status) ? (
                                 <span className="font-medium line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>

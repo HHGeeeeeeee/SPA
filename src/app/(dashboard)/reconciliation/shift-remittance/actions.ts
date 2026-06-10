@@ -143,6 +143,8 @@ export interface ShiftFolioLine {
   kind: string;
   method: string | null;
   ref: string | null;
+  transactionCode: string | null;
+  postedBy: string | null;
   amountCents: number;
 }
 export interface ShiftRevenueLine {
@@ -151,6 +153,11 @@ export interface ShiftRevenueLine {
   orderId: string | null;
   orderNo: string | null;
   category: string;
+  therapistName: string | null;
+  serviceName: string | null;
+  guestName: string | null;
+  transactionCode: string | null;
+  postedBy: string | null;
   amountCents: number;
 }
 export interface ShiftDetail {
@@ -202,7 +209,7 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
 
   const { data: lines } = await supabase
     .from('folio_lines')
-    .select('id, kind, amount_cents, posted_at, payment_ref, method:payment_methods!folio_lines_payment_method_id_fkey ( code, display_name ), order:orders!folio_lines_order_id_fkey ( id, order_no ), item:order_items!folio_lines_order_item_id_fkey ( category:service_categories ( name ) )')
+    .select('id, kind, amount_cents, posted_at, payment_ref, method:payment_methods!folio_lines_payment_method_id_fkey ( code, display_name ), order:orders!folio_lines_order_id_fkey ( id, order_no ), item:order_items!folio_lines_order_item_id_fkey ( category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), service:service_items!order_items_service_item_id_fkey ( name ) ), guest:order_customers!folio_lines_order_customer_id_fkey ( customer_name ), txn:transaction_codes!folio_lines_transaction_code_id_fkey ( code ), tip_record:tips!tips_folio_line_id_fkey ( therapist:employees!tips_therapist_id_fkey ( name ) ), poster:staff_users!folio_lines_posted_by_fkey ( display_name )')
     .eq('shift_id', shiftId)
     .order('posted_at', { ascending: false });
 
@@ -220,7 +227,18 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
       revenueTotal += l.amount_cents;
       const catName = l.kind === 'tip' ? 'Tips' : (one(one(l.item)?.category)?.name ?? 'Service');
       revenueByCat.set(catName, (revenueByCat.get(catName) ?? 0) + l.amount_cents);
-      revenueLines.push({ id: l.id, postedAt: l.posted_at, orderId: ord?.id ?? null, orderNo: ord?.order_no ?? null, category: catName, amountCents: l.amount_cents });
+      const itm = one(l.item);
+      // For tip lines, the therapist is on the tips row (not order_items).
+      const tipTherapist = l.kind === 'tip' ? one(one(l.tip_record)?.therapist)?.name ?? null : null;
+      revenueLines.push({
+        id: l.id, postedAt: l.posted_at, orderId: ord?.id ?? null, orderNo: ord?.order_no ?? null, category: catName,
+        therapistName: one(itm?.therapist)?.name ?? tipTherapist,
+        serviceName: one(itm?.service)?.name ?? null,
+        guestName: one(l.guest)?.customer_name ?? null,
+        transactionCode: one(l.txn)?.code ?? null,
+        postedBy: one(l.poster)?.display_name ?? null,
+        amountCents: l.amount_cents,
+      });
       continue;
     }
     if (l.kind !== 'payment' && l.kind !== 'refund') continue;
@@ -231,7 +249,9 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
     if (code === 'cash') { if (l.kind === 'payment') cashIn += l.amount_cents; else cashOut += l.amount_cents; }
     folioLines.push({
       id: l.id, postedAt: l.posted_at, orderId: ord?.id ?? null, orderNo: ord?.order_no ?? null,
-      kind: l.kind, method: m?.display_name ?? null, ref: l.payment_ref ?? null, amountCents: l.amount_cents,
+      kind: l.kind, method: m?.display_name ?? null, ref: l.payment_ref ?? null,
+      transactionCode: one(l.txn)?.code ?? null, postedBy: one(l.poster)?.display_name ?? null,
+      amountCents: l.amount_cents,
     });
   }
   const closed = s.status === 'closed';

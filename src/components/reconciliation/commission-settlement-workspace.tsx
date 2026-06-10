@@ -96,6 +96,9 @@ export interface CommHistoryRow {
   // Who clicked Settle (period-level). null for legacy periods settled before
   // confirmed_by_staff_id was stamped.
   confirmed_by: string | null;
+  // Which commission policy was used for this settlement. null = legacy or
+  // branch default (before the policy-picker feature was added).
+  policy_name: string | null;
   therapists: string[];
   detail: {
     therapist: string;
@@ -119,6 +122,8 @@ export interface CommHistoryRow {
   }[];
 }
 
+interface PolicyOpt { id: string; code: string; name: string }
+
 export function CommissionSettlementWorkspace({
   branches,
   initialBranchId,
@@ -126,6 +131,8 @@ export function CommissionSettlementWorkspace({
   initialTo,
   initialGroups,
   history,
+  policies,
+  branchPolicyMap,
 }: {
   branches: Branch[];
   initialBranchId: string;
@@ -133,10 +140,18 @@ export function CommissionSettlementWorkspace({
   initialTo: string;
   initialGroups: CommGroup[];
   history: CommHistoryRow[];
+  policies: PolicyOpt[];
+  branchPolicyMap: Record<string, string | null>;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<'generate' | 'history'>('generate');
-  const [branchId, setBranchId] = useState(initialBranchId);
+  const [branchId, setBranchIdRaw] = useState(initialBranchId);
+  // Policy picker — pre-filled with the branch's default, can be overridden.
+  const [policyId, setPolicyId] = useState(branchPolicyMap[initialBranchId] ?? '');
+  function setBranchId(id: string) {
+    setBranchIdRaw(id);
+    setPolicyId(branchPolicyMap[id] ?? '');
+  }
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
   const [groups, setGroups] = useState<CommGroup[]>(initialGroups);
@@ -169,14 +184,14 @@ export function CommissionSettlementWorkspace({
     if (!branchId || !from || !to || to < from) return;
     const t = setTimeout(() => {
       startLoad(async () => {
-        const data = await loadCommissionGroups(branchId, from, to);
+        const data = await loadCommissionGroups(branchId, from, to, policyId || null);
         setGroups(data);
         setSelected(new Set());
       });
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [branchId, from, to]);
+  }, [branchId, from, to, policyId]);
 
   function toggleSel(id: string) {
     setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -195,11 +210,11 @@ export function CommissionSettlementWorkspace({
   function doSettle() {
     if (selected.size === 0) return toast.error('Select at least one therapist');
     startGen(async () => {
-      const r = await settleCommission({ branch_id: branchId, from, to, therapist_ids: [...selected] });
+      const r = await settleCommission({ branch_id: branchId, from, to, therapist_ids: [...selected], commission_policy_id: policyId || null });
       if (r.ok) {
         toast.success(`Settled ${r.data?.therapists} therapist(s)`);
         setSelected(new Set());
-        const data = await loadCommissionGroups(branchId, from, to);
+        const data = await loadCommissionGroups(branchId, from, to, policyId || null);
         setGroups(data);
         router.refresh();
         setTab('history');
@@ -324,6 +339,17 @@ export function CommissionSettlementWorkspace({
                 <Label className="text-xs font-semibold">To</Label>
                 <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
               </div>
+              {policies.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs font-semibold">Commission Policy</Label>
+                  <Select items={policies.map((p) => ({ value: p.id, label: p.code }))} value={policyId} onValueChange={(v) => v && setPolicyId(v)}>
+                    <SelectTrigger className="w-52 font-bold"><SelectValue placeholder="No policy" /></SelectTrigger>
+                    <SelectContent>
+                      {policies.map((p) => <SelectItem key={p.id} value={p.id}>{p.code} — {p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <p className="ml-auto text-sm font-semibold text-muted-foreground">
                 {groups.length} therapist · {grandSessions} session(s) · {peso(grandComm)} commission
               </p>
@@ -523,7 +549,10 @@ export function CommissionSettlementWorkspace({
                                 <input type="checkbox" className="size-4 cursor-pointer accent-primary" checked={histSel.has(p.id)} onChange={() => toggleHistSel(p.id)} />
                               )}
                             </TableCell>
-                            <TableCell className="font-mono font-bold">{p.period_no}</TableCell>
+                            <TableCell className="font-mono font-bold">
+                              {p.period_no}
+                              {p.policy_name && <span className="ml-1.5 inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-primary">{p.policy_name}</span>}
+                            </TableCell>
                             <TableCell className="font-mono font-bold">{p.branch_code ?? '—'}</TableCell>
                             <TableCell className="font-medium tabular text-muted-foreground pl-6">{p.period_from} → {p.period_to}</TableCell>
                             <TableCell className="font-medium tabular">{p.confirmed_at ? fmtDateTime(p.confirmed_at) : '—'}

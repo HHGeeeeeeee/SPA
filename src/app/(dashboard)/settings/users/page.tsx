@@ -40,6 +40,7 @@ async function fetchData() {
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: 'Admin',
   manager: 'Manager',
+  accountant: 'Accountant',
   staff: 'Staff',
   external_booker: 'External Booker',
 };
@@ -48,6 +49,7 @@ function roleBadge(role: UserRole) {
   const map: Record<UserRole, 'default' | 'secondary' | 'destructive'> = {
     admin: 'destructive',
     manager: 'default',
+    accountant: 'default',
     staff: 'secondary',
     external_booker: 'secondary',
   };

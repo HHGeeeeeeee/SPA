@@ -718,6 +718,7 @@ export type Database = {
       commission_periods: {
         Row: {
           branch_id: string | null
+          commission_policy_id: string | null
           confirmed_at: string | null
           confirmed_by_staff_id: string | null
           created_at: string
@@ -736,6 +737,7 @@ export type Database = {
         }
         Insert: {
           branch_id?: string | null
+          commission_policy_id?: string | null
           confirmed_at?: string | null
           confirmed_by_staff_id?: string | null
           created_at?: string
@@ -754,6 +756,7 @@ export type Database = {
         }
         Update: {
           branch_id?: string | null
+          commission_policy_id?: string | null
           confirmed_at?: string | null
           confirmed_by_staff_id?: string | null
           created_at?: string
@@ -776,6 +779,13 @@ export type Database = {
             columns: ["branch_id"]
             isOneToOne: false
             referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_periods_commission_policy_id_fkey"
+            columns: ["commission_policy_id"]
+            isOneToOne: false
+            referencedRelation: "commission_policies"
             referencedColumns: ["id"]
           },
           {

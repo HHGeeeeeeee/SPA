@@ -47,6 +47,7 @@ interface PdfData {
   confirmed_at: string | null;
   confirmed_by: string | null;
   branch_name: string;
+  policy_name: string | null;
   total_sessions: number;
   total_commission: number;
   groups: PdfCommGroup[];
@@ -60,6 +61,7 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
       period_no, status, period_from, period_to, confirmed_at, branch_id,
       total_sessions, total_commission_cents,
       branch:branches!commission_periods_branch_id_fkey ( name ),
+      policy:commission_policies!commission_periods_commission_policy_id_fkey ( name ),
       confirmer:staff_users!commission_periods_confirmed_by_staff_id_fkey ( display_name, email ),
       entries:commission_entries!commission_entries_period_id_fkey (
         therapist_id, computed_commission_cents, adjustment_cents, adjustment_reason, adjustment_at, final_amount_cents,
@@ -159,6 +161,7 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
     confirmed_at: p.confirmed_at ?? null,
     confirmed_by: one(p.confirmer)?.display_name ?? one(p.confirmer)?.email ?? null,
     branch_name: one(p.branch)?.name ?? 'HHG-SPA',
+    policy_name: one(p.policy)?.name ?? null,
     total_sessions: p.total_sessions ?? 0,
     total_commission: p.total_commission_cents ?? 0,
     groups: sortedGroups,
@@ -245,6 +248,12 @@ function CommDoc({ d }: { d: PdfData }) {
             <Text style={styles.summaryLabel}>PERIOD</Text>
             <Text style={styles.summaryVal}>{d.period_from} → {d.period_to}</Text>
           </View>
+          {d.policy_name && (
+            <View>
+              <Text style={styles.summaryLabel}>POLICY</Text>
+              <Text style={styles.summaryVal}>{d.policy_name}</Text>
+            </View>
+          )}
           <View>
             <Text style={styles.summaryLabel}>THERAPISTS</Text>
             <Text style={styles.summaryVal}>{d.groups.length}</Text>

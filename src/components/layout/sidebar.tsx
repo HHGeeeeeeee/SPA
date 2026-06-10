@@ -49,18 +49,21 @@ function NavLink({
   pathname,
   isAdmin,
   isManager,
+  isAccountant,
 }: {
   item: NavItem;
   pathname: string;
   isAdmin: boolean;
   isManager: boolean;
+  isAccountant: boolean;
 }) {
   // Strip admin-only / manager-only sub-items + sub-groups up front so the
   // chevron / active detection both see the post-filter view (a sub-group
   // that ends up empty after filtering disappears entirely rather than
-  // rendering as a blank header).
-  const allowed = (c: { adminOnly?: boolean; managerOnly?: boolean }) =>
-    (!c.adminOnly || isAdmin) && (!c.managerOnly || isManager);
+  // rendering as a blank header). accountantAllowed overrides both flags.
+  const allowed = (c: { adminOnly?: boolean; managerOnly?: boolean; accountantAllowed?: boolean }) =>
+    (!c.adminOnly || isAdmin || (isAccountant && !!c.accountantAllowed)) &&
+    (!c.managerOnly || isManager || (isAccountant && !!c.accountantAllowed));
   const filteredChildren = item.children?.filter(allowed);
   const filteredChildGroups = item.childGroups
     ?.map((g) => ({ ...g, items: g.items.filter(allowed) }))
@@ -198,19 +201,26 @@ function ChildLink({
 export function Sidebar({
   isAdmin = false,
   isManager = false,
+  isAccountant = false,
 }: {
   isAdmin?: boolean;
   /** manager-or-above (admin always counts as manager). Drives the
    *  managerOnly nav-item filter — Settings, mainly. */
   isManager?: boolean;
+  /** Accountant sees Settings + financial master data items via the
+   *  accountantAllowed flag on specific nav items. */
+  isAccountant?: boolean;
 }) {
   const pathname = usePathname();
   const { collapsed, toggle } = useSidebar();
   // Hide nav items flagged adminOnly / managerOnly when the viewer doesn't
-  // match. Mirrors the server-side gates on those routes — keeps the menu
+  // match. accountantAllowed overrides both flags for the accountant role.
+  // Mirrors the server-side gates on those routes — keeps the menu
   // honest (no link the viewer can't actually open).
   const visibleNav = mainNavItems.filter(
-    (item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager),
+    (item) =>
+      (!item.adminOnly || isAdmin || (isAccountant && item.accountantAllowed)) &&
+      (!item.managerOnly || isManager || (isAccountant && item.accountantAllowed)),
   );
 
   // Sign out via POST (never a prefetchable GET <Link> — that silently logged
@@ -268,6 +278,7 @@ export function Sidebar({
               pathname={pathname}
               isAdmin={isAdmin}
               isManager={isManager}
+              isAccountant={isAccountant}
             />
           ))}
         </div>

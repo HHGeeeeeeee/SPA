@@ -303,7 +303,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     // has their shift at the OTHER branch, so shifts can't be filtered by branchIds.
     supabase
       .from('employee_shifts')
-      .select('employee_id, branch_id, shift_start, shift_end, employees:employee_id ( position:positions ( code ) )')
+      .select('employee_id, branch_id, shift_start, shift_end, shift_type, employees:employee_id ( position:positions ( code ) )')
       .eq('shift_date', day).in('shift_type', ['regular', 'cross_branch', 'on_call']),
     supabase
       .from('order_items')
@@ -326,7 +326,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
   // On-shift band per therapist: the union of their shifts today, placed onto the
   // board's minute axis. No shift today → no band (an empty row). rawStarts feeds
   // the early-open widening (pre-open morning starts), placedEnds the late close.
-  const bandByEmp = new Map<string, { start: number; end: number }>();
+  const bandByEmp = new Map<string, { start: number; end: number; shiftType: string }>();
   const rawStarts: number[] = [];
   const placedEnds: number[] = [];
   for (const s of shiftRes.data ?? []) {
@@ -336,7 +336,10 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     rawStarts.push(ss); placedEnds.push(place(se));
     const start = place(ss); const end = place(se);
     const prev = bandByEmp.get(s.employee_id);
-    bandByEmp.set(s.employee_id, prev ? { start: Math.min(prev.start, start), end: Math.max(prev.end, end) } : { start, end });
+    // When merging multiple shifts, keep the "most present" type (regular > cross > on_call).
+    const st = s.shift_type ?? 'regular';
+    const mergedType = prev ? (prev.shiftType === 'on_call' && st !== 'on_call' ? st : prev.shiftType) : st;
+    bandByEmp.set(s.employee_id, prev ? { start: Math.min(prev.start, start), end: Math.max(prev.end, end), shiftType: mergedType } : { start, end, shiftType: st });
   }
 
   // Open the window early enough to cover shifts that start before the branch
@@ -360,6 +363,7 @@ async function fetchPeopleBoard(branchIds: string[], day: string): Promise<{ bed
     rowsById.set(e.id, {
       id: e.id, name: e.name ?? '—', type: positionCode ?? '_other',
       shiftStartMin: band?.start ?? null, shiftEndMin: band?.end ?? null,
+      shiftType: band?.shiftType ?? null,
       branch: branchCodeById.get(e.home_branch_id ?? '') ?? '—', zone: '',
     });
     if (band) {

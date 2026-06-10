@@ -301,9 +301,19 @@ export function isAdmin(s: SessionPayload | null): boolean {
   return !!s && s.role === 'admin';
 }
 
+/** Accountant — staff-level POS access + edit financial master data (TX codes, payment methods, service categories). */
+export function isAccountant(s: SessionPayload | null): boolean {
+  return !!s && s.role === 'accountant';
+}
+
 /** External hotel-front-desk booker — reservation-only; locked to the /book page. */
 export function isExternalBooker(s: SessionPayload | null): boolean {
   return !!s && s.role === 'external_booker';
+}
+
+/** Can enter the /settings tree — admin, manager, or accountant. */
+export function canAccessSettings(s: SessionPayload | null): boolean {
+  return isManager(s) || isAccountant(s);
 }
 
 /**
@@ -319,6 +329,12 @@ export async function requireAdmin(): Promise<string | null> {
 export async function requireManager(): Promise<string | null> {
   const s = await currentSession();
   return isManager(s) ? null : 'Manager permission required';
+}
+
+/** Guard for financial master data (TX codes, payment methods, service categories). */
+export async function requireAdminOrAccountant(): Promise<string | null> {
+  const s = await currentSession();
+  return (isAdmin(s) || isAccountant(s)) ? null : 'Admin or Accountant permission required';
 }
 
 export async function hashPassword(plain: string): Promise<string> {

@@ -30,16 +30,24 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
   const branchId = sp.branch && list.some((b) => b.id === sp.branch) ? sp.branch : list[0]?.id ?? '';
   const { from, to } = halfMonthRange();
 
-  const [groups, histRes, branchListRes] = await Promise.all([
+  const [groups, histRes, branchListRes, policiesRes, branchPolicyRes] = await Promise.all([
     branchId ? loadCommissionGroups(branchId, from, to) : Promise.resolve([]),
     supabase
       .from('commission_periods')
-      .select('id, period_no, status, period_from, period_to, total_sessions, total_commission_cents, confirmed_at, branch_id, branch:branches!commission_periods_branch_id_fkey ( code ), confirmer:staff_users!commission_periods_confirmed_by_staff_id_fkey ( display_name, email ), entries:commission_entries!commission_entries_period_id_fkey ( id, therapist_id, computed_commission_cents, adjustment_cents, adjustment_reason, adjustment_at, final_amount_cents, adjuster:staff_users!commission_entries_adjustment_by_staff_id_fkey ( display_name, email ) ), items:order_items!fk_order_items_commission_period ( list_price_cents, final_amount_cents, duration_minutes, commission_rate, commission_amount_cents, status, actual_start, therapist_id, therapist_home_branch_id, resource_id, therapist:employees!order_items_therapist_id_fkey ( name ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( order_no, service_date ), service:service_items!order_items_service_item_id_fkey ( name ) )')
+      .select('id, period_no, status, period_from, period_to, total_sessions, total_commission_cents, confirmed_at, branch_id, commission_policy_id, branch:branches!commission_periods_branch_id_fkey ( code ), policy:commission_policies!commission_periods_commission_policy_id_fkey ( code, name ), confirmer:staff_users!commission_periods_confirmed_by_staff_id_fkey ( display_name, email ), entries:commission_entries!commission_entries_period_id_fkey ( id, therapist_id, computed_commission_cents, adjustment_cents, adjustment_reason, adjustment_at, final_amount_cents, adjuster:staff_users!commission_entries_adjustment_by_staff_id_fkey ( display_name, email ) ), items:order_items!fk_order_items_commission_period ( list_price_cents, final_amount_cents, duration_minutes, commission_rate, commission_amount_cents, status, actual_start, therapist_id, therapist_home_branch_id, resource_id, therapist:employees!order_items_therapist_id_fkey ( name ), resource:resources!order_items_resource_id_fkey ( resource_name, branch_id ), order:orders!order_items_order_id_fkey ( order_no, service_date ), service:service_items!order_items_service_item_id_fkey ( name ) )')
       .order('created_at', { ascending: false }),
     // id → code lookup for the borrowed-from badge in the History detail.
     supabase.from('branches').select('id, code'),
+    // Active commission policies for the policy picker on the Settle tab.
+    supabase.from('commission_policies').select('id, code, name').eq('active', true).order('code'),
+    // Branch → default policy mapping so the picker pre-selects the branch's default.
+    supabase.from('branches').select('id, commission_policy_id'),
   ]);
   const branchCodeById = new Map((branchListRes.data ?? []).map((b) => [b.id as string, b.code as string]));
+  const policies = (policiesRes.data ?? []).map((p) => ({ id: p.id as string, code: p.code as string, name: p.name as string }));
+  const branchPolicyMap: Record<string, string | null> = Object.fromEntries(
+    (branchPolicyRes.data ?? []).map((b) => [b.id as string, (b.commission_policy_id as string | null) ?? null]),
+  );
   type AccLine = { service_date: string; order_no: string; station: string; service: string; duration_minutes: number | null; gross_cents: number; rate: number; commission_cents: number; actual_start: string };
   const history: CommHistoryRow[] = (histRes.data ?? []).map((p) => {
     // Group the period's settled service lines by therapist, listing each order.
@@ -107,6 +115,7 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
       branch_code: one(p.branch)?.code ?? null,
       confirmed_at: p.confirmed_at,
       confirmed_by: one(p.confirmer)?.display_name ?? one(p.confirmer)?.email ?? null,
+      policy_name: one(p.policy)?.name ?? null,
       therapists: detail.map((g) => g.therapist),
       detail,
     };
@@ -124,6 +133,8 @@ export default async function CommissionSettlementPage({ searchParams }: { searc
       initialTo={to}
       initialGroups={groups}
       history={history}
+      policies={policies}
+      branchPolicyMap={branchPolicyMap}
     />
   );
 }

@@ -33,6 +33,9 @@ export interface NavSubItem {
    *  sub-menu (e.g. Reconciliation → all back-office settlements; Shift Cash
    *  Count stays open). */
   managerOnly?: boolean;
+  /** When true, accountant role also sees this item even if it would
+   *  otherwise be hidden by adminOnly / managerOnly. */
+  accountantAllowed?: boolean;
 }
 
 export interface NavSubGroup {
@@ -51,6 +54,9 @@ export interface NavItem {
    *  scope manager-and-up surfaces like Settings, keeping staff / external
    *  booker out of administrative areas entirely. */
   managerOnly?: boolean;
+  /** When true, accountant role also sees this item even if it would
+   *  otherwise be hidden by adminOnly / managerOnly. */
+  accountantAllowed?: boolean;
   children?: NavSubItem[];
   childGroups?: NavSubGroup[];
 }
@@ -98,6 +104,7 @@ export const mainNavItems: NavItem[] = [
     label: 'Settings',
     icon: Settings,
     managerOnly: true,
+    accountantAllowed: true,
     childGroups: [
       {
         label: 'Organization',
@@ -125,7 +132,7 @@ export const mainNavItems: NavItem[] = [
           { label: 'Customer Sources', href: '/settings/customer-sources' },
           { label: 'Billing Destinations', href: '/settings/billing-destinations' },
           { label: 'Payment Methods', href: '/settings/payment-methods' },
-          { label: 'Transaction Codes', href: '/settings/transaction-codes', adminOnly: true },
+          { label: 'Transaction Codes', href: '/settings/transaction-codes', adminOnly: true, accountantAllowed: true },
         ],
       },
       {

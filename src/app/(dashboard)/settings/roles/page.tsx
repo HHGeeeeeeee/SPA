@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ShieldCheck,
   ShieldUser,
+  Calculator,
   Users,
   Building2,
   Check,
@@ -49,6 +50,20 @@ const ROLES = [
       'Generate / Settle Revenue SOA',
       'Service station status management',
       'Adjust shift schedules',
+    ],
+  },
+  {
+    code: 'accountant',
+    label: 'Accountant',
+    icon: Calculator,
+    color: 'default',
+    description: 'Accounting configuration — edit financial master data',
+    capabilities: [
+      'All staff capabilities (POS, Calendar, Payments)',
+      'Edit Transaction Codes & GL mappings',
+      'Edit Payment Methods',
+      'Edit Service Categories',
+      'View other Settings pages (read-only)',
     ],
   },
   {
@@ -109,7 +124,7 @@ export default async function RolesPage() {
         </Link>
         <h2 className="text-3xl font-bold tracking-tight mt-1">Roles & Permissions</h2>
         <p className="text-sm font-semibold text-muted-foreground mt-1">
-          4 built-in roles · Custom permission overrides stored in <span className="font-mono">role_permissions</span> (UI coming in v2)
+          5 built-in roles · Custom permission overrides stored in <span className="font-mono">role_permissions</span> (UI coming in v2)
         </p>
       </div>
 
@@ -177,7 +192,7 @@ export default async function RolesPage() {
           <p className="text-sm font-semibold text-muted-foreground">
             ℹ Note: For v1, capabilities are hard-coded in application logic. Custom
             <span className="font-mono"> role_permissions </span>
-            overrides go in via SQL or a future admin UI. The four roles cannot be deleted.
+            overrides go in via SQL or a future admin UI. The five roles cannot be deleted.
           </p>
         </CardContent>
       </Card>

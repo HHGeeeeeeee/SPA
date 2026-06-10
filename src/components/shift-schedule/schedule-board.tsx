@@ -47,6 +47,9 @@ export interface BoardBed {
    *  faint "on shift" band; bed rows leave these undefined. */
   shiftStartMin?: number | null;
   shiftEndMin?: number | null;
+  /** on_call shifts get a visually distinct band so desk staff can tell them
+   *  apart from regular/cross-branch roster. */
+  shiftType?: string | null;
   /** Bed rows (axis='bed') carry their branch code + zone so the board can nest
    *  Branch > Type > Zone > Station. */
   branch?: string;
@@ -485,7 +488,10 @@ function BedRow({
         draggable={!!onAddToLineup}
         onDragStart={onAddToLineup ? (e) => { e.dataTransfer.setData(LINEUP_DND_MIME, bed.id); e.dataTransfer.effectAllowed = "copy"; } : undefined}
       >
-        <div className="font-semibold text-sm">{bed.name}</div>
+        <div className="font-semibold text-sm">
+          {bed.name}
+          {bed.shiftType === 'on_call' && <span className="ml-1 rounded bg-amber-100 px-1 py-px text-[9px] font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">OC</span>}
+        </div>
         {(onAddBlock || onAddToLineup) && (
           <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
             {onAddToLineup && (
@@ -508,12 +514,13 @@ function BedRow({
         }}
       >
         {/* On-shift band (person rows only) — a faint tint over the hours this
-            therapist is rostered; bookings render on top. */}
+            therapist is rostered; bookings render on top.
+            On-call therapists get a distinct amber band. */}
         {bed.shiftStartMin != null && bed.shiftEndMin != null && bed.shiftEndMin > bed.shiftStartMin && (
           <div
-            className="absolute top-1 bottom-1 rounded bg-primary/10"
+            className={`absolute top-1 bottom-1 rounded ${bed.shiftType === 'on_call' ? 'bg-amber-400/15 border border-dashed border-amber-400/40' : 'bg-primary/10'}`}
             style={{ left: (bed.shiftStartMin - windowStartMin) * PX_PER_MIN, width: (bed.shiftEndMin - bed.shiftStartMin) * PX_PER_MIN }}
-            title="On shift"
+            title={bed.shiftType === 'on_call' ? 'On call' : 'On shift'}
           />
         )}
         {hours.map((h) => (

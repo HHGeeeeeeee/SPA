@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { createAuditedClient } from '@/lib/supabase/server';
 import type { Database } from '@/types/database';
-import { requireAdmin } from '@/lib/auth';
+import { requireAdminOrAccountant } from '@/lib/auth';
 
 type PaymentMethodUpdate = Database['public']['Tables']['payment_methods']['Update'];
 
@@ -23,7 +23,7 @@ const updateSchema = schema.partial().extend({ id: z.string().uuid() });
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function createPaymentMethod(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireAdminOrAccountant();
   if (denied) return { ok: false, error: denied };
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -38,7 +38,7 @@ export async function createPaymentMethod(input: unknown): Promise<ActionResult>
 }
 
 export async function updatePaymentMethod(input: unknown): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireAdminOrAccountant();
   if (denied) return { ok: false, error: denied };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
@@ -57,7 +57,7 @@ export async function updatePaymentMethod(input: unknown): Promise<ActionResult>
 }
 
 export async function setPaymentMethodActive(id: string, active: boolean): Promise<ActionResult> {
-  const denied = await requireAdmin();
+  const denied = await requireAdminOrAccountant();
   if (denied) return { ok: false, error: denied };
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('payment_methods').update({ active }).eq('id', id);

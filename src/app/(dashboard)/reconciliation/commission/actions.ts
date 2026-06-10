@@ -80,7 +80,7 @@ async function loadEligible(from: string, to: string, branchId: string) {
 // per-line commission. commission = gross × effective_rate, where the effective
 // rate is the warm-up band rate for the day's Nth session (by scheduled_start), else
 // the therapist's class rate (branch override → global). No DB writes.
-async function computeGroups(branchId: string, from: string, to: string): Promise<CommGroup[]> {
+async function computeGroups(branchId: string, from: string, to: string, overridePolicyId?: string | null): Promise<CommGroup[]> {
   const supabase = await createAuditedClient();
   const eligible = await loadEligible(from, to, branchId);
   if (eligible.length === 0) return [];
@@ -109,7 +109,8 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
   let warmupEnabled = false;
   let warmupOccurrence = 1;
   let bands: { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number }[] = [];
-  const policyId = br.data?.commission_policy_id ?? null;
+  // Use the explicitly-chosen policy when provided; fall back to the branch's default.
+  const policyId = overridePolicyId || (br.data?.commission_policy_id ?? null);
   if (policyId) {
     const [p, b] = await Promise.all([
       supabase.from('commission_policies').select('warmup_enabled, warmup_occurrence').eq('id', policyId).maybeSingle(),
@@ -185,8 +186,8 @@ async function computeGroups(branchId: string, from: string, to: string): Promis
 }
 
 /** Per-therapist commission for unsettled items in range — drives the workspace. */
-export async function loadCommissionGroups(branchId: string, from: string, to: string): Promise<CommGroup[]> {
-  return computeGroups(branchId, from, to);
+export async function loadCommissionGroups(branchId: string, from: string, to: string, policyId?: string | null): Promise<CommGroup[]> {
+  return computeGroups(branchId, from, to, policyId);
 }
 
 const settleSchema = z.object({
@@ -194,6 +195,7 @@ const settleSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
   therapist_ids: z.array(z.string().uuid()).min(1),
+  commission_policy_id: z.string().uuid().nullish(),
 });
 
 /** Settle the selected therapists' commission into one period (closed). */
@@ -202,13 +204,13 @@ export async function settleCommission(input: unknown): Promise<ActionResult<{ i
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const parsed = settleSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
-  const { branch_id, from, to, therapist_ids } = parsed.data;
+  const { branch_id, from, to, therapist_ids, commission_policy_id } = parsed.data;
   if (to < from) return { ok: false, error: 'End date must be on/after start date' };
   if (!(await canAccessBranch(branch_id))) return { ok: false, error: 'No access to this branch' };
   try { await assertNoBlockedClose(branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
   const selectedSet = new Set(therapist_ids);
-  const groups = (await computeGroups(branch_id, from, to)).filter((g) => selectedSet.has(g.therapist_id));
+  const groups = (await computeGroups(branch_id, from, to, commission_policy_id ?? null)).filter((g) => selectedSet.has(g.therapist_id));
   if (groups.length === 0) return { ok: false, error: 'No eligible commission for the selection' };
 
   const supabase = await createAuditedClient();
@@ -231,6 +233,7 @@ export async function settleCommission(input: unknown): Promise<ActionResult<{ i
       period_no, branch_id, period_from: from, period_to: to, status: 'closed',
       confirmed_at: new Date().toISOString(), confirmed_by_staff_id: session?.staffUserId ?? null,
       total_sessions: totals.sessions, total_gross_sales_cents: totals.gross, total_commission_cents: totals.commission,
+      commission_policy_id: commission_policy_id ?? null,
     })
     .select('id')
     .single();

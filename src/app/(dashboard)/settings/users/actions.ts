@@ -36,15 +36,17 @@ async function guardUserMgmt(args: {
   const session = await currentSession();
   if (isAdmin(session)) return null; // admin can do everything
 
-  // Manager beyond this point.
-  if (args.payloadRole && args.payloadRole !== 'staff') {
-    return 'Manager can only create or assign the staff role';
+  // Manager beyond this point. Can manage staff and accountant (both
+  // non-managerial roles). Cannot touch admin, other managers, or bookers.
+  const managerAllowed = ['staff', 'accountant'];
+  if (args.payloadRole && !managerAllowed.includes(args.payloadRole)) {
+    return 'Manager can only create or assign the staff / accountant role';
   }
   if (args.targetUserId) {
     const sb = createServiceClient();
     const { data } = await sb.from('staff_users').select('role').eq('id', args.targetUserId).maybeSingle();
-    if (data && data.role !== 'staff') {
-      return 'Manager can only edit staff users';
+    if (data && !managerAllowed.includes(data.role)) {
+      return 'Manager can only edit staff / accountant users';
     }
   }
   return null;
@@ -64,7 +66,7 @@ const schema = z.object({
     .max(40)
     .regex(/^[A-Za-z0-9._-]+$/, 'Letters, digits, dot/dash/underscore only'),
   display_name: z.string().max(80).optional().nullable(),
-  role: z.enum(['admin', 'manager', 'staff', 'external_booker']),
+  role: z.enum(['admin', 'manager', 'accountant', 'staff', 'external_booker']),
   home_branch_id: z.string().uuid().optional().nullable(),
   branch_ids: z.array(z.string().uuid()).optional(),
   active: z.boolean().default(false),

@@ -365,6 +365,10 @@ export async function cancelOrder(id: string, reason: string): Promise<ActionRes
 
   const { error } = await supabase.from('orders').update({ status: 'void' }).eq('id', id);
   if (error) return { ok: false, error: error.message };
+  // Every charge line is now cancelled (no revenue ever posted on a cancellable
+  // order), so the bill must drop to 0 — otherwise the void order keeps showing
+  // a stale Total / Due. recomputeTotals excludes cancelled/no_show lines.
+  await recomputeTotals(id);
   await logStatus(id, order.status, 'void', reason.trim(), session!.staffUserId);
   revalidatePath('/sales-orders');
   revalidatePath(`/sales-orders/${id}`);
@@ -587,14 +591,37 @@ async function recomputeTotals(orderId: string) {
   // line the guest never came for — no charge).
   const { data: items } = await supabase
     .from('order_items')
-    .select('list_price_cents, discount_amount_cents, final_amount_cents')
+    .select('id, status, list_price_cents, discount_amount_cents, final_amount_cents')
     .eq('order_id', orderId)
     .not('status', 'in', '(cancelled,no_show)');
+  // An INTERRUPTED line bills at the revenue actually recognised at the
+  // interrupt point (no_charge → 0, partial → prorated, full → full), which is
+  // posted to the folio — NOT its full item price, which is left untouched on
+  // the row. Counting final_amount_cents here would over-bill every waived or
+  // partial interrupt. So pull interrupted lines out of the item math and fold
+  // in their posted folio revenue instead. draft / in_service keep their
+  // expected item price; service_completed is frozen at finish (item amount ==
+  // its posted revenue) and stays on the item split so the Subtotal/Discount
+  // breakdown still shows.
+  const billed = (items ?? []).filter((i) => i.status !== 'interrupted');
+  const interruptedIds = (items ?? []).filter((i) => i.status === 'interrupted').map((i) => i.id);
+  let interruptedRevenue = 0;
+  if (interruptedIds.length > 0) {
+    const { data: intLines } = await supabase
+      .from('folio_lines')
+      .select('amount_cents')
+      .eq('order_id', orderId)
+      .eq('kind', 'revenue')
+      .in('order_item_id', interruptedIds);
+    interruptedRevenue = (intLines ?? []).reduce((s, l) => s + (l.amount_cents ?? 0), 0);
+  }
   // Price columns are nullable now (a service whose concrete item isn't chosen
-  // yet has no price) — coalesce so a pending line contributes 0, not NaN.
-  const subtotal = (items ?? []).reduce((s, i) => s + (i.list_price_cents ?? 0), 0);
-  const discount = (items ?? []).reduce((s, i) => s + (i.discount_amount_cents ?? 0), 0);
-  const serviceTotal = (items ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
+  // yet has no price) — coalesce so a pending line contributes 0, not NaN. The
+  // interrupted lines' charged amount joins the subtotal (with no discount) so
+  // the Totals card invariant Subtotal − Discount (+ tips/adj) == Total holds.
+  const subtotal = billed.reduce((s, i) => s + (i.list_price_cents ?? 0), 0) + interruptedRevenue;
+  const discount = billed.reduce((s, i) => s + (i.discount_amount_cents ?? 0), 0);
+  const serviceTotal = billed.reduce((s, i) => s + (i.final_amount_cents ?? 0), 0) + interruptedRevenue;
   // Tips are recognised revenue on top of the service bill, so the order total
   // (what the guest pays) includes them. They live as kind=tip folio lines.
   const { data: tipLines } = await supabase
@@ -1071,19 +1098,23 @@ export async function updateOrderItem(input: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
-// Change the discount on a draft or in-service line. Everything else stays
-// untouched — only the discount class, discount amount, and final amount are
-// recalculated. Allowed while the service is running so the desk can correct
-// a wrong discount without interrupting the therapist.
-const updateDiscountSchema = z.object({
+// Edit a draft or in-service line in place: swap the duration variant (re-prices
+// to that variant's list price) and/or change the discount, WITHOUT disturbing
+// the running therapist / station / start time. Allowed while the service is
+// running so the desk can extend a 60-min to 90-min, or fix a wrong discount,
+// without interrupting the therapist. Locked once the line is Done — the amount
+// is booked as revenue by then.
+const updateInServiceLineSchema = z.object({
   id: z.string().uuid(),
   order_id: z.string().uuid(),
+  // The (possibly new) concrete service variant — carries the duration + price.
+  service_item_id: z.string().uuid(),
   discount_class_id: z.string().uuid(),
-  discount_override: z.number().nullable().optional(),
+  discount_override: z.coerce.number().min(0).optional().nullable(),
 });
 
-export async function updateItemDiscount(input: unknown): Promise<ActionResult> {
-  const parsed = updateDiscountSchema.safeParse(input);
+export async function updateInServiceLine(input: unknown): Promise<ActionResult> {
+  const parsed = updateInServiceLineSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
   const auth = await requireOrderBranchAccess(d.order_id);
@@ -1092,57 +1123,59 @@ export async function updateItemDiscount(input: unknown): Promise<ActionResult> 
 
   const { data: item } = await supabase
     .from('order_items')
-    .select('status, service_item_id, list_price_cents')
+    .select('status, service_item_id, slot_start, scheduled_start, actual_start, service:service_items ( service_group )')
     .eq('id', d.id)
     .single();
   if (!item) return { ok: false, error: 'Service line not found' };
   if (!['draft', 'in_service'].includes(item.status))
-    return { ok: false, error: 'Discount can only be changed on a scheduled or in-service line' };
-  if (!item.service_item_id || item.list_price_cents == null)
-    return { ok: false, error: 'Cannot set discount on a deferred (unpriced) line' };
+    return { ok: false, error: 'Only a scheduled or in-service line can be edited' };
 
-  // Resolve the discount class and compute amounts
-  const { data: ord } = await supabase
-    .from('orders')
-    .select('source:customer_sources ( discount_locked, default_discount_class_id )')
-    .eq('id', d.order_id)
-    .maybeSingle();
-  const ordSource = ord ? (Array.isArray(ord.source) ? ord.source[0] : ord.source) : null;
-  const discountClassId = ordSource?.discount_locked && ordSource.default_discount_class_id
-    ? ordSource.default_discount_class_id
-    : d.discount_class_id;
-
-  const { data: disc, error: de } = await supabase
-    .from('discount_classes')
-    .select('code, discount_percent, discount_amount_cents')
-    .eq('id', discountClassId)
-    .single();
-  if (de || !disc) return { ok: false, error: 'Discount class not found' };
-
-  if (MANAGER_DISCOUNTS.includes(disc.code) && !isManager(await currentSession())) {
-    return { ok: false, error: `${disc.code} requires manager permission` };
+  // Only a different DURATION of the same service may be swapped in mid-service —
+  // the therapist is performing this service, not switching to a different one.
+  const curGroup = (Array.isArray(item.service) ? item.service[0] : item.service)?.service_group ?? null;
+  if (d.service_item_id !== item.service_item_id) {
+    const { data: newSvc } = await supabase
+      .from('service_items')
+      .select('service_group')
+      .eq('id', d.service_item_id)
+      .single();
+    if (!newSvc) return { ok: false, error: 'Service item not found' };
+    if (curGroup && newSvc.service_group !== curGroup)
+      return { ok: false, error: 'Pick a different duration of the same service' };
   }
 
-  const listPrice = item.list_price_cents;
-  let discountAmount = 0;
-  if (disc.code === 'DIS-90') {
-    discountAmount = listPrice;
-  } else if (VARIABLE_DISCOUNTS.includes(disc.code)) {
-    const override = Math.round((d.discount_override ?? 0) * 100);
-    if (override <= 0) return { ok: false, error: `Enter a discount amount for ${disc.code}` };
-    discountAmount = Math.min(override, listPrice);
-  } else if (disc.discount_percent > 0) {
-    discountAmount = Math.round((listPrice * disc.discount_percent) / 100);
-  } else if (disc.discount_amount_cents > 0) {
-    discountAmount = Math.min(disc.discount_amount_cents, listPrice);
-  }
-  const finalAmount = Math.max(0, listPrice - discountAmount);
+  // Reuse the shared add/edit pricing (source lock, list price by service date,
+  // discount + manager permission). Take only the pricing columns from it — the
+  // therapist / station / status / start columns stay as they are.
+  const res = await resolveLinePricing(supabase, {
+    order_id: d.order_id,
+    service_item_id: d.service_item_id,
+    discount_class_id: d.discount_class_id,
+    discount_override: d.discount_override,
+  });
+  if ('error' in res) return { ok: false, error: res.error };
+  const p = res.patch;
 
-  const { error } = await supabase.from('order_items').update({
-    discount_class_id: discountClassId,
-    discount_amount_cents: discountAmount,
-    final_amount_cents: finalAmount,
-  }).eq('id', d.id);
+  const patch: {
+    service_item_id: string; service_category_id: string; duration_minutes: number;
+    list_price_cents: number; discount_class_id: string; discount_amount_cents: number;
+    final_amount_cents: number; slot_end?: string;
+  } = {
+    service_item_id: p.service_item_id,
+    service_category_id: p.service_category_id,
+    duration_minutes: p.duration_minutes,
+    list_price_cents: p.list_price_cents,
+    discount_class_id: p.discount_class_id,
+    discount_amount_cents: p.discount_amount_cents,
+    final_amount_cents: p.final_amount_cents,
+  };
+  // A started line owns a calendar block — extend/trim its end to the new planned
+  // duration (block runs from its existing start). A not-yet-started line has no
+  // block yet; its plan end is derived from scheduled_start + duration at render.
+  const slotBase = item.slot_start ?? item.scheduled_start ?? item.actual_start;
+  if (slotBase) patch.slot_end = new Date(Date.parse(slotBase) + p.duration_minutes * 60000).toISOString();
+
+  const { error } = await supabase.from('order_items').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };
   await recomputeTotals(d.order_id);
   revalidatePath(`/sales-orders/${d.order_id}`);

@@ -35,7 +35,7 @@ import {
   updateOrderCustomer,
   addOrderItem,
   updateOrderItem,
-  updateItemDiscount,
+  updateInServiceLine,
   markNoShow,
   startOrderItem,
   startAllServices,
@@ -231,60 +231,141 @@ function ActionBtn({ tip, children, ...props }: { tip: string } & ComponentProps
   );
 }
 
-// Inline discount picker rendered in the read-only row for in_service items.
-// Spans two grid columns (Discount class + Disc. value) — auto-saves on change.
-function InServiceDiscountPicker({ item, orderId, discountClasses, sourceDiscountLocked, defaultDiscountId, pending, startTransition, router }: {
+// Compute the discount amount (in cents) a class applies to a list price —
+// mirrors resolveLinePricing/updateInServiceLine server-side so the row can
+// preview the final amount live before Save.
+function previewDiscountCents(disc: DiscountOpt | undefined, listPrice: number, override: string): number {
+  if (!disc) return 0;
+  if (disc.code === 'DIS-90') return listPrice; // complaint — 100% off
+  if (['DIS-91', 'DIS-99'].includes(disc.code)) return Math.min(Math.round(Number(override || 0) * 100), listPrice);
+  if (disc.discount_percent > 0) return Math.round((listPrice * disc.discount_percent) / 100);
+  if (disc.discount_amount_cents > 0) return Math.min(disc.discount_amount_cents, listPrice);
+  return 0;
+}
+
+// A full in-service service-line row. Unlike the read-only rows, its Duration and
+// Discount cells are editable: the duration cell offers the same service's other
+// length variants (re-prices to that variant), the discount cell its classes.
+// Edits are local until Save — one explicit commit (updateInServiceLine) so the
+// desk can extend a 60→90 min or fix a discount mid-service without interrupting
+// the therapist. Renders all SERVICE_GRID columns so it aligns under the headers.
+function InServiceLineRow({ item, order, serviceItems, discountClasses, sourceDiscountLocked, defaultDiscountId, dispatch, canRunService, pending, startTransition, router, onFinish, onInterrupt }: {
   item: OrderItem;
-  orderId: string;
+  order: { id: string; status: string };
+  serviceItems: ServiceVariant[];
   discountClasses: DiscountOpt[];
   sourceDiscountLocked: boolean;
   defaultDiscountId: string;
+  dispatch?: boolean;
+  canRunService: boolean;
   pending: boolean;
   startTransition: (cb: () => void) => void;
   router: ReturnType<typeof useRouter>;
+  onFinish: () => void;
+  onInterrupt: () => void;
 }) {
-  const effectiveId = sourceDiscountLocked ? defaultDiscountId : (item.discount_class_id ?? defaultDiscountId);
-  const [localDisc, setLocalDisc] = useState(effectiveId);
-  const [localOverride, setLocalOverride] = useState('');
-  const selected = discountClasses.find((d) => d.id === localDisc);
-  const needsAmount = ['DIS-91', 'DIS-99'].includes(selected?.code ?? '');
+  const cur = serviceItems.find((s) => s.id === item.service_item_id);
+  const categoryName = cur?.categoryName
+    ?? serviceItems.find((s) => s.categoryId === item.service_category_id)?.categoryName ?? '—';
+  const groupName = cur?.group ?? item.service_name;
+  // Other length variants of the same service — what "change duration" means here.
+  const variants = serviceItems
+    .filter((s) => cur && s.group === cur.group)
+    .sort((a, b) => a.duration_minutes - b.duration_minutes);
+  const durOptions = variants.map((s) => ({ value: s.id, label: `${s.duration_minutes} min · ${peso(s.price_cents ?? 0)}` }));
+
+  const [localSvcId, setLocalSvcId] = useState(item.service_item_id ?? '');
+  const curDiscId = sourceDiscountLocked ? defaultDiscountId : (item.discount_class_id ?? defaultDiscountId);
+  const [localDisc, setLocalDisc] = useState(curDiscId);
+  const curIsVariable = ['DIS-91', 'DIS-99'].includes(discountClasses.find((d) => d.id === (item.discount_class_id ?? ''))?.code ?? '');
+  const [localOverride, setLocalOverride] = useState(curIsVariable && item.discount_amount_cents > 0 ? String(item.discount_amount_cents / 100) : '');
+
+  const selectedVariant = serviceItems.find((s) => s.id === localSvcId);
+  const previewPrice = selectedVariant?.price_cents ?? item.list_price_cents;
+  const selectedDisc = discountClasses.find((d) => d.id === localDisc);
+  const needsAmount = ['DIS-91', 'DIS-99'].includes(selectedDisc?.code ?? '');
+  const previewDisc = previewDiscountCents(selectedDisc, previewPrice, localOverride);
+  const previewFinal = Math.max(0, previewPrice - previewDisc);
+  const previewDuration = selectedVariant?.duration_minutes ?? item.duration_minutes;
   const discOptions = discountClasses.map((d) => ({ value: d.id, label: d.description }));
-  const discValueLabel = !selected
-    ? '—'
-    : selected.discount_percent > 0 ? `-${selected.discount_percent}%`
-    : selected.discount_amount_cents > 0 ? `-${peso(selected.discount_amount_cents)}`
+  const discValueLabel = !selectedDisc ? '—'
+    : selectedDisc.discount_percent > 0 ? `-${selectedDisc.discount_percent}%`
+    : previewDisc > 0 ? `-${peso(previewDisc)}`
     : '—';
 
-  function save(discId: string, override: string) {
+  const dirty = localSvcId !== item.service_item_id
+    || (!sourceDiscountLocked && localDisc !== (item.discount_class_id ?? defaultDiscountId))
+    || (needsAmount && Math.round(Number(localOverride || 0) * 100) !== item.discount_amount_cents);
+
+  function save() {
+    if (needsAmount && Number(localOverride || 0) <= 0) { toast.error(`Enter a discount amount for ${selectedDisc?.code}`); return; }
     startTransition(async () => {
-      const code = discountClasses.find((x) => x.id === discId)?.code ?? '';
-      const r = await updateItemDiscount({
+      const r = await updateInServiceLine({
         id: item.id,
-        order_id: orderId,
-        discount_class_id: discId,
-        discount_override: ['DIS-91', 'DIS-99'].includes(code) ? Number(override || 0) : null,
+        order_id: order.id,
+        service_item_id: localSvcId,
+        discount_class_id: sourceDiscountLocked ? defaultDiscountId : localDisc,
+        discount_override: needsAmount ? Number(localOverride || 0) : null,
       });
       if (!r.ok) { toast.error(r.error); return; }
+      toast.success('Service line updated');
       router.refresh();
     });
   }
 
   return (
-    <>
+    <li className={`${SERVICE_GRID} py-2 text-sm`}>
+      <span className="text-xs font-medium text-muted-foreground truncate">{categoryName}</span>
+      <span className="font-semibold truncate">{groupName}</span>
+      {/* Duration — pick another length of the same service; re-prices on Save. */}
       <div className="min-w-0">
-        <Select items={discOptions} value={localDisc} onValueChange={(v) => { if (!v) return; setLocalDisc(v); save(v, localOverride); }} disabled={pending || sourceDiscountLocked}>
+        <Select items={durOptions} value={localSvcId} onValueChange={(v) => v && setLocalSvcId(v)} disabled={pending || durOptions.length <= 1}>
+          <SelectTrigger className="h-7 w-full text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>{durOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <span className="text-xs font-medium text-muted-foreground tabular truncate" title="Planned (booked) start-end">
+        {toHHmm(item.scheduled_start) || '—'}-{planEndHHmm(item.scheduled_start, previewDuration)}
+      </span>
+      <span className="text-xs font-medium text-muted-foreground tabular truncate" title="Actual start-end (real button press)">
+        {toHHmm(item.actual_start) || '—'}-{toHHmm(item.actual_end) || '—'}
+      </span>
+      <span className="font-medium text-muted-foreground truncate">{item.therapist_name ?? 'Unassigned'}</span>
+      <span className="text-xs font-medium text-muted-foreground truncate">
+        {dispatch ? (item.external_room_no || '—') : <>{item.station_branch_code ? `${item.station_branch_code} · ` : ''}{item.station_name ?? '—'}</>}
+      </span>
+      <span className="text-right tabular text-sm font-medium text-muted-foreground">{peso(previewPrice)}</span>
+      {/* Discount — class + (for manual classes) the amount input. */}
+      <div className="min-w-0">
+        <Select items={discOptions} value={localDisc} onValueChange={(v) => v && setLocalDisc(v)} disabled={pending || sourceDiscountLocked}>
           <SelectTrigger className="h-7 w-full text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{discOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="min-w-0">
         {needsAmount ? (
-          <Input className="h-7 w-full text-right text-xs" type="number" min="0" step="0.01" value={localOverride} onChange={(e) => setLocalOverride(e.target.value)} onBlur={() => save(localDisc, localOverride)} placeholder="Amt" disabled={pending} />
+          <Input className="h-7 w-full text-right text-xs" type="number" min="0" step="0.01" value={localOverride} onChange={(e) => setLocalOverride(e.target.value)} placeholder="Amt" disabled={pending} />
         ) : (
           <span className="block text-xs font-medium text-muted-foreground tabular">{discValueLabel}</span>
         )}
       </div>
-    </>
+      <span className="text-right tabular text-sm font-bold">{peso(previewFinal)}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wide truncate">
+        <span className="text-blue-600 dark:text-blue-400">In service</span>
+      </span>
+      <span className="text-xs font-medium text-muted-foreground">—</span>
+      <div className="flex flex-wrap items-center gap-1 justify-end">
+        {dirty && (
+          <ActionBtn tip="Save the duration / discount change to this line." className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={save} disabled={pending}>Save</ActionBtn>
+        )}
+        {canRunService && (
+          <>
+            <ActionBtn tip="Mark this service finished — stamps the end time." onClick={onFinish} disabled={pending}>Finish</ActionBtn>
+            <ActionBtn tip="Stop mid-service and decide the charge (none / partial / full / reschedule)." variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={onInterrupt} disabled={pending}>Interrupt</ActionBtn>
+          </>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -971,6 +1052,29 @@ export function OrderWorkspace({
                           );
                         }
 
+                        // In-service lines: editable Duration + Discount (Save),
+                        // with Finish / Interrupt. A whole row of its own.
+                        if (order.editable && it.status === 'in_service') {
+                          return (
+                            <InServiceLineRow
+                              key={it.id}
+                              item={it}
+                              order={order}
+                              serviceItems={serviceItems}
+                              discountClasses={discountClasses}
+                              sourceDiscountLocked={sourceDiscountLocked}
+                              defaultDiscountId={defaultDiscountId}
+                              dispatch={dispatch}
+                              canRunService={canRunService}
+                              pending={pending}
+                              startTransition={startTransition}
+                              router={router}
+                              onFinish={() => doFinishItem(it)}
+                              onInterrupt={() => setInterruptItem(it)}
+                            />
+                          );
+                        }
+
                         const statusTag =
                           it.status === 'draft' ? { t: 'Draft', c: 'text-muted-foreground' }
                           : it.status === 'in_service' ? { t: 'In service', c: 'text-blue-600 dark:text-blue-400' }
@@ -1005,23 +1109,8 @@ export function OrderWorkspace({
                               {dispatch ? (it.external_room_no || '—') : <>{it.station_branch_code ? `${it.station_branch_code} · ` : ''}{it.station_name ?? '—'}</>}
                             </span>
                             <span className="text-right tabular text-sm font-medium text-muted-foreground">{peso(it.list_price_cents)}</span>
-                            {order.editable && it.status === 'in_service' ? (
-                              <InServiceDiscountPicker
-                                item={it}
-                                orderId={order.id}
-                                discountClasses={discountClasses}
-                                sourceDiscountLocked={sourceDiscountLocked}
-                                defaultDiscountId={defaultDiscountId}
-                                pending={pending}
-                                startTransition={startTransition}
-                                router={router}
-                              />
-                            ) : (
-                              <>
-                                <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
-                                <span className="text-xs font-medium text-muted-foreground tabular truncate">{discValue}</span>
-                              </>
-                            )}
+                            <span className="text-xs font-medium text-muted-foreground truncate">{discCode}</span>
+                            <span className="text-xs font-medium text-muted-foreground tabular truncate">{discValue}</span>
                             <span className="text-right tabular text-sm">
                               {['cancelled', 'no_show'].includes(it.status) ? (
                                 <span className="font-medium line-through text-muted-foreground">{peso(it.final_amount_cents)}</span>

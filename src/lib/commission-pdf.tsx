@@ -128,17 +128,21 @@ async function loadCommissionForPdf(periodId: string): Promise<PdfData | null> {
   }
   for (const [key, g] of byTh) {
     const raws = rawByTh.get(key) ?? [];
-    const earliest = new Map<string, string>();
+    // Flag the day's reduced-rate line(s) — kind-agnostic so it's correct for
+    // both warm-up (the first session's banded rate) and cheapest-free (the
+    // cheapest session at 0%): a line is special when its rate is below the
+    // therapist's highest rate that day (the normal class rate).
+    const maxRate = new Map<string, number>();
     for (const l of raws) {
-      const cur = earliest.get(l.service_date);
-      if (l.actual_start && (!cur || l.actual_start < cur)) earliest.set(l.service_date, l.actual_start);
+      const cur = maxRate.get(l.service_date) ?? 0;
+      if (l.rate > cur) maxRate.set(l.service_date, l.rate);
     }
     g.lines = raws
       .map((l) => ({
         service_date: l.service_date, order_no: l.order_no, service: l.service,
         minutes: l.minutes,
         gross: l.gross, rate: l.rate, commission: l.commission,
-        warmup: !!l.actual_start && l.actual_start === earliest.get(l.service_date),
+        warmup: l.rate < (maxRate.get(l.service_date) ?? 0),
       }))
       .sort((a, b) => (a.service_date < b.service_date ? -1 : 1));
     // Merge the settled entry's adjustment trail onto the group. Fall back to

@@ -23,7 +23,7 @@ async function fetchData() {
   const [polRes, brRes] = await Promise.all([
     supabase
       .from('commission_policies')
-      .select('id, code, name, warmup_enabled, warmup_occurrence, active, commission_policy_bands ( min_minutes, up_to_minutes, commission_rate, sort_order )')
+      .select('id, code, name, kind, free_duration_minutes, warmup_enabled, warmup_occurrence, active, commission_policy_bands ( min_minutes, up_to_minutes, commission_rate, sort_order )')
       .order('code'),
     supabase.from('branches').select('code, commission_policy_id').eq('active', true),
   ]);
@@ -86,8 +86,10 @@ export default async function CommissionPoliciesPage() {
             ) : (
               policies.map((p) => {
                 const bands = p.commission_policy_bands ?? [];
+                const kind = (p.kind === 'cheapest_free' ? 'cheapest_free' : 'warmup') as CommissionPolicyItem['kind'];
                 const item: CommissionPolicyItem = {
-                  id: p.id, code: p.code, name: p.name, warmup_enabled: p.warmup_enabled, warmup_occurrence: p.warmup_occurrence,
+                  id: p.id, code: p.code, name: p.name, kind, free_duration_minutes: p.free_duration_minutes,
+                  warmup_enabled: p.warmup_enabled, warmup_occurrence: p.warmup_occurrence,
                   bands: bands.map((b) => ({ min_minutes: b.min_minutes, up_to_minutes: b.up_to_minutes, commission_rate: b.commission_rate })),
                 };
                 const usedBy = branchesByPolicy.get(p.id) ?? [];
@@ -96,9 +98,11 @@ export default async function CommissionPoliciesPage() {
                     <TableCell className="font-mono font-bold">{p.code}</TableCell>
                     <TableCell className="font-semibold">{p.name}</TableCell>
                     <TableCell className="font-medium text-sm">
-                      {p.warmup_enabled
-                        ? <span>#{p.warmup_occurrence} · <span className="text-muted-foreground">{bandsSummary(bands)}</span></span>
-                        : <span className="text-muted-foreground">Off (full rate)</span>}
+                      {kind === 'cheapest_free'
+                        ? <span>Cheapest <span className="text-muted-foreground">{p.free_duration_minutes != null ? `${p.free_duration_minutes}m` : 'any'} → 0%</span></span>
+                        : p.warmup_enabled
+                          ? <span>#{p.warmup_occurrence} · <span className="text-muted-foreground">{bandsSummary(bands)}</span></span>
+                          : <span className="text-muted-foreground">Off (full rate)</span>}
                     </TableCell>
                     <TableCell className="font-mono font-semibold text-xs">{usedBy.length ? usedBy.join(', ') : <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell>{p.active ? <Badge className="font-bold">Active</Badge> : <Badge variant="secondary" className="font-bold">Inactive</Badge>}</TableCell>

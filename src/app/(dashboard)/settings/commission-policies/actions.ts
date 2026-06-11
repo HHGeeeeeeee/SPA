@@ -17,6 +17,10 @@ const bandSchema = z.object({
 const schema = z.object({
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
+  // 'warmup' = the day's Nth session gets a banded flat rate.
+  // 'cheapest_free' = the day's cheapest session of free_duration_minutes is 0%.
+  kind: z.enum(['warmup', 'cheapest_free']).default('warmup'),
+  free_duration_minutes: z.coerce.number().int().positive().nullable().default(null),
   warmup_enabled: z.boolean(),
   warmup_occurrence: z.coerce.number().int().min(1).max(20),
   bands: z.array(bandSchema),
@@ -48,16 +52,23 @@ export async function createCommissionPolicy(input: unknown): Promise<ActionResu
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
   const supabase = await createAuditedClient();
+  // cheapest_free has no warm-up bands; force them off so the engine reads it cleanly.
+  const isCheapest = d.kind === 'cheapest_free';
   const { data, error } = await supabase
     .from('commission_policies')
-    .insert({ code: d.code, name: d.name, warmup_enabled: d.warmup_enabled, warmup_occurrence: d.warmup_occurrence, active: true })
+    .insert({
+      code: d.code, name: d.name, kind: d.kind,
+      free_duration_minutes: isCheapest ? d.free_duration_minutes : null,
+      warmup_enabled: isCheapest ? false : d.warmup_enabled,
+      warmup_occurrence: d.warmup_occurrence, active: true,
+    })
     .select('id')
     .single();
   if (error || !data) {
     if (error?.code === '23505') return { ok: false, error: `Code "${d.code}" already exists` };
     return { ok: false, error: error?.message ?? 'Insert failed' };
   }
-  const bandErr = await syncBands(data.id, d.warmup_enabled ? d.bands : []);
+  const bandErr = await syncBands(data.id, !isCheapest && d.warmup_enabled ? d.bands : []);
   if (bandErr) return { ok: false, error: bandErr.message };
   revalidatePath('/settings/commission-policies');
   return { ok: true };
@@ -69,9 +80,13 @@ export async function updateCommissionPolicy(input: unknown): Promise<ActionResu
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const d = parsed.data;
+  const isCheapest = d.kind === 'cheapest_free';
   const patch: PolicyUpdate = {};
   if (d.name !== undefined) patch.name = d.name;
-  if (d.warmup_enabled !== undefined) patch.warmup_enabled = d.warmup_enabled;
+  if (d.kind !== undefined) patch.kind = d.kind;
+  patch.free_duration_minutes = isCheapest ? d.free_duration_minutes : null;
+  // cheapest_free never uses warm-up; persist it off so display + engine agree.
+  if (d.warmup_enabled !== undefined) patch.warmup_enabled = isCheapest ? false : d.warmup_enabled;
   if (d.warmup_occurrence !== undefined) patch.warmup_occurrence = d.warmup_occurrence;
   const supabase = await createAuditedClient();
   if (Object.keys(patch).length > 0) {
@@ -79,7 +94,7 @@ export async function updateCommissionPolicy(input: unknown): Promise<ActionResu
     if (error) return { ok: false, error: error.message };
   }
   if (d.bands) {
-    const bandErr = await syncBands(d.id, d.warmup_enabled ? d.bands : []);
+    const bandErr = await syncBands(d.id, !isCheapest && d.warmup_enabled ? d.bands : []);
     if (bandErr) return { ok: false, error: bandErr.message };
   }
   revalidatePath('/settings/commission-policies');

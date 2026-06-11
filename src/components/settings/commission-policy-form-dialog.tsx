@@ -17,14 +17,24 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 import { createCommissionPolicy, updateCommissionPolicy } from '@/app/(dashboard)/settings/commission-policies/actions';
 
+export type PolicyKind = 'warmup' | 'cheapest_free';
 export interface PolicyBand { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number }
 export interface CommissionPolicyItem {
   id: string;
   code: string;
   name: string;
+  kind: PolicyKind;
+  free_duration_minutes: number | null;
   warmup_enabled: boolean;
   warmup_occurrence: number;
   bands: PolicyBand[];
@@ -49,6 +59,9 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
 
   const [code, setCode] = useState(item?.code ?? '');
   const [name, setName] = useState(item?.name ?? '');
+  const [kind, setKind] = useState<PolicyKind>(item?.kind ?? 'warmup');
+  // cheapest_free target duration; '' = any duration competes to be the free one.
+  const [freeDuration, setFreeDuration] = useState(item?.free_duration_minutes != null ? String(item.free_duration_minutes) : '60');
   const [warmupEnabled, setWarmupEnabled] = useState(item?.warmup_enabled ?? true);
   const [occurrence, setOccurrence] = useState(String(item?.warmup_occurrence ?? 1));
   const [bands, setBands] = useState<BandInput[]>(
@@ -75,7 +88,11 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
       up_to_minutes: b.up.trim() === '' ? null : Number(b.up),
       commission_rate: Math.max(0, Math.min(1, (Number(b.pct) || 0) / 100)),
     }));
-    const payload = { code, name, warmup_enabled: warmupEnabled, warmup_occurrence: Number(occurrence) || 1, bands: bandPayload };
+    const payload = {
+      code, name, kind,
+      free_duration_minutes: kind === 'cheapest_free' ? (freeDuration.trim() === '' ? null : Number(freeDuration)) : null,
+      warmup_enabled: warmupEnabled, warmup_occurrence: Number(occurrence) || 1, bands: bandPayload,
+    };
     startTransition(async () => {
       const r = isEdit ? await updateCommissionPolicy({ id: item!.id, ...payload }) : await createCommissionPolicy(payload);
       if (r.ok) {
@@ -94,7 +111,9 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
           <DialogHeader>
             <DialogTitle className="font-bold">{isEdit ? `Edit Policy: ${item?.code}` : 'New Commission Policy'}</DialogTitle>
             <DialogDescription className="font-medium">
-              First-session warm-up rule — a flat commission rate for the day&apos;s first session (overrides the class %). Other sessions use the class %.
+              {kind === 'cheapest_free'
+                ? 'Cheapest-free rule — each day the therapist’s cheapest qualifying session earns 0%. Every other session uses the class %.'
+                : 'First-session warm-up rule — a flat commission rate for the day’s first session (overrides the class %). Other sessions use the class %.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -110,6 +129,28 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
               </div>
             </div>
 
+            <div className="flex flex-col gap-2">
+              <Label className="font-semibold">Policy type</Label>
+              <Select items={[{ value: 'warmup', label: 'Warm-up' }, { value: 'cheapest_free', label: 'Cheapest free' }]} value={kind} onValueChange={(v) => v && setKind(v as PolicyKind)}>
+                <SelectTrigger className="font-semibold"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="warmup">Warm-up — day&apos;s Nth session, banded rate</SelectItem>
+                  <SelectItem value="cheapest_free">Cheapest free — day&apos;s cheapest qualifying session = 0%</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {kind === 'cheapest_free' && (
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="cpo-freedur" className="font-semibold">Free session duration (min)</Label>
+                <Input id="cpo-freedur" type="number" min="1" value={freeDuration} onChange={(e) => setFreeDuration(e.target.value)} placeholder="any" className="w-32" />
+                <p className="text-xs font-medium text-muted-foreground">
+                  Only sessions of this length compete; the cheapest one each day is free. Blank = any duration. e.g. 60 → the day&apos;s cheapest 60-min session earns 0%.
+                </p>
+              </div>
+            )}
+
+            {kind === 'warmup' && (
             <div className="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
               <div className="flex flex-col gap-0.5">
                 <Label className="font-semibold">Warm-up rule</Label>
@@ -119,8 +160,9 @@ export function CommissionPolicyFormDialog({ mode = 'create', item, trigger, ope
               </div>
               <Switch checked={warmupEnabled} onCheckedChange={setWarmupEnabled} />
             </div>
+            )}
 
-            {warmupEnabled && (
+            {kind === 'warmup' && warmupEnabled && (
               <>
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="cpo-occ" className="font-semibold">Applies to session #</Label>

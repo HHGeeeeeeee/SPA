@@ -802,7 +802,9 @@ export type Database = {
           active: boolean
           code: string
           created_at: string
+          free_duration_minutes: number | null
           id: string
+          kind: string
           name: string
           updated_at: string
           warmup_enabled: boolean
@@ -812,7 +814,9 @@ export type Database = {
           active?: boolean
           code: string
           created_at?: string
+          free_duration_minutes?: number | null
           id?: string
+          kind?: string
           name: string
           updated_at?: string
           warmup_enabled?: boolean
@@ -822,7 +826,9 @@ export type Database = {
           active?: boolean
           code?: string
           created_at?: string
+          free_duration_minutes?: number | null
           id?: string
+          kind?: string
           name?: string
           updated_at?: string
           warmup_enabled?: boolean

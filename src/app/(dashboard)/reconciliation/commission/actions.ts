@@ -106,6 +106,10 @@ async function computeGroups(branchId: string, from: string, to: string, overrid
     return branchRate.get(classId) ?? globalRate.get(classId) ?? 0;
   };
 
+  let policyKind = 'warmup';
+  // 'cheapest_free' target duration: only sessions of this length compete to be
+  // the day's free one (null = any length competes). Unused by 'warmup'.
+  let freeDurationMinutes: number | null = null;
   let warmupEnabled = false;
   let warmupOccurrence = 1;
   let bands: { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number }[] = [];
@@ -113,9 +117,11 @@ async function computeGroups(branchId: string, from: string, to: string, overrid
   const policyId = overridePolicyId || (br.data?.commission_policy_id ?? null);
   if (policyId) {
     const [p, b] = await Promise.all([
-      supabase.from('commission_policies').select('warmup_enabled, warmup_occurrence').eq('id', policyId).maybeSingle(),
+      supabase.from('commission_policies').select('kind, free_duration_minutes, warmup_enabled, warmup_occurrence').eq('id', policyId).maybeSingle(),
       supabase.from('commission_policy_bands').select('min_minutes, up_to_minutes, commission_rate').eq('policy_id', policyId).order('up_to_minutes', { nullsFirst: false }),
     ]);
+    policyKind = p.data?.kind ?? 'warmup';
+    freeDurationMinutes = p.data?.free_duration_minutes ?? null;
     warmupEnabled = p.data?.warmup_enabled ?? false;
     warmupOccurrence = p.data?.warmup_occurrence ?? 1;
     bands = b.data ?? [];
@@ -138,20 +144,47 @@ async function computeGroups(branchId: string, from: string, to: string, overrid
   }
   const sortKey = (r: (typeof eligible)[number]) => r.it.scheduled_start ?? r.it.created_at ?? '9999';
 
+  // Commission base for a line = NET (final_amount_cents = list_price − discount),
+  // not the list price. The discount is shared with the therapist: their
+  // commission is computed on what the customer actually paid for the line.
+  const baseOf = (r: (typeof eligible)[number]) => r.it.final_amount_cents ?? r.it.list_price_cents ?? 0;
+
   const groups = new Map<string, CommGroup>();
   for (const [, rows] of byDay) {
     rows.sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    // 'cheapest_free': pre-pick the day's single free line — the cheapest
+    // session (by net paid) whose duration matches the target (any duration
+    // when the target is null). Ties keep the earliest by start time. -1 = none
+    // qualified (e.g. no 60-min session that day → nobody is free).
+    let freeIdx = -1;
+    if (policyKind === 'cheapest_free') {
+      let bestBase = Infinity;
+      for (let i = 0; i < rows.length; i++) {
+        const dur = rows[i].it.duration_minutes ?? 0;
+        if (freeDurationMinutes != null && dur !== freeDurationMinutes) continue;
+        const b = baseOf(rows[i]);
+        if (b < bestBase) { bestBase = b; freeIdx = i; }
+      }
+    }
     for (let idx = 0; idx < rows.length; idx++) {
       const r = rows[idx];
       const occurrence = idx + 1;
       const classRate = resolveRate(r.it.therapist_id as string);
-      const warm = warmupEnabled && occurrence === warmupOccurrence ? warmupRate(r.it.duration_minutes ?? 0) : null;
-      const effRate = warm != null ? warm : classRate;
-      // Commission base = NET (final_amount_cents = list_price − discount), not
-      // the list price. The discount is shared with the therapist: their
-      // commission is computed on what the customer actually paid for the line.
+      // The override rate (0% free / warm-up band) when this line is the special
+      // one for the day; otherwise the therapist's class rate. `override` flags
+      // it for the line badge in the workspace + PDF.
+      let effRate: number;
+      let override: boolean;
+      if (policyKind === 'cheapest_free') {
+        override = idx === freeIdx;
+        effRate = override ? 0 : classRate;
+      } else {
+        const warm = warmupEnabled && occurrence === warmupOccurrence ? warmupRate(r.it.duration_minutes ?? 0) : null;
+        override = warm != null;
+        effRate = warm != null ? warm : classRate;
+      }
       // gross_cents below also carries net (the field name predates this rule).
-      const base = r.it.final_amount_cents ?? r.it.list_price_cents ?? 0;
+      const base = baseOf(r);
       const commission = Math.round(base * effRate);
       const tid = r.it.therapist_id as string;
       const g = groups.get(tid) ?? { therapist_id: tid, therapist_name: r.th?.name ?? '—', sessions: 0, gross_cents: 0, commission_cents: 0, borrowed_from: null, items: [] };
@@ -173,7 +206,7 @@ async function computeGroups(branchId: string, from: string, to: string, overrid
         service: r.svc?.name ?? 'Service',
         duration_minutes: r.it.duration_minutes ?? null,
         occurrence,
-        warmup: warm != null,
+        warmup: override,
         gross_cents: base,
         rate: effRate,
         commission_cents: commission,

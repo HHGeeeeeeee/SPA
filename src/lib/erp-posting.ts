@@ -2,10 +2,16 @@ import 'server-only';
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { currentSession } from '@/lib/auth';
-import { readAcuSessionCookie } from '@/lib/session';
-import { pushGLEntry, attachFileToJournal, pushAPBill, attachFileToBill, type GLLine, type APLine } from '@/lib/acumatica';
+import { pushGLEntry, attachFileToJournal, pushAPBill, attachFileToBill, loginWithServiceAccount, type GLLine, type APLine } from '@/lib/acumatica';
 
 export const acumaticaConfigured = (): boolean => !!process.env.ACUMATICA_BASE_URL;
+
+// All ERP posting runs under the shared service account (ACUMATICA_SERVICE_USERNAME
+// / PASSWORD), which holds the GL/AP posting rights. A POS user's own ERP session
+// is used only for login/authentication — not every user has voucher permission,
+// so the actual post must go through the service account. Who triggered the post
+// is still recorded on our side (erp_posting_log: posted_by_staff_id +
+// acu_session_user_id); only the ERP "Created By" is the service account.
 
 export type PostingTable = 'orders' | 'revenue_soa' | 'revenue_soa_payments' | 'tip_settlements' | 'shifts';
 
@@ -78,7 +84,6 @@ export async function postToErp(args: PostToErpArgs): Promise<PostToErpResult> {
   }
 
   const session = await currentSession();
-  const cookie = await readAcuSessionCookie();
 
   // Intermediate state + a pending log row (so a crash mid-post is visible).
   await patchRow({ posting_status: 'posting', posting_error: null });
@@ -96,6 +101,9 @@ export async function postToErp(args: PostToErpArgs): Promise<PostToErpResult> {
     .single();
 
   try {
+    // Resolve inside the try so a missing/failed service login is recorded as a
+    // retriable failed post (not an unhandled throw).
+    const cookie = await loginWithServiceAccount();
     const res = await pushGLEntry(
       { date: args.date, description: args.description, currency: 'PHP', branch: args.branch, lines: args.lines },
       cookie,
@@ -216,7 +224,6 @@ export async function postBillToErp(args: PostBillToErpArgs): Promise<PostToErpR
   if (!acumaticaConfigured()) return { ok: true, batchNbr: null, skipped: true };
 
   const session = await currentSession();
-  const cookie = await readAcuSessionCookie();
 
   await patchRow({ posting_status: 'posting', posting_error: null });
   const { data: log } = await supabase
@@ -237,6 +244,9 @@ export async function postBillToErp(args: PostBillToErpArgs): Promise<PostToErpR
     .single();
 
   try {
+    // Resolve inside the try (see postToErp) so a service-login failure is a
+    // retriable failed post, not an unhandled throw.
+    const cookie = await loginWithServiceAccount();
     const res = await pushAPBill(
       {
         vendor: args.vendor, vendor_ref: args.vendorRef, date: args.date,

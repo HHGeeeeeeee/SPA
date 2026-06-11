@@ -42,6 +42,12 @@ export type LoginResult =
  * SSR client's cookie shim; the caller (the login action) only needs to set
  * the Acumatica session cookie returned in `acuCookie`.
  */
+// Escape SQL-LIKE wildcards so an `ilike` filter matches the value literally but
+// case-insensitively (usernames may contain `_`, which is a LIKE wildcard).
+function likeEscape(s: string): string {
+  return s.replace(/([\\%_])/g, '\\$1');
+}
+
 export async function authenticate(username: string, password: string): Promise<LoginResult> {
   const id = username.trim();
   if (!id || !password) return { ok: false, error: 'Enter your username and password' };
@@ -61,16 +67,18 @@ async function authenticateViaAcumatica(username: string, password: string): Pro
   if (!res.ok) return { ok: false, error: res.error };
 
   const svc = createServiceClient();
+  // Match the stored code case-insensitively — the user may type any case, and
+  // the ERP itself is case-insensitive, so the local lookup must be too.
   const { data: u } = await svc
     .from('staff_users')
     .select('id, email, acumatica_user_id, display_name, role, home_branch_id, active, auth_user_id')
-    .eq('acumatica_user_id', username)
+    .ilike('acumatica_user_id', likeEscape(username))
     .maybeSingle();
 
   // Authenticated against the ERP but unknown locally → provision an inactive
   // record and have an admin activate it. Close the ERP session we just opened.
   if (!u) {
-    const email = username.includes('@') ? username.toLowerCase() : `${username}@acumatica.local`;
+    const email = username.includes('@') ? username.toLowerCase() : `${username.toLowerCase()}@acumatica.local`;
     await svc.from('staff_users').insert({
       acumatica_user_id: username, email, display_name: username, role: 'staff', active: false,
     });
@@ -99,11 +107,15 @@ async function authenticateViaAcumatica(username: string, password: string): Pro
  */
 async function authenticateLocally(emailOrUsername: string, password: string): Promise<LoginResult> {
   const svc = createServiceClient();
-  const { data: u } = await svc
-    .from('staff_users')
-    .select('id, email, acumatica_user_id, display_name, role, home_branch_id, active, password_hash, auth_user_id')
-    .eq('email', emailOrUsername.trim().toLowerCase())
-    .maybeSingle();
+  const norm = emailOrUsername.trim();
+  const cols = 'id, email, acumatica_user_id, display_name, role, home_branch_id, active, password_hash, auth_user_id';
+  // Match the full email (lowercased), or — when just the account code is typed —
+  // the username (case-insensitively). Either way case never matters.
+  let { data: u } = await svc.from('staff_users').select(cols).eq('email', norm.toLowerCase()).maybeSingle();
+  if (!u) {
+    const r = await svc.from('staff_users').select(cols).ilike('acumatica_user_id', likeEscape(norm)).maybeSingle();
+    u = r.data;
+  }
   if (!u || !u.active || !u.password_hash) return { ok: false, error: 'Invalid username or password' };
   const ok = await bcrypt.compare(password, u.password_hash);
   if (!ok) return { ok: false, error: 'Invalid username or password' };

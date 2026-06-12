@@ -18,6 +18,7 @@ function actionLabel(table: string, action: AuditEntry['action']): string {
     order_items: 'Service',
     order_customers: 'Guest',
     payments: 'Payment',
+    folio_lines: 'Payment',
     tips: 'Tip',
     feedback: 'Feedback',
   };
@@ -51,7 +52,14 @@ const FIELD_LABEL: Record<string, string> = {
   service_item_id: 'Service',
   service_category_id: 'Service Category',
   therapist_id: 'Therapist',
+  therapist_home_branch_id: 'Therapist Home Branch',
   resource_id: 'Station',
+  branch_id: 'Branch',
+  commission_branch_id: 'Commission Branch',
+  business_unit_id: 'Business Unit',
+  order_customer_id: 'Guest',
+  created_by_staff_user_id: 'Created By',
+  external_hotel_id: 'Hotel',
   discount_class_id: 'Discount Class',
   billing_to_id: 'Billing To',
   source_id: 'Customer Source',
@@ -153,10 +161,11 @@ function entityContext(table: string, before: Record<string, unknown> | null, af
     const seq = src.item_seq;
     return seq != null ? `Service line #${seq}` : 'Service line';
   }
-  if (table === 'payments') {
+  if (table === 'payments' || table === 'folio_lines') {
     const amount = src.amount_cents;
-    if (typeof amount === 'number') return `Payment ₱${(amount / 100).toFixed(0)}`;
-    return 'Payment';
+    const noun = src.kind === 'refund' ? 'Refund' : 'Payment';
+    if (typeof amount === 'number') return `${noun} ₱${(amount / 100).toFixed(0)}`;
+    return noun;
   }
   if (table === 'tips') {
     const amount = src.amount_cents;

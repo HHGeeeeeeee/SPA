@@ -18,8 +18,8 @@ export type AuditNameMap = Record<string, string>;
 
 /**
  * Full audit trail for one order — every row change on the order itself plus
- * its child tables (order_items, order_customers, payments, tips, feedback)
- * with before/after JSONB so the UI can render field-level diffs.
+ * its child tables (order_items, order_customers, folio_lines payments/refunds,
+ * tips, feedback) with before/after JSONB so the UI can render field-level diffs.
  *
  * Sorted newest-first. Actor resolved to display_name + email so the timeline
  * shows the human who made the change. Returns [] when audit_log has nothing
@@ -59,7 +59,9 @@ export async function loadOrderAuditTrail(orderId: string): Promise<{ entries: A
   };
   addBucket('order_items', itemIds);
   addBucket('order_customers', customerIds);
-  addBucket('payments', paymentIds);
+  // Payments live on folio_lines now (the payments table is retired); the ids
+  // above are folio_lines ids, so that's the table_name they're logged under.
+  addBucket('folio_lines', paymentIds);
   addBucket('tips', tipIds);
   addBucket('feedback', feedbackIds);
 
@@ -111,16 +113,26 @@ interface AuditRowDb {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** FK fields whose UUIDs should be resolved to human-readable names. Maps the
- *  field name to (table, column) so we can batch-query each lookup table. */
+ *  field name to (table, column); resolveAuditNames batch-queries from this map
+ *  directly, so it is the single source of truth — a wrong column here fails
+ *  visibly for that field instead of silently drifting from a second list. */
 const FK_FIELDS: Record<string, { table: string; col: string }> = {
-  therapist_id:       { table: 'employees',          col: 'display_name' },
-  resource_id:        { table: 'resources',           col: 'resource_name' },
-  service_item_id:    { table: 'service_items',       col: 'name' },
-  service_category_id:{ table: 'service_categories',  col: 'name' },
-  discount_class_id:  { table: 'discount_classes',    col: 'code' },
-  source_id:          { table: 'customer_sources',    col: 'source_name' },
-  billing_to_id:      { table: 'billing_entities',    col: 'name' },
-  payment_method_id:  { table: 'payment_methods',     col: 'name' },
+  therapist_id:             { table: 'employees',            col: 'name' },
+  resource_id:              { table: 'resources',            col: 'resource_name' },
+  service_item_id:          { table: 'service_items',        col: 'name' },
+  service_category_id:      { table: 'service_categories',   col: 'name' },
+  discount_class_id:        { table: 'discount_classes',     col: 'code' },
+  source_id:                { table: 'customer_sources',     col: 'name' },
+  billing_to_id:            { table: 'billing_destinations', col: 'name' },
+  billing_destination_id:   { table: 'billing_destinations', col: 'name' },
+  external_hotel_id:        { table: 'billing_destinations', col: 'name' },
+  payment_method_id:        { table: 'payment_methods',      col: 'name' },
+  branch_id:                { table: 'branches',             col: 'name' },
+  therapist_home_branch_id: { table: 'branches',             col: 'name' },
+  commission_branch_id:     { table: 'branches',             col: 'name' },
+  business_unit_id:         { table: 'business_units',       col: 'name' },
+  order_customer_id:        { table: 'order_customers',      col: 'customer_name' },
+  created_by_staff_user_id: { table: 'staff_users',          col: 'display_name' },
 };
 
 /** Collect all UUIDs referenced in before/after for FK fields, batch-query each
@@ -129,44 +141,33 @@ async function resolveAuditNames(
   sb: ReturnType<typeof createServiceClient>,
   rows: AuditRowDb[],
 ): Promise<AuditNameMap> {
-  // Collect UUIDs per FK field.
-  const idsByField = new Map<string, Set<string>>();
+  // Collect UUIDs per lookup target (table+col) — several fields can share one
+  // lookup (branch_id / therapist_home_branch_id / commission_branch_id).
+  const idsByLookup = new Map<string, Set<string>>();
   for (const r of rows) {
     for (const rec of [r.before, r.after]) {
       if (!rec) continue;
       for (const [k, v] of Object.entries(rec)) {
-        if (FK_FIELDS[k] && typeof v === 'string' && UUID_RE.test(v)) {
-          const s = idsByField.get(k) ?? new Set();
+        const fk = FK_FIELDS[k];
+        if (fk && typeof v === 'string' && UUID_RE.test(v)) {
+          const key = `${fk.table}:${fk.col}`;
+          const s = idsByLookup.get(key) ?? new Set();
           s.add(v);
-          idsByField.set(k, s);
+          idsByLookup.set(key, s);
         }
       }
     }
   }
 
   const names: AuditNameMap = {};
-  const q = async (ids: Set<string> | undefined, query: Promise<{ data: { id: string; _name: string }[] | null }>) => {
-    if (!ids || ids.size === 0) return;
-    const { data } = await query;
-    for (const r of data ?? []) if (r._name) names[r.id] = r._name;
-  };
-  await Promise.all([
-    q(idsByField.get('therapist_id'),
-      sb.from('employees').select('id, _name:display_name').in('id', [...(idsByField.get('therapist_id') ?? [])]) as never),
-    q(idsByField.get('resource_id'),
-      sb.from('resources').select('id, _name:resource_name').in('id', [...(idsByField.get('resource_id') ?? [])]) as never),
-    q(idsByField.get('service_item_id'),
-      sb.from('service_items').select('id, _name:name').in('id', [...(idsByField.get('service_item_id') ?? [])]) as never),
-    q(idsByField.get('service_category_id'),
-      sb.from('service_categories').select('id, _name:name').in('id', [...(idsByField.get('service_category_id') ?? [])]) as never),
-    q(idsByField.get('discount_class_id'),
-      sb.from('discount_classes').select('id, _name:code').in('id', [...(idsByField.get('discount_class_id') ?? [])]) as never),
-    q(idsByField.get('source_id'),
-      sb.from('customer_sources').select('id, _name:name').in('id', [...(idsByField.get('source_id') ?? [])]) as never),
-    q(idsByField.get('billing_to_id'),
-      sb.from('billing_destinations').select('id, _name:name').in('id', [...(idsByField.get('billing_to_id') ?? [])]) as never),
-    q(idsByField.get('payment_method_id'),
-      sb.from('payment_methods').select('id, _name:name').in('id', [...(idsByField.get('payment_method_id') ?? [])]) as never),
-  ]);
+  await Promise.all(
+    [...idsByLookup].map(async ([key, ids]) => {
+      const [table, col] = key.split(':');
+      const { data } = await (sb.from as (t: string) => ReturnType<typeof sb.from>)(table)
+        .select(`id, _name:${col}`)
+        .in('id', [...ids]) as unknown as { data: { id: string; _name: string }[] | null };
+      for (const r of data ?? []) if (r._name) names[r.id] = r._name;
+    }),
+  );
   return names;
 }

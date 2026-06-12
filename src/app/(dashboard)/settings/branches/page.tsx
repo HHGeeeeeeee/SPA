@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ChevronLeft, Plus } from 'lucide-react';
 
 import { createServiceClient } from '@/lib/supabase/server';
+import { currentSession, isAdmin } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -15,6 +16,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { BranchFormDialog } from '@/components/settings/branch-form-dialog';
 import { BranchRowActions } from '@/components/settings/branch-row-actions';
+import { BusinessUnitsManagerDialog } from '@/components/settings/business-units-manager-dialog';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +30,7 @@ async function fetchData() {
         branch_business_units ( business_unit_id, business_units ( id, code, name ) )
       `)
       .order('code'),
-    supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
+    supabase.from('business_units').select('id, code, name, active').order('code'),
     supabase.from('commission_policies').select('id, code, name').eq('active', true).order('code'),
     supabase.from('commission_classes').select('id, class_code, name, commission_rate').eq('active', true).order('commission_rate', { ascending: false }),
     supabase.from('branch_commission_rates').select('branch_id, commission_class_id, commission_rate'),
@@ -44,11 +46,16 @@ async function fetchData() {
     arr.push({ commission_class_id: r.commission_class_id, rate: r.commission_rate });
     ratesByBranch.set(r.branch_id, arr);
   }
-  return { branches: brRes.data ?? [], businessUnits: buRes.data ?? [], commissionPolicies: polRes.data ?? [], commissionClasses: ccRes.data ?? [], ratesByBranch };
+  return { branches: brRes.data ?? [], allBusinessUnits: buRes.data ?? [], commissionPolicies: polRes.data ?? [], commissionClasses: ccRes.data ?? [], ratesByBranch };
 }
 
 export default async function BranchesPage() {
-  const { branches, businessUnits, commissionPolicies, commissionClasses, ratesByBranch } = await fetchData();
+  const [{ branches, allBusinessUnits, commissionPolicies, commissionClasses, ratesByBranch }, session] = await Promise.all([
+    fetchData(),
+    currentSession(),
+  ]);
+  // Branch pickers only offer active units; the manager dialog shows all.
+  const businessUnits = allBusinessUnits.filter((u) => u.active);
   const activeCount = branches.filter((b) => b.active).length;
   // Distinct therapist-sharing labels in use → autocomplete for the branch form.
   const shareGroupSuggestions = [...new Set(branches.map((b) => b.therapist_share_group).filter(Boolean) as string[])].sort();
@@ -70,18 +77,21 @@ export default async function BranchesPage() {
           </p>
         </div>
 
-        <BranchFormDialog
-          businessUnits={businessUnits}
-          commissionPolicies={commissionPolicies}
-          commissionClasses={commissionClasses}
-          shareGroupSuggestions={shareGroupSuggestions}
-          trigger={
-            <Button>
-              <Plus className="size-4" />
-              Add Branch
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {isAdmin(session) ? <BusinessUnitsManagerDialog units={allBusinessUnits} /> : null}
+          <BranchFormDialog
+            businessUnits={businessUnits}
+            commissionPolicies={commissionPolicies}
+            commissionClasses={commissionClasses}
+            shareGroupSuggestions={shareGroupSuggestions}
+            trigger={
+              <Button>
+                <Plus className="size-4" />
+                Add Branch
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <Card className="p-0 overflow-hidden">

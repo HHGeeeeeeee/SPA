@@ -15,12 +15,13 @@ import {
 import { Card } from '@/components/ui/card';
 import { EmployeeFormDialog, type EmployeeItem } from '@/components/settings/employee-form-dialog';
 import { EmployeeRowActions } from '@/components/settings/employee-row-actions';
+import { PositionsManagerDialog } from '@/components/settings/positions-manager-dialog';
 
 export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [empRes, brRes, ccRes, posRes] = await Promise.all([
+  const [empRes, brRes, ccRes, posRes, buRes] = await Promise.all([
     supabase
       .from('employees')
       .select(`
@@ -33,12 +34,20 @@ async function fetchData() {
       .order('employee_code'),
     supabase.from('branches').select('id, code, name').eq('active', true).order('code'),
     supabase.from('commission_classes').select('id, class_code, name').eq('active', true).order('commission_rate', { ascending: false }),
-    supabase.from('positions').select('id, code, name').eq('active', true).order('code'),
+    supabase
+      .from('positions')
+      .select(`
+        id, code, name, active,
+        position_business_units ( business_unit_id, business_units ( id, code, name ) )
+      `)
+      .order('code'),
+    supabase.from('business_units').select('id, code, name').eq('active', true).order('code'),
   ]);
   if (empRes.error) throw new Error(empRes.error.message);
   if (brRes.error) throw new Error(brRes.error.message);
   if (ccRes.error) throw new Error(ccRes.error.message);
   if (posRes.error) throw new Error(posRes.error.message);
+  if (buRes.error) throw new Error(buRes.error.message);
 
   const [sgRes, capRes] = await Promise.all([
     supabase.from('service_items').select('service_group').eq('active', true).not('service_group', 'is', null),
@@ -51,11 +60,26 @@ async function fetchData() {
     arr.push(c.service_group);
     capByEmployee.set(c.employee_id, arr);
   }
+  // Manager-dialog rows (all positions, with unit badges); pickers use the active subset.
+  const allPositions = (posRes.data ?? []).map((p) => {
+    const units = (p.position_business_units ?? [])
+      .map((row) => (Array.isArray(row.business_units) ? row.business_units[0] : row.business_units))
+      .filter(Boolean) as { id: string; code: string; name: string }[];
+    return {
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      active: p.active,
+      business_unit_ids: units.map((u) => u.id),
+      units,
+    };
+  });
   return {
     employees: empRes.data ?? [],
     branches: brRes.data ?? [],
     classes: ccRes.data ?? [],
-    positions: posRes.data ?? [],
+    allPositions,
+    businessUnits: buRes.data ?? [],
     serviceGroups,
     capByEmployee,
   };
@@ -97,7 +121,8 @@ function nextCodeByBranch(
 }
 
 export default async function EmployeesPage() {
-  const { employees, branches, classes, positions, serviceGroups, capByEmployee } = await fetchData();
+  const { employees, branches, classes, allPositions, businessUnits, serviceGroups, capByEmployee } = await fetchData();
+  const positions = allPositions.filter((p) => p.active);
   const activeCount = employees.filter((e) => e.status === 'active').length;
   const codePreview = nextCodeByBranch(employees.map((e) => e.employee_code), branches);
 
@@ -117,19 +142,22 @@ export default async function EmployeesPage() {
             {employees.length} total · {activeCount} active
           </p>
         </div>
-        <EmployeeFormDialog
-          branches={branches}
-          classes={classes}
-          positions={positions}
-          serviceGroups={serviceGroups}
-          nextCodeByBranch={codePreview}
-          trigger={
-            <Button>
-              <Plus className="size-4" />
-              Add Employee
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2">
+          <PositionsManagerDialog items={allPositions} businessUnits={businessUnits} />
+          <EmployeeFormDialog
+            branches={branches}
+            classes={classes}
+            positions={positions}
+            serviceGroups={serviceGroups}
+            nextCodeByBranch={codePreview}
+            trigger={
+              <Button>
+                <Plus className="size-4" />
+                Add Employee
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <Card className="p-0 overflow-hidden">

@@ -109,10 +109,7 @@ export const mainNavItems: NavItem[] = [
       {
         label: 'Organization',
         items: [
-          { label: 'Business Units', href: '/settings/business-units', adminOnly: true },
           { label: 'Branches', href: '/settings/branches' },
-          { label: 'Positions', href: '/settings/positions' },
-          { label: 'Commission Classes', href: '/settings/commission-classes' },
           { label: 'Commission Policies', href: '/settings/commission-policies' },
           { label: 'Employees', href: '/settings/employees' },
         ],

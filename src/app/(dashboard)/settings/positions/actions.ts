@@ -56,7 +56,7 @@ export async function createPosition(input: unknown): Promise<ActionResult> {
   const linkErr = await syncJunction(data.id, parsed.data.business_unit_ids);
   if (linkErr) return { ok: false, error: linkErr.message };
 
-  revalidatePath('/settings/positions');
+  revalidatePath('/settings/employees');
   return { ok: true };
 }
 
@@ -80,7 +80,7 @@ export async function updatePosition(input: unknown): Promise<ActionResult> {
     if (linkErr) return { ok: false, error: linkErr.message };
   }
 
-  revalidatePath('/settings/positions');
+  revalidatePath('/settings/employees');
   return { ok: true };
 }
 
@@ -90,7 +90,6 @@ export async function setPositionActive(id: string, active: boolean): Promise<Ac
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('positions').update({ active }).eq('id', id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/settings/positions');
   revalidatePath('/settings/employees');
   return { ok: true };
 }

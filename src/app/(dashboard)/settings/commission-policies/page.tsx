@@ -15,26 +15,29 @@ import {
 import { Card } from '@/components/ui/card';
 import { CommissionPolicyFormDialog, type CommissionPolicyItem } from '@/components/settings/commission-policy-form-dialog';
 import { CommissionPolicyRowActions } from '@/components/settings/commission-policy-row-actions';
+import { CommissionClassesManagerDialog } from '@/components/settings/commission-classes-manager-dialog';
 
 export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [polRes, brRes] = await Promise.all([
+  const [polRes, brRes, ccRes] = await Promise.all([
     supabase
       .from('commission_policies')
       .select('id, code, name, kind, free_duration_minutes, warmup_enabled, warmup_occurrence, active, commission_policy_bands ( min_minutes, up_to_minutes, commission_rate, sort_order )')
       .order('code'),
     supabase.from('branches').select('code, commission_policy_id').eq('active', true),
+    supabase.from('commission_classes').select('id, class_code, name, commission_rate, active').order('commission_rate', { ascending: false }),
   ]);
   if (polRes.error) throw new Error(polRes.error.message);
   if (brRes.error) throw new Error(brRes.error.message);
+  if (ccRes.error) throw new Error(ccRes.error.message);
   const branchesByPolicy = new Map<string, string[]>();
   for (const b of brRes.data ?? []) {
     if (!b.commission_policy_id) continue;
     (branchesByPolicy.get(b.commission_policy_id) ?? branchesByPolicy.set(b.commission_policy_id, []).get(b.commission_policy_id)!).push(b.code);
   }
-  return { policies: polRes.data ?? [], branchesByPolicy };
+  return { policies: polRes.data ?? [], branchesByPolicy, commissionClasses: ccRes.data ?? [] };
 }
 
 function bandsSummary(bands: { min_minutes: number | null; up_to_minutes: number | null; commission_rate: number; sort_order: number }[]): string {
@@ -51,7 +54,7 @@ function bandsSummary(bands: { min_minutes: number | null; up_to_minutes: number
 }
 
 export default async function CommissionPoliciesPage() {
-  const { policies, branchesByPolicy } = await fetchData();
+  const { policies, branchesByPolicy, commissionClasses } = await fetchData();
 
   return (
     <div className="flex flex-col gap-6 max-w-5xl">
@@ -65,7 +68,10 @@ export default async function CommissionPoliciesPage() {
             {policies.length} total · first-session warm-up rule, assigned per branch
           </p>
         </div>
-        <CommissionPolicyFormDialog trigger={<Button><Plus className="size-4" /> Add Policy</Button>} />
+        <div className="flex items-center gap-2">
+          <CommissionClassesManagerDialog items={commissionClasses} />
+          <CommissionPolicyFormDialog trigger={<Button><Plus className="size-4" /> Add Policy</Button>} />
+        </div>
       </div>
 
       <Card className="p-0 overflow-hidden">

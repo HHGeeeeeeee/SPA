@@ -33,7 +33,7 @@ export async function createBusinessUnit(input: unknown): Promise<ActionResult> 
     if (error.code === '23505') return { ok: false, error: `Code "${parsed.data.code}" already exists` };
     return { ok: false, error: error.message };
   }
-  revalidatePath('/settings/business-units');
+  revalidatePath('/settings/branches');
   return { ok: true };
 }
 
@@ -49,7 +49,7 @@ export async function updateBusinessUnit(input: unknown): Promise<ActionResult> 
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('business_units').update(patch).eq('id', parsed.data.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/settings/business-units');
+  revalidatePath('/settings/branches');
   return { ok: true };
 }
 
@@ -59,6 +59,6 @@ export async function setBusinessUnitActive(id: string, active: boolean): Promis
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('business_units').update({ active }).eq('id', id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/settings/business-units');
+  revalidatePath('/settings/branches');
   return { ok: true };
 }

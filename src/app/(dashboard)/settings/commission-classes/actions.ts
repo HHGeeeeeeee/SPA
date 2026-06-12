@@ -36,7 +36,7 @@ export async function createCommissionClass(input: unknown): Promise<ActionResul
     if (error.code === '23505') return { ok: false, error: `Code "${parsed.data.class_code}" already exists` };
     return { ok: false, error: error.message };
   }
-  revalidatePath('/settings/commission-classes');
+  revalidatePath('/settings/commission-policies');
   return { ok: true };
 }
 
@@ -53,7 +53,7 @@ export async function updateCommissionClass(input: unknown): Promise<ActionResul
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('commission_classes').update(patch).eq('id', parsed.data.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/settings/commission-classes');
+  revalidatePath('/settings/commission-policies');
   return { ok: true };
 }
 
@@ -63,6 +63,6 @@ export async function setCommissionClassActive(id: string, active: boolean): Pro
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('commission_classes').update({ active }).eq('id', id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath('/settings/commission-classes');
+  revalidatePath('/settings/commission-policies');
   return { ok: true };
 }

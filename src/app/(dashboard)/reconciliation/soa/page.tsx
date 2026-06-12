@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { SoaWorkspace } from '@/components/reconciliation/soa-workspace';
 import { currentSession, isManager } from '@/lib/auth';
-import { loadSoaWorkspace, loadSoaHistory, loadArBalance } from '@/app/(dashboard)/reconciliation/soa/actions';
+import { loadSoaWorkspace, loadSoaHistory, loadArBalance, loadSoaBranches } from '@/app/(dashboard)/reconciliation/soa/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,10 +17,11 @@ export default async function RevenueSoaPage({ searchParams }: { searchParams: P
   const view = (await searchParams)?.view;
   // AR Balance is the default landing view; ?view=generate / history opt into the others.
   const initialView = view === 'generate' ? 'generate' : view === 'history' ? 'history' : 'ar';
-  const [groups, history, arBalance] = await Promise.all([
+  const [groups, history, arBalance, branches] = await Promise.all([
     loadSoaWorkspace(from, to),
     loadSoaHistory(),
     loadArBalance(),
+    loadSoaBranches(),
   ]);
 
   return (
@@ -31,6 +32,7 @@ export default async function RevenueSoaPage({ searchParams }: { searchParams: P
       initialGroups={groups}
       history={history}
       arBalance={arBalance}
+      branches={branches}
       initialView={initialView}
     />
   );

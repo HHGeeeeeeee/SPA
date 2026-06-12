@@ -28,7 +28,7 @@ function phtToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-// ── Shared shapes (unchanged — the UI keys off these) ───────────────────────
+// ── Shared shapes (the UI keys off these) ───────────────────────────────────
 export interface SoaItemLine {
   guest: string;
   service: string;
@@ -37,7 +37,18 @@ export interface SoaItemLine {
   discount_cents: number;
   net_cents: number;
 }
-export interface SoaOrderLine { id: string; order_no: string; service_date: string; total_cents: number; lines: SoaItemLine[] }
+/** One AR folio line (掛帳 / refund) composing the order's statement amount —
+ *  the money layer shown under the service lines. */
+export interface SoaFolioEntry {
+  id: string;
+  kind: string; // payment (AR charge) | refund
+  amount_cents: number;
+  posted_at: string;
+  guest: string;
+  created_by: string | null;
+  note: string | null;
+}
+export interface SoaOrderLine { id: string; order_no: string; service_date: string; total_cents: number; lines: SoaItemLine[]; folio: SoaFolioEntry[] }
 export interface SoaGroup {
   key: string; // `${billing_id}:${branch_id}` — one statement per billing × branch
   billing_id: string;
@@ -75,8 +86,12 @@ interface ArFolioRow {
   id: string;
   amount_cents: number;
   kind: string;
+  posted_at: string;
+  note: string | null;
+  order_customer_id: string | null;
   order_id: string | null;
   billing_destination_id: string | null;
+  posted_by_staff: { display_name: string | null } | { display_name: string | null }[] | null;
   order: RawSoaOrder | RawSoaOrder[] | null;
   billing: { id: string; code: string; name: string; settlement_type: string } | { id: string; code: string; name: string; settlement_type: string }[] | null;
 }
@@ -84,10 +99,10 @@ interface ArFolioRow {
 // payment = +, refund = − (a refund reduces what the hotel owes).
 const signed = (kind: string, cents: number): number => (kind === 'refund' ? -cents : cents);
 
-// Build an order's SOA detail line from its graph. Mirrors the old order-base
-// renderer (drop cancelled + zero-list placeholders), but the order total is the
-// AR net we pass in, not the order's own total.
-function toSoaOrderLine(o: RawSoaOrder, netCents: number): SoaOrderLine {
+// Build an order's SOA detail line from its graph. The service lines are
+// context (what was delivered); the statement money is the AR folio rows we
+// pass in — their net IS the order's statement total.
+function toSoaOrderLine(o: RawSoaOrder, netCents: number, folioRows: ArFolioRow[]): SoaOrderLine {
   const name = new Map((o.order_customers ?? []).map((c) => [c.id, c.customer_name]));
   const seq = new Map((o.order_customers ?? []).map((c) => [c.id, c.seq_no]));
   const lines: (SoaItemLine & { _seq: number })[] = (o.order_items ?? [])
@@ -102,17 +117,30 @@ function toSoaOrderLine(o: RawSoaOrder, netCents: number): SoaOrderLine {
       net_cents: it.final_amount_cents ?? 0,
     }))
     .sort((a, b) => a._seq - b._seq);
+  const folio: SoaFolioEntry[] = folioRows
+    .map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      amount_cents: r.amount_cents,
+      posted_at: r.posted_at,
+      guest: name.get(r.order_customer_id ?? '') ?? '—',
+      created_by: one(r.posted_by_staff)?.display_name ?? null,
+      note: r.note,
+    }))
+    .sort((a, b) => a.posted_at.localeCompare(b.posted_at));
   return {
     id: o.id,
     order_no: o.order_no,
     service_date: o.service_date,
     total_cents: netCents,
     lines: lines.map(({ _seq, ...rest }) => rest),
+    folio,
   };
 }
 
 const AR_FOLIO_SELECT = `
-  id, amount_cents, kind, order_id, billing_destination_id,
+  id, amount_cents, kind, posted_at, note, order_customer_id, order_id, billing_destination_id,
+  posted_by_staff:staff_users!folio_lines_posted_by_fkey ( display_name ),
   order:orders!folio_lines_order_id_fkey (
     id, order_no, service_date, branch_id,
     branch:branches ( code, name ),
@@ -160,23 +188,24 @@ export async function loadSoaWorkspace(from: string, to: string): Promise<SoaGro
   const allowed = await getAllowedBranchIds();
   const rows = await loadUnbilledArLines(supabase);
 
-  // order_id → { order graph, net AR cents }, restricted to the date window +
-  // allowed branches.
-  const byOrder = new Map<string, { order: RawSoaOrder; net: number; billing: { id: string; code: string; name: string; settlement_type: string } }>();
+  // order_id → { order graph, net AR cents, the composing folio rows },
+  // restricted to the date window + allowed branches.
+  const byOrder = new Map<string, { order: RawSoaOrder; net: number; rows: ArFolioRow[]; billing: { id: string; code: string; name: string; settlement_type: string } }>();
   for (const r of rows) {
     const order = one(r.order);
     const billing = one(r.billing);
     if (!order || !billing || !order.branch_id) continue;
     if (order.service_date < from || order.service_date > to) continue;
     if (!allowed.has(order.branch_id)) continue;
-    const cur = byOrder.get(order.id) ?? { order, net: 0, billing };
+    const cur = byOrder.get(order.id) ?? { order, net: 0, rows: [], billing };
     cur.net += signed(r.kind, r.amount_cents);
+    cur.rows.push(r);
     byOrder.set(order.id, cur);
   }
 
   // Group order → (billing × branch). A statement never mixes branches.
   const groups = new Map<string, SoaGroup>();
-  for (const { order, net, billing } of byOrder.values()) {
+  for (const { order, net, rows: folioRows, billing } of byOrder.values()) {
     if (net === 0) continue;
     const br = one(order.branch);
     const key = `${billing.id}:${order.branch_id}`;
@@ -186,11 +215,19 @@ export async function loadSoaWorkspace(from: string, to: string): Promise<SoaGro
     };
     g.bookings += 1;
     g.total_cents += net;
-    g.orders.push(toSoaOrderLine(order, net));
+    g.orders.push(toSoaOrderLine(order, net, folioRows));
     groups.set(key, g);
   }
   for (const g of groups.values()) g.orders.sort((a, b) => a.service_date.localeCompare(b.service_date) || a.order_no.localeCompare(b.order_no));
   return [...groups.values()].sort((a, b) => a.code.localeCompare(b.code) || a.branch_code.localeCompare(b.branch_code));
+}
+
+/** The user's accessible active branches — drives the Generate-SOA branch filter. */
+export async function loadSoaBranches(): Promise<{ id: string; code: string }[]> {
+  const supabase = await createAuditedClient();
+  const allowed = await getAllowedBranchIds();
+  const { data } = await supabase.from('branches').select('id, code').eq('active', true).order('code');
+  return (data ?? []).filter((b) => allowed.has(b.id));
 }
 
 const createSchema = z.object({
@@ -319,14 +356,15 @@ export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
     .in('soa_session_id', ids)
     .not('order_id', 'is', null);
 
-  // soa_session_id → (order_id → { order, net })
-  const bySession = new Map<string, Map<string, { order: RawSoaOrder; net: number }>>();
+  // soa_session_id → (order_id → { order, net, composing folio rows })
+  const bySession = new Map<string, Map<string, { order: RawSoaOrder; net: number; rows: ArFolioRow[] }>>();
   for (const raw of (lines ?? []) as unknown as (ArFolioRow & { soa_session_id: string })[]) {
     const order = one(raw.order);
     if (!order) continue;
     const m = bySession.get(raw.soa_session_id) ?? new Map();
-    const cur = m.get(order.id) ?? { order, net: 0 };
+    const cur = m.get(order.id) ?? { order, net: 0, rows: [] };
     cur.net += signed(raw.kind, raw.amount_cents);
+    cur.rows.push(raw);
     m.set(order.id, cur);
     bySession.set(raw.soa_session_id, m);
   }
@@ -334,7 +372,7 @@ export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
   return soaList.map((s) => {
     const b = one(s.billing as { code: string | null; name: string | null } | { code: string | null; name: string | null }[] | null);
     const detail = [...(bySession.get(s.id)?.values() ?? [])]
-      .map(({ order, net }) => toSoaOrderLine(order, net))
+      .map(({ order, net, rows }) => toSoaOrderLine(order, net, rows))
       .sort((a, c) => a.service_date.localeCompare(c.service_date) || a.order_no.localeCompare(c.order_no));
     return {
       id: s.id, soa_no: s.soa_no, status: s.status, settlement_type: s.settlement_type,
@@ -351,6 +389,7 @@ export async function loadSoaHistory(): Promise<SoaHistoryRow[]> {
 export interface ArSoa {
   id: string;
   soa_no: string;
+  branch_id: string | null;
   settlement_type: string | null;
   period_from: string;
   period_to: string;
@@ -399,7 +438,7 @@ export async function loadArBalance(): Promise<ArBalance> {
   const [{ data: soas }, rows] = await Promise.all([
     supabase
       .from('revenue_soa')
-      .select('id, soa_no, billing_to_id, settlement_type, period_from, period_to, total_cents, outstanding_cents, due_date, status, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name, settlement_type )')
+      .select('id, soa_no, branch_id, billing_to_id, settlement_type, period_from, period_to, total_cents, outstanding_cents, due_date, status, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( code, name, settlement_type )')
       .in('status', ['issued', 'partial_paid'])
       .in('branch_id', allowed),
     loadUnbilledArLines(supabase),
@@ -424,7 +463,7 @@ export async function loadArBalance(): Promise<ArBalance> {
     const daysOverdue = overdue ? Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${s.due_date}T00:00:00Z`)) / 86400000) : 0;
     d.outstanding_cents += outstanding;
     if (overdue) d.overdue_cents += outstanding; else d.current_cents += outstanding;
-    d.soas.push({ id: s.id, soa_no: s.soa_no, settlement_type: s.settlement_type, period_from: s.period_from, period_to: s.period_to, total_cents: s.total_cents, outstanding_cents: outstanding, due_date: s.due_date, status: s.status, days_overdue: daysOverdue });
+    d.soas.push({ id: s.id, soa_no: s.soa_no, branch_id: s.branch_id, settlement_type: s.settlement_type, period_from: s.period_from, period_to: s.period_to, total_cents: s.total_cents, outstanding_cents: outstanding, due_date: s.due_date, status: s.status, days_overdue: daysOverdue });
   }
 
   // Unbilled AR folio lines (net) → current, grouped by bill_to (allowed branches).
@@ -465,77 +504,146 @@ export async function loadArBalance(): Promise<ArBalance> {
 }
 
 // ─────────────────────────── Settle / Unsettle / Void ───────────────────────
+
+/** Everything the Settle dialog needs: real payment methods (with their bound
+ *  code, AR / stored-value excluded — a settle is ordinary money in) and the
+ *  user's branches with each one's current open shift (the Sales Remittance
+ *  the settle line will land in). */
+export interface SettleContext {
+  methods: { id: string; code: string; display_name: string; tx_code: string | null }[];
+  branches: { id: string; code: string; openShift: { label: string; businessDate: string } | null }[];
+}
+export async function loadSettleContext(): Promise<SettleContext> {
+  const supabase = await createAuditedClient();
+  const allowed = await getAllowedBranchIds();
+  const [pmRes, brRes, shiftRes] = await Promise.all([
+    supabase.from('payment_methods').select('id, code, display_name, transaction_code:transaction_codes ( code )').eq('active', true).order('code'),
+    supabase.from('branches').select('id, code').eq('active', true).order('code'),
+    supabase.from('shifts').select('branch_id, label, business_date, opened_at').eq('status', 'open').order('opened_at'),
+  ]);
+  const openByBranch = new Map<string, { label: string; businessDate: string }>();
+  for (const s of shiftRes.data ?? []) {
+    if (!openByBranch.has(s.branch_id)) openByBranch.set(s.branch_id, { label: s.label, businessDate: s.business_date });
+  }
+  return {
+    methods: (pmRes.data ?? [])
+      .filter((m) => !['ar', 'stored_value_card'].includes(m.code.toLowerCase()))
+      .map((m) => ({ id: m.id, code: m.code, display_name: m.display_name, tx_code: one(m.transaction_code)?.code ?? null })),
+    branches: (brRes.data ?? [])
+      .filter((b) => allowed.has(b.id))
+      .map((b) => ({ id: b.id, code: b.code, openShift: openByBranch.get(b.id) ?? null })),
+  };
+}
+
 const settleSchema = z.object({
   soa_id: z.string().uuid(),
-  payment_method: z.enum(['cash', 'bank']),
+  payment_method_id: z.string().uuid(),
+  // Posting branch — whose open shift (Sales Remittance) receives the settle
+  // line. Defaults to the statement's branch.
+  branch_id: z.string().uuid().optional().nullable(),
+  // Pesos. Less than the outstanding leaves the statement partial-paid; a
+  // NEGATIVE amount posts a refund line (correcting a mistyped settle) and
+  // adds the magnitude back onto the outstanding.
+  amount: z.coerce.number().refine((v) => v !== 0, 'Enter a non-zero amount'),
+  payment_ref: z.string().max(80).optional().nullable(),
   proof_file_path: z.string().max(400).optional().nullable(),
 });
 
 /**
  * Settle a statement with ONE session-scoped folio settle line (kind=payment,
- * order_id NULL). It carries the destination's bound transaction code, posts to
- * the branch's open shift (so it lands in Sales Remittance), and every AR line in
- * the session points back to it via settled_by_folio_line_id. Both intercompany
- * and third-party use this path; method is cash/bank for now.
+ * order_id NULL). It's an ORDINARY payment line, exactly like the folio Add
+ * payment: the code comes from the chosen payment method's bound transaction
+ * code and both DR/CR branches follow the chosen posting branch. It posts to
+ * that branch's open shift (so it lands in Sales Remittance), and every AR line
+ * in the session points back to it via settled_by_folio_line_id.
  */
 export async function settleSOA(input: unknown): Promise<ActionResult> {
   const session = await currentSession();
   if (!isManager(session)) return { ok: false, error: 'Manager permission required' };
   const parsed = settleSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
-  const { soa_id, payment_method, proof_file_path } = parsed.data;
+  const { soa_id, payment_method_id, branch_id, amount, payment_ref, proof_file_path } = parsed.data;
   const supabase = await createAuditedClient();
 
   const { data: soa } = await supabase
     .from('revenue_soa')
-    .select('soa_no, status, total_cents, paid_cents, outstanding_cents, branch_id, billing_to_id, billing:billing_destinations!revenue_soa_billing_to_id_fkey ( transaction_code_id )')
+    .select('soa_no, status, total_cents, paid_cents, outstanding_cents, branch_id, billing_to_id')
     .eq('id', soa_id)
     .single();
   if (!soa) return { ok: false, error: 'SOA not found' };
-  if (!soa.branch_id || !(await canAccessBranch(soa.branch_id))) return { ok: false, error: 'No access to this branch' };
+  const postBranchId = branch_id ?? soa.branch_id;
+  if (!postBranchId || !(await canAccessBranch(postBranchId))) return { ok: false, error: 'No access to this branch' };
   if (!['issued', 'partial_paid'].includes(soa.status)) return { ok: false, error: 'Only an open statement can be settled' };
-  try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
+  try { await assertNoBlockedClose(postBranchId); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
-  const txCodeId = one(soa.billing as { transaction_code_id: string | null } | { transaction_code_id: string | null }[] | null)?.transaction_code_id ?? null;
-  if (!txCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
+  const { data: pm } = await supabase.from('payment_methods').select('id, code, display_name, transaction_code_id').eq('id', payment_method_id).maybeSingle();
+  if (!pm) return { ok: false, error: 'Payment method not found' };
+  if (['ar', 'stored_value_card'].includes(pm.code.toLowerCase())) return { ok: false, error: 'Settle with an ordinary payment method (cash / bank / card) — not AR or a stored-value card.' };
+  if (!pm.transaction_code_id) return { ok: false, error: `The "${pm.display_name}" payment method has no transaction code bound — set one in Settings → Payment Methods first.` };
 
-  const { data: pm } = await supabase.from('payment_methods').select('id').eq('code', payment_method).maybeSingle();
-  if (!pm) return { ok: false, error: `No payment method "${payment_method}"` };
+  const { data: branch } = await supabase.from('branches').select('code').eq('id', postBranchId).single();
+  if (!branch) return { ok: false, error: 'Branch not found' };
 
-  const openShift = await getCurrentOpenShift(soa.branch_id);
+  const openShift = await getCurrentOpenShift(postBranchId);
   if (!openShift) return { ok: false, error: 'No cash shift is open for this branch — open one on the Sales Remittance page before settling.' };
 
-  const amount = (soa.outstanding_cents ?? soa.total_cents - soa.paid_cents);
+  const outstanding = soa.outstanding_cents ?? soa.total_cents - soa.paid_cents;
+  const amountCents = Math.round(amount * 100);
+  const isRefund = amountCents < 0;
+  const magnitude = Math.abs(amountCents);
+  if (!isRefund && amountCents > outstanding) {
+    return { ok: false, error: `Amount exceeds the outstanding (${(outstanding / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
+  }
+  // A correction can't refund more than what's been collected on this statement.
+  if (isRefund && magnitude > soa.paid_cents) {
+    return { ok: false, error: `Refund exceeds the amount collected (${(soa.paid_cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
+  }
+  const fully = !isRefund && amountCents === outstanding;
+
+  // Amount is stored positive; the kind carries the direction (same convention
+  // as every other folio line).
   const { data: settleLine, error: se } = await supabase
     .from('folio_lines')
     .insert({
       order_id: null,
       shift_id: openShift.id,
-      kind: 'payment',
-      amount_cents: amount,
+      kind: isRefund ? 'refund' : 'payment',
+      amount_cents: magnitude,
       posted_by: session!.staffUserId,
       payment_method_id: pm.id,
-      branch_id: soa.branch_id,
+      payment_ref: payment_ref?.trim() || null,
+      branch_id: postBranchId,
       billing_destination_id: soa.billing_to_id,
       soa_session_id: soa_id,
-      transaction_code_id: txCodeId,
+      transaction_code_id: pm.transaction_code_id,
+      dr_branch: branch.code,
+      cr_branch: branch.code,
       proof_file_path: proof_file_path || null,
     })
     .select('id')
     .single();
   if (se || !settleLine) return { ok: false, error: se?.message ?? 'Could not post settle line' };
 
-  // Point every receivable line in the session back at the settle line.
-  const { error: ue } = await supabase
-    .from('folio_lines')
-    .update({ settled_by_folio_line_id: settleLine.id })
-    .eq('soa_session_id', soa_id)
-    .not('order_id', 'is', null);
-  if (ue) return { ok: false, error: ue.message };
+  // Only a FULL settle closes the statement: stamp every receivable line with
+  // the closing settle line. A partial amount just reduces the outstanding; a
+  // refund correction adds it back.
+  if (fully) {
+    const { error: ue } = await supabase
+      .from('folio_lines')
+      .update({ settled_by_folio_line_id: settleLine.id })
+      .eq('soa_session_id', soa_id)
+      .not('order_id', 'is', null);
+    if (ue) return { ok: false, error: ue.message };
+  }
 
+  const paidAfter = soa.paid_cents + amountCents;
   const { error: soe } = await supabase
     .from('revenue_soa')
-    .update({ status: 'settled', paid_cents: soa.total_cents, outstanding_cents: 0 })
+    .update({
+      status: fully ? 'settled' : paidAfter > 0 ? 'partial_paid' : 'issued',
+      paid_cents: paidAfter,
+      outstanding_cents: outstanding - amountCents,
+    })
     .eq('id', soa_id);
   if (soe) return { ok: false, error: soe.message };
 
@@ -564,35 +672,50 @@ export async function unsettleSOA(id: string): Promise<ActionResult> {
   if (soa.status !== 'settled') return { ok: false, error: 'Only a settled statement can be unsettled' };
   try { await assertNoBlockedClose(soa.branch_id); } catch (e) { return { ok: false, error: (e as Error).message }; }
 
-  // The positive settle line that settled this session.
-  const { data: settleLine } = await supabase
+  // A session may carry several settle lines (partial settles). Reverse the NET
+  // per (method, code, branch, dr/cr) group — each reversal mirrors its group
+  // exactly and lands in that branch's CURRENT open shift (which may be a later
+  // shift than the original).
+  const { data: settleLines } = await supabase
     .from('folio_lines')
-    .select('id, amount_cents, payment_method_id, transaction_code_id')
+    .select('id, kind, amount_cents, payment_method_id, transaction_code_id, branch_id, dr_branch, cr_branch')
     .eq('soa_session_id', id)
     .is('order_id', null)
-    .eq('kind', 'payment')
-    .order('posted_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!settleLine) return { ok: false, error: 'No settle line found for this statement' };
-  if (!settleLine.transaction_code_id) return { ok: false, error: 'Settle line is missing its transaction code' };
+    .in('kind', ['payment', 'refund']);
+  type SettleGroup = { net: number; payment_method_id: string | null; transaction_code_id: string | null; branch_id: string | null; dr_branch: string | null; cr_branch: string | null };
+  const groups = new Map<string, SettleGroup>();
+  for (const l of settleLines ?? []) {
+    const key = `${l.payment_method_id}|${l.transaction_code_id}|${l.branch_id}|${l.dr_branch}|${l.cr_branch}`;
+    const g = groups.get(key) ?? { net: 0, payment_method_id: l.payment_method_id, transaction_code_id: l.transaction_code_id, branch_id: l.branch_id, dr_branch: l.dr_branch, cr_branch: l.cr_branch };
+    g.net += l.kind === 'refund' ? -l.amount_cents : l.amount_cents;
+    groups.set(key, g);
+  }
+  const toReverse = [...groups.values()].filter((g) => g.net > 0);
+  if (toReverse.length === 0) return { ok: false, error: 'No settle line found for this statement' };
 
-  const openShift = await getCurrentOpenShift(soa.branch_id);
-  if (!openShift) return { ok: false, error: 'No cash shift is open for this branch — open one before reversing the settle.' };
+  for (const g of toReverse) {
+    if (!g.transaction_code_id) return { ok: false, error: 'Settle line is missing its transaction code' };
+    const reverseBranchId = g.branch_id ?? soa.branch_id;
+    if (!(await canAccessBranch(reverseBranchId))) return { ok: false, error: 'No access to the branch the settle was posted to' };
+    const openShift = await getCurrentOpenShift(reverseBranchId);
+    if (!openShift) return { ok: false, error: 'No cash shift is open for the branch the settle was posted to — open one before reversing.' };
 
-  const { error: re } = await supabase.from('folio_lines').insert({
-    order_id: null,
-    shift_id: openShift.id,
-    kind: 'refund',
-    amount_cents: settleLine.amount_cents,
-    posted_by: session!.staffUserId,
-    payment_method_id: settleLine.payment_method_id,
-    branch_id: soa.branch_id,
-    billing_destination_id: soa.billing_to_id,
-    soa_session_id: id,
-    transaction_code_id: settleLine.transaction_code_id,
-  });
-  if (re) return { ok: false, error: re.message };
+    const { error: re } = await supabase.from('folio_lines').insert({
+      order_id: null,
+      shift_id: openShift.id,
+      kind: 'refund',
+      amount_cents: g.net,
+      posted_by: session!.staffUserId,
+      payment_method_id: g.payment_method_id,
+      branch_id: reverseBranchId,
+      billing_destination_id: soa.billing_to_id,
+      soa_session_id: id,
+      transaction_code_id: g.transaction_code_id,
+      dr_branch: g.dr_branch,
+      cr_branch: g.cr_branch,
+    });
+    if (re) return { ok: false, error: re.message };
+  }
 
   // Clear the per-line settle reference.
   const { error: ce } = await supabase

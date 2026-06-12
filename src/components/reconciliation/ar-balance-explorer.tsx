@@ -177,7 +177,7 @@ export function ArBalanceExplorer({ ar }: { ar: ArBalance }) {
                                       <TableCell className="text-center"><StatusBadge status={s.status} kind="soa" /></TableCell>
                                       <TableCell className="pr-4">
                                         <div className="flex items-center justify-end gap-2">
-                                          <SoaActions id={s.id} status={s.status} settlementType={s.settlement_type} outstandingCents={s.outstanding_cents} allowVoid={false} />
+                                          <SoaActions id={s.id} status={s.status} settlementType={s.settlement_type} branchId={s.branch_id} outstandingCents={s.outstanding_cents} paidCents={s.total_cents - s.outstanding_cents} allowVoid={false} />
                                         </div>
                                       </TableCell>
                                     </TableRow>

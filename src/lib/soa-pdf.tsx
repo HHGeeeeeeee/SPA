@@ -9,13 +9,18 @@ function php(cents: number): string {
 }
 const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
 
-interface PdfLine { date: string; order_no: string; guest: string; service: string; mins: number | null; net: number }
+// Two row layers per order, mirroring the SOA workspace UI:
+//  'svc' — service context (what was delivered; informational, muted)
+//  'ar'  — the AR folio charge/refund lines whose net IS the statement amount
+interface PdfSvcRow { kind: 'svc'; date: string; order_no: string; guest: string; service: string; mins: number | null; net: number }
+interface PdfArRow { kind: 'ar'; date: string; order_no: string; guest: string; label: string; meta: string; net: number; refund: boolean }
+type PdfRow = PdfSvcRow | PdfArRow;
 interface PdfData {
   soa_no: string; status: string; settlement_type: string | null;
   period_from: string; period_to: string; issued_date: string | null; due_date: string | null; term_days: number | null;
   total_cents: number; billing_code: string | null; billing_name: string | null;
   branchName: string;
-  lines: PdfLine[];
+  rows: PdfRow[];
 }
 
 function todayPHT(): string {
@@ -38,12 +43,14 @@ async function loadSoaForPdf(soaId: string): Promise<PdfData | null> {
   if (!s) return null;
   const b = one(s.billing);
 
-  // SOA is folio-based: the statement's orders are those carrying an AR line in
-  // this session (order_id not null). De-dupe orders, then list their services.
+  // SOA is folio-based: the statement's money is the session's AR folio lines
+  // (order_id not null). Each order renders its service lines as context, then
+  // the AR charge/refund lines that compose its statement amount.
   const { data: arLines } = await supabase
     .from('folio_lines')
     .select(`
-      order_id,
+      id, order_id, kind, amount_cents, posted_at, note, order_customer_id,
+      posted_by_staff:staff_users!folio_lines_posted_by_fkey ( display_name ),
       order:orders!folio_lines_order_id_fkey (
         id, order_no, service_date,
         branch:branches ( name ),
@@ -60,25 +67,33 @@ async function loadSoaForPdf(soaId: string): Promise<PdfData | null> {
     order_customers: { id: string; customer_name: string; seq_no: number }[] | null;
     order_items: { order_customer_id: string | null; duration_minutes: number | null; list_price_cents: number | null; final_amount_cents: number | null; status: string; service: { name: string } | { name: string }[] | null }[] | null;
   };
-  const orders = new Map<string, PdfOrder>();
+  type ArRow = { kind: string; amount_cents: number; posted_at: string; note: string | null; order_customer_id: string | null; posted_by_staff: { display_name: string | null } | { display_name: string | null }[] | null };
+  const orders = new Map<string, { order: PdfOrder; ar: ArRow[] }>();
   for (const r of arLines ?? []) {
     const o = one(r.order) as PdfOrder | null;
-    if (o?.id && !orders.has(o.id)) orders.set(o.id, o);
+    if (!o?.id) continue;
+    const cur = orders.get(o.id) ?? { order: o, ar: [] };
+    cur.ar.push(r as unknown as ArRow);
+    orders.set(o.id, cur);
   }
 
-  const lines: (PdfLine & { _seq: number })[] = [];
+  const rows: PdfRow[] = [];
   const branchNames = new Set<string>();
-  for (const o of orders.values()) {
+  const sortedOrders = [...orders.values()].sort((a, c) =>
+    a.order.service_date.localeCompare(c.order.service_date) || a.order.order_no.localeCompare(c.order.order_no));
+  for (const { order: o, ar } of sortedOrders) {
     const bn = one(o.branch)?.name;
     if (bn) branchNames.add(bn);
     const nameById = new Map((o.order_customers ?? []).map((c) => [c.id, c.customer_name]));
     const seqById = new Map((o.order_customers ?? []).map((c) => [c.id, c.seq_no]));
+    const svc: (PdfSvcRow & { _seq: number })[] = [];
     for (const it of o.order_items ?? []) {
       if (it.status === 'cancelled') continue;
       // Skip zero-list-price junk lines (same rule as the History grid — a
       // real service always has a list price; 0 means placeholder/orphan).
       if ((it.list_price_cents ?? 0) <= 0) continue;
-      lines.push({
+      svc.push({
+        kind: 'svc',
         date: o.service_date,
         order_no: o.order_no,
         guest: nameById.get(it.order_customer_id ?? '') ?? 'Guest',
@@ -88,8 +103,24 @@ async function loadSoaForPdf(soaId: string): Promise<PdfData | null> {
         _seq: seqById.get(it.order_customer_id ?? '') ?? 99,
       });
     }
+    svc.sort((a, c) => a._seq - c._seq);
+    rows.push(...svc.map(({ _seq, ...rest }) => rest));
+    const arSorted = [...ar].sort((a, c) => a.posted_at.localeCompare(c.posted_at));
+    for (const l of arSorted) {
+      const refund = l.kind === 'refund';
+      const by = one(l.posted_by_staff)?.display_name ?? null;
+      rows.push({
+        kind: 'ar',
+        date: l.posted_at.slice(0, 10),
+        order_no: o.order_no,
+        guest: nameById.get(l.order_customer_id ?? '') ?? '—',
+        label: refund ? 'AR Refund' : 'AR Charge',
+        meta: [by ? `by ${by}` : null, l.note].filter(Boolean).join(' · '),
+        net: l.amount_cents,
+        refund,
+      });
+    }
   }
-  lines.sort((a, c) => a.date.localeCompare(c.date) || a.order_no.localeCompare(c.order_no) || a._seq - c._seq);
 
   // Net terms = the credit window snapshotted at generation (issued → due).
   const termDays = s.issued_date && s.due_date
@@ -101,7 +132,7 @@ async function loadSoaForPdf(soaId: string): Promise<PdfData | null> {
     period_from: s.period_from, period_to: s.period_to, issued_date: s.issued_date, due_date: s.due_date, term_days: termDays,
     total_cents: s.total_cents, billing_code: b?.code ?? null, billing_name: b?.name ?? null,
     branchName: branchNames.size === 1 ? [...branchNames][0] : branchNames.size > 1 ? [...branchNames].join(', ') : 'HHG-SPA',
-    lines: lines.map(({ _seq, ...l }) => l),
+    rows,
   };
 }
 
@@ -117,9 +148,13 @@ const styles = StyleSheet.create({
   billTo: { color: MUTED, fontSize: 8, marginBottom: 2 },
   billName: { fontFamily: 'Helvetica-Bold', fontSize: 11 },
   row: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 5 },
+  arRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 5, backgroundColor: '#f0f7f5' },
   headRow: { flexDirection: 'row', backgroundColor: HEADBG, paddingVertical: 6, borderTopWidth: 1, borderBottomWidth: 1, borderColor: LINE },
   th: { fontFamily: 'Helvetica-Bold', fontSize: 8, color: MUTED, paddingHorizontal: 4 },
   td: { fontSize: 9, paddingHorizontal: 4 },
+  tdMuted: { fontSize: 9, paddingHorizontal: 4, color: MUTED },
+  tdBold: { fontSize: 9, paddingHorizontal: 4, fontFamily: 'Helvetica-Bold' },
+  arMeta: { fontSize: 7.5, color: MUTED, marginTop: 1 },
   cDate: { width: 64 }, cOrder: { width: 120 }, cGuest: { width: 90 }, cSvc: { flex: 1 },
   cMins: { width: 38, textAlign: 'center' }, cNet: { width: 78, textAlign: 'right' },
   totalRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 },
@@ -175,17 +210,36 @@ function SoaDoc({ d }: { d: PdfData }) {
           <Text style={[styles.th, styles.cMins]}>MINS</Text>
           <Text style={[styles.th, styles.cNet]}>NET</Text>
         </View>
-        {d.lines.map((l, i) => (
-          <View key={i} style={styles.row} wrap={false}>
-            <Text style={[styles.td, styles.cDate]}>{l.date}</Text>
-            <Text style={[styles.td, styles.cOrder]}>{l.order_no}</Text>
-            <Text style={[styles.td, styles.cGuest]}>{l.guest}</Text>
-            <Text style={[styles.td, styles.cSvc]}>{l.service}</Text>
-            <Text style={[styles.td, styles.cMins]}>{l.mins ?? '—'}</Text>
-            <Text style={[styles.td, styles.cNet]}>{php(l.net)}</Text>
-          </View>
-        ))}
-        {d.lines.length === 0 && (
+        {d.rows.map((l, i) =>
+          l.kind === 'svc' ? (
+            // Service context — what was delivered (informational; the money is
+            // the AR lines below it).
+            <View key={i} style={styles.row} wrap={false}>
+              <Text style={[styles.tdMuted, styles.cDate]}>{l.date}</Text>
+              <Text style={[styles.tdMuted, styles.cOrder]}>{l.order_no}</Text>
+              <Text style={[styles.tdMuted, styles.cGuest]}>{l.guest}</Text>
+              <Text style={[styles.tdMuted, styles.cSvc]}>{l.service}</Text>
+              <Text style={[styles.tdMuted, styles.cMins]}>{l.mins ?? '—'}</Text>
+              <Text style={[styles.tdMuted, styles.cNet]}>{php(l.net)}</Text>
+            </View>
+          ) : (
+            // Statement money — AR charge / refund folio line (who, by whom, note).
+            <View key={i} style={styles.arRow} wrap={false}>
+              <Text style={[styles.td, styles.cDate]}>{l.date}</Text>
+              <Text style={[styles.td, styles.cOrder]}>{l.order_no}</Text>
+              <Text style={[styles.tdBold, styles.cGuest]}>{l.guest}</Text>
+              <View style={[styles.cSvc, { paddingHorizontal: 4 }]}>
+                <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', color: l.refund ? '#b91c1c' : C }}>{l.label}</Text>
+                {l.meta ? <Text style={styles.arMeta}>{l.meta}</Text> : null}
+              </View>
+              <Text style={[styles.td, styles.cMins]} />
+              <Text style={[styles.tdBold, styles.cNet, l.refund ? { color: '#b91c1c' } : {}]}>
+                {l.refund ? `-${php(l.net)}` : php(l.net)}
+              </Text>
+            </View>
+          ),
+        )}
+        {d.rows.length === 0 && (
           <View style={styles.row}><Text style={[styles.td, { color: MUTED }]}>No orders on this statement.</Text></View>
         )}
 

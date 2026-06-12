@@ -72,6 +72,7 @@ export function SoaWorkspace({
   initialGroups,
   history,
   arBalance,
+  branches,
   initialView = 'ar',
 }: {
   initialFrom: string;
@@ -80,6 +81,7 @@ export function SoaWorkspace({
   initialGroups: SoaGroup[];
   history: SoaHistoryRow[];
   arBalance: ArBalance;
+  branches: { id: string; code: string }[];
   initialView?: 'generate' | 'history' | 'ar';
 }) {
   const router = useRouter();
@@ -87,6 +89,8 @@ export function SoaWorkspace({
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
   const [groups, setGroups] = useState<SoaGroup[]>(initialGroups);
+  // Branch lens for the Generate view — 'all' or one branch id.
+  const [branchFilter, setBranchFilter] = useState<string>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, startLoad] = useTransition();
@@ -118,21 +122,31 @@ export function SoaWorkspace({
   function toggleExp(id: string) {
     setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
-  const allSelected = groups.length > 0 && selected.size === groups.length;
+
+  // The Generate list through the branch lens; selection follows the lens.
+  const visibleGroups = useMemo(
+    () => (branchFilter === 'all' ? groups : groups.filter((g) => g.branch_id === branchFilter)),
+    [groups, branchFilter],
+  );
+  function pickBranch(id: string) {
+    setBranchFilter(id);
+    setSelected(new Set());
+  }
+  const allSelected = visibleGroups.length > 0 && selected.size === visibleGroups.length;
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(groups.map((g) => g.key)));
+    setSelected(allSelected ? new Set() : new Set(visibleGroups.map((g) => g.key)));
   }
 
-  const selTotal = groups.filter((g) => selected.has(g.key)).reduce((s, g) => s + g.total_cents, 0);
+  const selTotal = visibleGroups.filter((g) => selected.has(g.key)).reduce((s, g) => s + g.total_cents, 0);
 
   // Semi-monthly cadence: settle each half-month (1–15, 16–EOM). It's "due" when
   // un-stated closed AR exists from a half-month that has already ended.
   const halfStart = Number(today.slice(8, 10)) <= 15 ? `${today.slice(0, 7)}-01` : `${today.slice(0, 7)}-16`;
-  const settleOverdue = groups.some((g) => g.orders.some((o) => o.service_date < halfStart));
+  const settleOverdue = visibleGroups.some((g) => g.orders.some((o) => o.service_date < halfStart));
 
   function doGenerate() {
     if (selected.size === 0) return toast.error('Select at least one statement to generate');
-    const sel = groups.filter((g) => selected.has(g.key)).map((g) => ({ billing_to_id: g.billing_id, branch_id: g.branch_id }));
+    const sel = visibleGroups.filter((g) => selected.has(g.key)).map((g) => ({ billing_to_id: g.billing_id, branch_id: g.branch_id }));
     startGen(async () => {
       const r = await generateSOAGroups(sel, from, to);
       if (r.ok) {
@@ -266,13 +280,26 @@ export function SoaWorkspace({
                 <Label className="text-xs font-semibold">To</Label>
                 <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
               </div>
-              <p className="ml-auto text-sm font-semibold text-muted-foreground">
-                {groups.length} statement{groups.length === 1 ? '' : 's'} (billing × branch) · {groups.reduce((s, g) => s + g.bookings, 0)} bookings · {peso(groups.reduce((s, g) => s + g.total_cents, 0))}
+              <p className="text-sm font-semibold text-muted-foreground self-end mb-2">
+                {visibleGroups.length} statement{visibleGroups.length === 1 ? '' : 's'} (billing × branch) · {visibleGroups.reduce((s, g) => s + g.bookings, 0)} bookings · {peso(visibleGroups.reduce((s, g) => s + g.total_cents, 0))}
               </p>
+              {/* Branch lens — statements never mix branches, so this just narrows the list. */}
+              <div className="ml-auto flex items-center gap-1.5 self-end mb-1">
+                {[{ id: 'all', code: 'All' }, ...branches].map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => pickBranch(b.id)}
+                    className={cn('rounded-lg px-3 py-1.5 text-sm font-bold transition-colors', b.id === branchFilter ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:bg-accent')}
+                  >
+                    {b.code}
+                  </button>
+                ))}
+              </div>
             </div>
           </Card>
 
-          {groups.length === 0 ? (
+          {visibleGroups.length === 0 ? (
             <Card className="border-dashed bg-muted/30">
               <CardContent className="py-10 text-center">
                 <FilePlus2 className="size-8 mx-auto text-muted-foreground/50" />
@@ -297,7 +324,7 @@ export function SoaWorkspace({
                 )}
               </div>
 
-              {groups.map((g) => {
+              {visibleGroups.map((g) => {
                 const isOpen = expanded.has(g.key);
                 return (
                   <Card key={g.key} className="p-0 overflow-hidden">
@@ -333,20 +360,50 @@ export function SoaWorkspace({
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {g.orders.flatMap((o) =>
-                            (o.lines.length ? o.lines : [{ guest: '—', service: '—', duration_minutes: null, gross_cents: o.total_cents, discount_cents: 0, net_cents: o.total_cents }]).map((ln, i) => (
-                              <TableRow key={`${o.id}-${i}`}>
-                                <TableCell className="font-medium tabular text-muted-foreground">{i === 0 ? o.service_date : ''}</TableCell>
-                                <TableCell className="font-mono font-bold">
-                                  {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
-                                </TableCell>
-                                <TableCell className="font-medium">{ln.guest}</TableCell>
-                                <TableCell className="font-medium">{ln.service}</TableCell>
-                                <TableCell className="tabular text-right text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
-                                <TableCell className="font-bold tabular text-right pr-4">{peso(ln.net_cents)}</TableCell>
-                              </TableRow>
-                            )),
-                          )}
+                          {g.orders.map((o) => (
+                            <Fragment key={o.id}>
+                              {/* Service context — what was delivered (not the statement money). */}
+                              {o.lines.map((ln, i) => (
+                                <TableRow key={`${o.id}-svc-${i}`}>
+                                  <TableCell className="font-medium tabular text-muted-foreground">{i === 0 ? o.service_date : ''}</TableCell>
+                                  <TableCell className="font-mono font-bold">
+                                    {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
+                                  </TableCell>
+                                  <TableCell className="font-medium">{ln.guest}</TableCell>
+                                  <TableCell className="font-medium">{ln.service}</TableCell>
+                                  <TableCell className="tabular text-right text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
+                                  <TableCell className="tabular text-right pr-4 text-muted-foreground">{peso(ln.net_cents)}</TableCell>
+                                </TableRow>
+                              ))}
+                              {/* Statement money — the AR folio payment/refund lines whose net
+                                  IS this order's amount on the statement. */}
+                              {o.folio.map((f, i) => (
+                                <TableRow key={f.id} className="bg-primary/[0.04] hover:bg-primary/[0.06]">
+                                  <TableCell className="font-medium tabular text-muted-foreground pl-8">
+                                    {o.lines.length === 0 && i === 0 ? o.service_date : f.posted_at.slice(0, 10)}
+                                  </TableCell>
+                                  <TableCell className="font-mono font-bold">
+                                    {o.lines.length === 0 && i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
+                                  </TableCell>
+                                  <TableCell className="font-semibold">{f.guest}</TableCell>
+                                  <TableCell>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <Badge variant="outline" className={cn('font-bold shrink-0', f.kind === 'refund' ? 'text-destructive border-destructive/40' : 'text-primary border-primary/40')}>
+                                        {f.kind === 'refund' ? 'AR refund' : 'AR charge'}
+                                      </Badge>
+                                      <span className="text-xs font-medium text-muted-foreground">
+                                        {f.created_by ? `by ${f.created_by}` : ''}{f.created_by && f.note ? ' · ' : ''}{f.note ?? ''}
+                                      </span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell />
+                                  <TableCell className={cn('font-bold tabular text-right pr-4', f.kind === 'refund' && 'text-destructive')}>
+                                    {f.kind === 'refund' ? `−${peso(f.amount_cents)}` : peso(f.amount_cents)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </Fragment>
+                          ))}
                         </TableBody>
                       </Table>
                     )}
@@ -528,22 +585,51 @@ export function SoaWorkspace({
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {s.detail.flatMap((o) =>
-                                    (o.lines.length ? o.lines : [{ guest: '—', service: '—', duration_minutes: null, gross_cents: o.total_cents, discount_cents: 0, net_cents: o.total_cents }]).map((ln, i) => (
-                                      <TableRow key={`${o.id}-${i}`}>
-                                        <TableCell className="font-medium tabular text-muted-foreground pl-6">{i === 0 ? o.service_date : ''}</TableCell>
-                                        <TableCell className="font-mono font-bold">
-                                          {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
-                                        </TableCell>
-                                        <TableCell className="font-medium pl-4">{ln.guest}</TableCell>
-                                        <TableCell className="font-medium">{ln.service}</TableCell>
-                                        <TableCell className="tabular text-center text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
-                                        <TableCell className="font-bold tabular text-right pr-2">{peso(ln.net_cents)}</TableCell>
-                                        <TableCell className="w-28" />
-                                        <TableCell className="w-32" />
-                                      </TableRow>
-                                    )),
-                                  )}
+                                  {s.detail.map((o) => (
+                                    <Fragment key={o.id}>
+                                      {o.lines.map((ln, i) => (
+                                        <TableRow key={`${o.id}-svc-${i}`}>
+                                          <TableCell className="font-medium tabular text-muted-foreground pl-6">{i === 0 ? o.service_date : ''}</TableCell>
+                                          <TableCell className="font-mono font-bold">
+                                            {i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
+                                          </TableCell>
+                                          <TableCell className="font-medium pl-4">{ln.guest}</TableCell>
+                                          <TableCell className="font-medium">{ln.service}</TableCell>
+                                          <TableCell className="tabular text-center text-muted-foreground">{ln.duration_minutes ?? '—'}</TableCell>
+                                          <TableCell className="tabular text-right pr-2 text-muted-foreground">{peso(ln.net_cents)}</TableCell>
+                                          <TableCell className="w-28" />
+                                          <TableCell className="w-32" />
+                                        </TableRow>
+                                      ))}
+                                      {o.folio.map((f, i) => (
+                                        <TableRow key={f.id} className="bg-primary/[0.04] hover:bg-primary/[0.06]">
+                                          <TableCell className="font-medium tabular text-muted-foreground pl-10">
+                                            {o.lines.length === 0 && i === 0 ? o.service_date : f.posted_at.slice(0, 10)}
+                                          </TableCell>
+                                          <TableCell className="font-mono font-bold">
+                                            {o.lines.length === 0 && i === 0 ? <Link href={`/sales-orders/${o.id}`} className="hover:text-primary">{o.order_no}</Link> : ''}
+                                          </TableCell>
+                                          <TableCell className="font-semibold pl-4">{f.guest}</TableCell>
+                                          <TableCell>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <Badge variant="outline" className={cn('font-bold shrink-0', f.kind === 'refund' ? 'text-destructive border-destructive/40' : 'text-primary border-primary/40')}>
+                                                {f.kind === 'refund' ? 'AR refund' : 'AR charge'}
+                                              </Badge>
+                                              <span className="text-xs font-medium text-muted-foreground">
+                                                {f.created_by ? `by ${f.created_by}` : ''}{f.created_by && f.note ? ' · ' : ''}{f.note ?? ''}
+                                              </span>
+                                            </div>
+                                          </TableCell>
+                                          <TableCell />
+                                          <TableCell className={cn('font-bold tabular text-right pr-2', f.kind === 'refund' && 'text-destructive')}>
+                                            {f.kind === 'refund' ? `−${peso(f.amount_cents)}` : peso(f.amount_cents)}
+                                          </TableCell>
+                                          <TableCell className="w-28" />
+                                          <TableCell className="w-32" />
+                                        </TableRow>
+                                      ))}
+                                    </Fragment>
+                                  ))}
                                 </TableBody>
                               </Table>
                               {/* Payment ledger — third-party SOAs collect via

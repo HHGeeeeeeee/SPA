@@ -25,24 +25,21 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [tc, br, pm] = await Promise.all([
+  const [tc, br] = await Promise.all([
     supabase
       .from('transaction_codes')
       .select(`
-        id, code, branch_id, transaction_type, payment_method_id,
+        id, code, branch_id, transaction_type,
         debit_account, debit_subaccount, debit_branch_id,
         credit_account, credit_subaccount, credit_branch_id, active,
-        branch:branches!transaction_codes_branch_id_fkey ( code ),
-        payment_method:payment_methods ( code )
+        branch:branches!transaction_codes_branch_id_fkey ( code )
       `)
       .order('code'),
     supabase.from('branches').select('id, code, name').eq('active', true).order('code'),
-    supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
   ]);
   if (tc.error) throw new Error(tc.error.message);
   if (br.error) throw new Error(br.error.message);
-  if (pm.error) throw new Error(pm.error.message);
-  return { codes: tc.data ?? [], branches: br.data ?? [], paymentMethods: pm.data ?? [] };
+  return { codes: tc.data ?? [], branches: br.data ?? [] };
 }
 
 function GLCell({ acct, sub, branch }: { acct: string | null; sub: string | null; branch?: string | null }) {
@@ -59,7 +56,7 @@ function GLCell({ acct, sub, branch }: { acct: string | null; sub: string | null
 export default async function TransactionCodesPage() {
   const session = await currentSession();
   if (!isAdmin(session) && !isAccountant(session)) redirect('/dashboard');
-  const { codes, branches, paymentMethods } = await fetchData();
+  const { codes, branches } = await fetchData();
   const activeCount = codes.filter((c) => c.active).length;
 
   return (
@@ -80,7 +77,6 @@ export default async function TransactionCodesPage() {
         </div>
         <TransactionCodeFormDialog
           branches={branches}
-          paymentMethods={paymentMethods}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -97,7 +93,6 @@ export default async function TransactionCodesPage() {
               <TableHead className="font-bold">Code</TableHead>
               <TableHead className="w-20 font-bold">Branch</TableHead>
               <TableHead className="w-24 font-bold">Type</TableHead>
-              <TableHead className="font-bold">Method</TableHead>
               <TableHead className="font-bold">DR (Account / Sub @ Br)</TableHead>
               <TableHead className="font-bold">CR (Account / Sub @ Br)</TableHead>
               <TableHead className="w-24 font-bold">Status</TableHead>
@@ -107,7 +102,7 @@ export default async function TransactionCodesPage() {
           <TableBody>
             {codes.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={7} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">
                     No transaction codes yet.
                   </p>
@@ -116,13 +111,11 @@ export default async function TransactionCodesPage() {
             ) : (
               codes.map((c) => {
                 const branch = Array.isArray(c.branch) ? c.branch[0] : c.branch;
-                const pm = Array.isArray(c.payment_method) ? c.payment_method[0] : c.payment_method;
                 const itemRecord: TxCodeItem = {
                   id: c.id,
                   code: c.code,
                   branch_id: c.branch_id,
                   transaction_type: c.transaction_type as TxCodeItem['transaction_type'],
-                  payment_method_id: c.payment_method_id,
                   debit_account: c.debit_account,
                   debit_subaccount: c.debit_subaccount,
                   debit_branch_id: c.debit_branch_id,
@@ -139,7 +132,6 @@ export default async function TransactionCodesPage() {
                         {c.transaction_type}
                       </Badge>
                     </TableCell>
-                    <TableCell className="font-mono font-bold">{pm?.code ?? '—'}</TableCell>
                     <TableCell>
                       <GLCell acct={c.debit_account} sub={c.debit_subaccount} branch={c.debit_branch_id} />
                     </TableCell>
@@ -157,7 +149,6 @@ export default async function TransactionCodesPage() {
                       <TransactionCodeRowActions
                         item={{ ...itemRecord, active: c.active }}
                         branches={branches}
-                        paymentMethods={paymentMethods}
                       />
                     </TableCell>
                   </TableRow>

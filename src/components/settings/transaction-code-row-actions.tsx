@@ -29,10 +29,9 @@ import { TransactionCodeFormDialog, type TxCodeItem } from './transaction-code-f
 interface Props {
   item: TxCodeItem & { active: boolean };
   branches: { id: string; code: string; name: string }[];
-  paymentMethods: { id: string; code: string; display_name: string }[];
 }
 
-export function TransactionCodeRowActions({ item, branches, paymentMethods }: Props) {
+export function TransactionCodeRowActions({ item, branches }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -84,7 +83,6 @@ export function TransactionCodeRowActions({ item, branches, paymentMethods }: Pr
         mode="edit"
         item={item}
         branches={branches}
-        paymentMethods={paymentMethods}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

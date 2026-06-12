@@ -17,6 +17,11 @@ const branchSchema = z.object({
   // Branches sharing the same non-empty label pool their therapists (borrowing).
   therapist_share_group: z.string().max(60).optional().nullable(),
   commission_policy_id: z.string().uuid().optional().nullable(),
+  // Default transaction-code bindings: manual revenue postings, tips, and
+  // stored-value (Royal Card) redemptions taken at this branch.
+  default_revenue_transaction_code_id: z.string().uuid().optional().nullable(),
+  default_tip_transaction_code_id: z.string().uuid().optional().nullable(),
+  royal_card_transaction_code_id: z.string().uuid().optional().nullable(),
   // Per-branch class-rate overrides (this store's own % for a class). Branches
   // without an override use the global commission_classes rate.
   commission_rate_overrides: z.array(z.object({ commission_class_id: z.string().uuid(), rate: z.number().min(0).max(1) })).optional(),
@@ -73,7 +78,7 @@ export async function createBranch(input: unknown): Promise<ActionResult> {
     : null;
   const { data, error } = await supabase
     .from('branches')
-    .insert({ code: parsed.data.code, name: parsed.data.name, active: true, open_time: parsed.data.open_time ?? '10:00', close_time: parsed.data.close_time ?? '02:00', therapist_share_group: parsed.data.therapist_share_group?.trim() || null, commission_policy_id: parsed.data.commission_policy_id ?? null, kiosk_passcode_hash: kioskHash })
+    .insert({ code: parsed.data.code, name: parsed.data.name, active: true, open_time: parsed.data.open_time ?? '10:00', close_time: parsed.data.close_time ?? '02:00', therapist_share_group: parsed.data.therapist_share_group?.trim() || null, commission_policy_id: parsed.data.commission_policy_id ?? null, default_revenue_transaction_code_id: parsed.data.default_revenue_transaction_code_id ?? null, default_tip_transaction_code_id: parsed.data.default_tip_transaction_code_id ?? null, royal_card_transaction_code_id: parsed.data.royal_card_transaction_code_id ?? null, kiosk_passcode_hash: kioskHash })
     .select('id')
     .single();
   if (error || !data) {
@@ -101,12 +106,15 @@ export async function updateBranch(input: unknown): Promise<ActionResult> {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   }
   const supabase = await createAuditedClient();
-  const patch: { name?: string; open_time?: string; close_time?: string; commission_policy_id?: string | null; therapist_share_group?: string | null; kiosk_passcode_hash?: string } = {};
+  const patch: { name?: string; open_time?: string; close_time?: string; commission_policy_id?: string | null; therapist_share_group?: string | null; kiosk_passcode_hash?: string; default_revenue_transaction_code_id?: string | null; default_tip_transaction_code_id?: string | null; royal_card_transaction_code_id?: string | null } = {};
   if (parsed.data.open_time !== undefined) patch.open_time = parsed.data.open_time;
   if (parsed.data.close_time !== undefined) patch.close_time = parsed.data.close_time;
   if (parsed.data.name) patch.name = parsed.data.name;
   if (parsed.data.therapist_share_group !== undefined) patch.therapist_share_group = parsed.data.therapist_share_group?.trim() || null;
   if (parsed.data.commission_policy_id !== undefined) patch.commission_policy_id = parsed.data.commission_policy_id || null;
+  if (parsed.data.default_revenue_transaction_code_id !== undefined) patch.default_revenue_transaction_code_id = parsed.data.default_revenue_transaction_code_id || null;
+  if (parsed.data.default_tip_transaction_code_id !== undefined) patch.default_tip_transaction_code_id = parsed.data.default_tip_transaction_code_id || null;
+  if (parsed.data.royal_card_transaction_code_id !== undefined) patch.royal_card_transaction_code_id = parsed.data.royal_card_transaction_code_id || null;
   // Only touch the passcode when a new non-empty one is supplied (blank = keep).
   if (parsed.data.kiosk_passcode?.trim()) patch.kiosk_passcode_hash = await bcrypt.hash(parsed.data.kiosk_passcode.trim(), 10);
   if (Object.keys(patch).length > 0) {

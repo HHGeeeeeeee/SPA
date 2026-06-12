@@ -209,10 +209,13 @@ export type Database = {
           commission_policy_id: string | null
           created_at: string
           created_by: string | null
+          default_revenue_transaction_code_id: string | null
+          default_tip_transaction_code_id: string | null
           id: string
           kiosk_passcode_hash: string | null
           name: string
           open_time: string
+          royal_card_transaction_code_id: string | null
           therapist_share_group: string | null
           updated_at: string
           updated_by: string | null
@@ -224,10 +227,13 @@ export type Database = {
           commission_policy_id?: string | null
           created_at?: string
           created_by?: string | null
+          default_revenue_transaction_code_id?: string | null
+          default_tip_transaction_code_id?: string | null
           id?: string
           kiosk_passcode_hash?: string | null
           name: string
           open_time?: string
+          royal_card_transaction_code_id?: string | null
           therapist_share_group?: string | null
           updated_at?: string
           updated_by?: string | null
@@ -239,10 +245,13 @@ export type Database = {
           commission_policy_id?: string | null
           created_at?: string
           created_by?: string | null
+          default_revenue_transaction_code_id?: string | null
+          default_tip_transaction_code_id?: string | null
           id?: string
           kiosk_passcode_hash?: string | null
           name?: string
           open_time?: string
+          royal_card_transaction_code_id?: string | null
           therapist_share_group?: string | null
           updated_at?: string
           updated_by?: string | null
@@ -253,6 +262,27 @@ export type Database = {
             columns: ["commission_policy_id"]
             isOneToOne: false
             referencedRelation: "commission_policies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "branches_default_revenue_transaction_code_id_fkey"
+            columns: ["default_revenue_transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "branches_default_tip_transaction_code_id_fkey"
+            columns: ["default_tip_transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "branches_royal_card_transaction_code_id_fkey"
+            columns: ["royal_card_transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
             referencedColumns: ["id"]
           },
         ]
@@ -1780,7 +1810,9 @@ export type Database = {
           billing_destination_id: string | null
           branch_id: string | null
           card_last4: string | null
+          cr_branch: string | null
           created_at: string
+          dr_branch: string | null
           id: string
           kind: string
           note: string | null
@@ -1806,7 +1838,9 @@ export type Database = {
           billing_destination_id?: string | null
           branch_id?: string | null
           card_last4?: string | null
+          cr_branch?: string | null
           created_at?: string
+          dr_branch?: string | null
           id?: string
           kind: string
           note?: string | null
@@ -1832,7 +1866,9 @@ export type Database = {
           billing_destination_id?: string | null
           branch_id?: string | null
           card_last4?: string | null
+          cr_branch?: string | null
           created_at?: string
+          dr_branch?: string | null
           id?: string
           kind?: string
           note?: string | null
@@ -2709,6 +2745,7 @@ export type Database = {
           manual_reconciliation: boolean
           method_type: string
           requires_reference: boolean
+          transaction_code_id: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -2723,6 +2760,7 @@ export type Database = {
           manual_reconciliation?: boolean
           method_type?: string
           requires_reference?: boolean
+          transaction_code_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -2737,10 +2775,19 @@ export type Database = {
           manual_reconciliation?: boolean
           method_type?: string
           requires_reference?: boolean
+          transaction_code_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "payment_methods_transaction_code_id_fkey"
+            columns: ["transaction_code_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_codes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       position_business_units: {
         Row: {
@@ -4166,7 +4213,6 @@ export type Database = {
           debit_branch_id: string | null
           debit_subaccount: string | null
           id: string
-          payment_method_id: string | null
           transaction_type: string
           updated_at: string
           updated_by: string | null
@@ -4184,7 +4230,6 @@ export type Database = {
           debit_branch_id?: string | null
           debit_subaccount?: string | null
           id?: string
-          payment_method_id?: string | null
           transaction_type: string
           updated_at?: string
           updated_by?: string | null
@@ -4202,7 +4247,6 @@ export type Database = {
           debit_branch_id?: string | null
           debit_subaccount?: string | null
           id?: string
-          payment_method_id?: string | null
           transaction_type?: string
           updated_at?: string
           updated_by?: string | null
@@ -4213,13 +4257,6 @@ export type Database = {
             columns: ["branch_id"]
             isOneToOne: false
             referencedRelation: "branches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "transaction_codes_payment_method_id_fkey"
-            columns: ["payment_method_id"]
-            isOneToOne: false
-            referencedRelation: "payment_methods"
             referencedColumns: ["id"]
           },
         ]

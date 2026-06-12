@@ -20,15 +20,26 @@ export const dynamic = 'force-dynamic';
 
 async function fetchMethods() {
   const supabase = createServiceClient();
-  const { data, error } = await supabase
-    .from('payment_methods')
-    .select(`
-      id, code, display_name, currency, method_type,
-      manual_reconciliation, requires_reference, active
-    `)
-    .order('code');
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  const [methods, codes] = await Promise.all([
+    supabase
+      .from('payment_methods')
+      .select(`
+        id, code, display_name, currency, method_type,
+        manual_reconciliation, requires_reference, active,
+        transaction_code_id,
+        transaction_code:transaction_codes ( code )
+      `)
+      .order('code'),
+    supabase
+      .from('transaction_codes')
+      .select('id, code')
+      .eq('transaction_type', 'payment')
+      .eq('active', true)
+      .order('code'),
+  ]);
+  if (methods.error) throw new Error(methods.error.message);
+  if (codes.error) throw new Error(codes.error.message);
+  return { methods: methods.data ?? [], transactionCodes: codes.data ?? [] };
 }
 
 function Yes({ on }: { on: boolean }) {
@@ -40,7 +51,7 @@ function Yes({ on }: { on: boolean }) {
 }
 
 export default async function PaymentMethodsPage() {
-  const methods = await fetchMethods();
+  const { methods, transactionCodes } = await fetchMethods();
   const activeCount = methods.filter((m) => m.active).length;
 
   return (
@@ -60,6 +71,7 @@ export default async function PaymentMethodsPage() {
           </p>
         </div>
         <PaymentMethodFormDialog
+          transactionCodes={transactionCodes}
           trigger={
             <Button>
               <Plus className="size-4" />
@@ -77,6 +89,7 @@ export default async function PaymentMethodsPage() {
               <TableHead className="font-bold">Display Name</TableHead>
               <TableHead className="w-28 font-bold">Currency</TableHead>
               <TableHead className="w-32 font-bold">Type</TableHead>
+              <TableHead className="w-44 font-bold">Transaction Code</TableHead>
               <TableHead className="w-40 font-bold">Manual Reconcile</TableHead>
               <TableHead className="w-44 font-bold">Requires Reference</TableHead>
               <TableHead className="w-24 font-bold">Status</TableHead>
@@ -86,12 +99,13 @@ export default async function PaymentMethodsPage() {
           <TableBody>
             {methods.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={9} className="text-center py-12">
                   <p className="text-sm font-semibold text-muted-foreground">No payment methods yet.</p>
                 </TableCell>
               </TableRow>
             ) : (
               methods.map((m) => {
+                const boundCode = Array.isArray(m.transaction_code) ? m.transaction_code[0] : m.transaction_code;
                 const itemRecord: PaymentMethodItem = {
                   id: m.id,
                   code: m.code,
@@ -100,6 +114,7 @@ export default async function PaymentMethodsPage() {
                   method_type: m.method_type as PaymentMethodItem['method_type'],
                   manual_reconciliation: m.manual_reconciliation,
                   requires_reference: m.requires_reference,
+                  transaction_code_id: m.transaction_code_id,
                 };
                 return (
                   <TableRow key={m.id}>
@@ -109,6 +124,7 @@ export default async function PaymentMethodsPage() {
                     <TableCell className="font-mono font-medium text-muted-foreground text-xs">
                       {m.method_type}
                     </TableCell>
+                    <TableCell className="font-mono font-bold">{boundCode?.code ?? '—'}</TableCell>
                     <TableCell><Yes on={m.manual_reconciliation} /></TableCell>
                     <TableCell><Yes on={m.requires_reference} /></TableCell>
                     <TableCell>
@@ -119,7 +135,7 @@ export default async function PaymentMethodsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <PaymentMethodRowActions item={{ ...itemRecord, active: m.active }} />
+                      <PaymentMethodRowActions item={{ ...itemRecord, active: m.active }} transactionCodes={transactionCodes} />
                     </TableCell>
                   </TableRow>
                 );

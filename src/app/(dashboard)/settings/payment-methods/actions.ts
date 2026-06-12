@@ -16,6 +16,9 @@ const schema = z.object({
   method_type: z.enum(['one_time', 'recurring', 'stored_value', 'prepaid_quota']).default('one_time'),
   manual_reconciliation: z.boolean().default(true),
   requires_reference: z.boolean().default(false),
+  // The GL transaction code every payment/refund taken with this method posts
+  // under (AR and stored-value redemptions resolve elsewhere).
+  transaction_code_id: z.string().uuid().optional().nullable(),
 });
 
 const updateSchema = schema.partial().extend({ id: z.string().uuid() });
@@ -28,7 +31,7 @@ export async function createPaymentMethod(input: unknown): Promise<ActionResult>
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   const supabase = await createAuditedClient();
-  const { error } = await supabase.from('payment_methods').insert({ ...parsed.data, active: true });
+  const { error } = await supabase.from('payment_methods').insert({ ...parsed.data, transaction_code_id: parsed.data.transaction_code_id || null, active: true });
   if (error) {
     if (error.code === '23505') return { ok: false, error: `Code "${parsed.data.code}" already exists` };
     return { ok: false, error: error.message };
@@ -49,6 +52,7 @@ export async function updatePaymentMethod(input: unknown): Promise<ActionResult>
   if (d.method_type !== undefined) patch.method_type = d.method_type;
   if (d.manual_reconciliation !== undefined) patch.manual_reconciliation = d.manual_reconciliation;
   if (d.requires_reference !== undefined) patch.requires_reference = d.requires_reference;
+  if (d.transaction_code_id !== undefined) patch.transaction_code_id = d.transaction_code_id || null;
   const supabase = await createAuditedClient();
   const { error } = await supabase.from('payment_methods').update(patch).eq('id', d.id);
   if (error) return { ok: false, error: error.message };

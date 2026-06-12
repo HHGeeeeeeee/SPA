@@ -22,11 +22,12 @@ export const dynamic = 'force-dynamic';
 
 async function fetchData() {
   const supabase = createServiceClient();
-  const [brRes, buRes, polRes, ccRes, bcrRes] = await Promise.all([
+  const [brRes, buRes, polRes, ccRes, bcrRes, tcRes] = await Promise.all([
     supabase
       .from('branches')
       .select(`
         id, code, name, active, open_time, close_time, therapist_share_group, commission_policy_id, kiosk_passcode_hash, created_at, updated_at,
+        default_revenue_transaction_code_id, default_tip_transaction_code_id, royal_card_transaction_code_id,
         branch_business_units ( business_unit_id, business_units ( id, code, name ) )
       `)
       .order('code'),
@@ -34,23 +35,25 @@ async function fetchData() {
     supabase.from('commission_policies').select('id, code, name').eq('active', true).order('code'),
     supabase.from('commission_classes').select('id, class_code, name, commission_rate').eq('active', true).order('commission_rate', { ascending: false }),
     supabase.from('branch_commission_rates').select('branch_id, commission_class_id, commission_rate'),
+    supabase.from('transaction_codes').select('id, code, transaction_type').eq('active', true).order('code'),
   ]);
   if (brRes.error) throw new Error(brRes.error.message);
   if (buRes.error) throw new Error(buRes.error.message);
   if (polRes.error) throw new Error(polRes.error.message);
   if (ccRes.error) throw new Error(ccRes.error.message);
   if (bcrRes.error) throw new Error(bcrRes.error.message);
+  if (tcRes.error) throw new Error(tcRes.error.message);
   const ratesByBranch = new Map<string, { commission_class_id: string; rate: number }[]>();
   for (const r of bcrRes.data ?? []) {
     const arr = ratesByBranch.get(r.branch_id) ?? [];
     arr.push({ commission_class_id: r.commission_class_id, rate: r.commission_rate });
     ratesByBranch.set(r.branch_id, arr);
   }
-  return { branches: brRes.data ?? [], allBusinessUnits: buRes.data ?? [], commissionPolicies: polRes.data ?? [], commissionClasses: ccRes.data ?? [], ratesByBranch };
+  return { branches: brRes.data ?? [], allBusinessUnits: buRes.data ?? [], commissionPolicies: polRes.data ?? [], commissionClasses: ccRes.data ?? [], ratesByBranch, transactionCodes: tcRes.data ?? [] };
 }
 
 export default async function BranchesPage() {
-  const [{ branches, allBusinessUnits, commissionPolicies, commissionClasses, ratesByBranch }, session] = await Promise.all([
+  const [{ branches, allBusinessUnits, commissionPolicies, commissionClasses, ratesByBranch, transactionCodes }, session] = await Promise.all([
     fetchData(),
     currentSession(),
   ]);
@@ -83,6 +86,7 @@ export default async function BranchesPage() {
             businessUnits={businessUnits}
             commissionPolicies={commissionPolicies}
             commissionClasses={commissionClasses}
+            transactionCodes={transactionCodes}
             shareGroupSuggestions={shareGroupSuggestions}
             trigger={
               <Button>
@@ -133,6 +137,9 @@ export default async function BranchesPage() {
                   commission_policy_id: b.commission_policy_id,
                   commission_rate_overrides: ratesByBranch.get(b.id) ?? [],
                   has_kiosk_passcode: !!b.kiosk_passcode_hash,
+                  default_revenue_transaction_code_id: b.default_revenue_transaction_code_id,
+                  default_tip_transaction_code_id: b.default_tip_transaction_code_id,
+                  royal_card_transaction_code_id: b.royal_card_transaction_code_id,
                   active: b.active,
                 };
                 return (
@@ -175,7 +182,7 @@ export default async function BranchesPage() {
                       })}
                     </TableCell>
                     <TableCell>
-                      <BranchRowActions branch={branchItem} businessUnits={businessUnits} commissionPolicies={commissionPolicies} commissionClasses={commissionClasses} shareGroupSuggestions={shareGroupSuggestions} />
+                      <BranchRowActions branch={branchItem} businessUnits={businessUnits} commissionPolicies={commissionPolicies} commissionClasses={commissionClasses} transactionCodes={transactionCodes} shareGroupSuggestions={shareGroupSuggestions} />
                     </TableCell>
                   </TableRow>
                 );

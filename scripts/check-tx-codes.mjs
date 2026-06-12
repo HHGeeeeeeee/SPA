@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// One-off: list transaction_codes (to confirm what's actually configured live,
-// e.g. an AR-settle cash code for SOA third-party collection).
+// One-off: list transaction_codes + their bindings (payment methods / branch
+// defaults / billing destinations) to confirm what's actually configured live.
 // Usage: node scripts/check-tx-codes.mjs
 
 import { createClient } from '@supabase/supabase-js';
@@ -18,19 +18,31 @@ const env = Object.fromEntries(
 );
 const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SECRET_KEY);
 
-const { data: pms } = await supabase.from('payment_methods').select('id, code');
-const pmCode = Object.fromEntries((pms ?? []).map((p) => [p.id, p.code]));
-
 const { data, error } = await supabase
   .from('transaction_codes')
-  .select('code, transaction_type, payment_method_id, debit_account, debit_subaccount, credit_account, credit_subaccount, active')
+  .select('id, code, transaction_type, debit_account, debit_subaccount, debit_branch_id, credit_account, credit_subaccount, credit_branch_id, active')
   .order('code');
 if (error) { console.error(error); process.exit(1); }
 
 console.log(`Found ${data.length} transaction_codes:\n`);
 for (const t of data) {
   console.log(
-    `${t.code.padEnd(34)} | ${String(t.transaction_type).padEnd(8)} | method=${(pmCode[t.payment_method_id] ?? '—').padEnd(16)} | DR ${t.debit_account ?? '—'}/${t.debit_subaccount ?? '—'} | CR ${t.credit_account ?? '—'}/${t.credit_subaccount ?? '—'} | ${t.active ? 'active' : 'inactive'}`,
+    `${t.code.padEnd(24)} | ${String(t.transaction_type).padEnd(8)} | DR ${t.debit_account ?? '—'}/${t.debit_subaccount ?? '—'}${t.debit_branch_id ? `@${t.debit_branch_id}` : ''} | CR ${t.credit_account ?? '—'}/${t.credit_subaccount ?? '—'}${t.credit_branch_id ? `@${t.credit_branch_id}` : ''} | ${t.active ? 'active' : 'inactive'}`,
   );
 }
+
+const codeName = Object.fromEntries(data.map((t) => [t.id, t.code]));
+
+const { data: pms } = await supabase.from('payment_methods').select('code, transaction_code_id').order('code');
+console.log('\npayment_methods bindings:');
+for (const p of pms ?? []) console.log(`  ${p.code.padEnd(20)} → ${codeName[p.transaction_code_id] ?? '—'}`);
+
+const { data: brs } = await supabase.from('branches').select('code, default_revenue_transaction_code_id, default_tip_transaction_code_id, royal_card_transaction_code_id').order('code');
+console.log('\nbranch defaults (revenue / tip / royal card):');
+for (const b of brs ?? []) console.log(`  ${b.code.padEnd(8)} → ${codeName[b.default_revenue_transaction_code_id] ?? '—'} / ${codeName[b.default_tip_transaction_code_id] ?? '—'} / ${codeName[b.royal_card_transaction_code_id] ?? '—'}`);
+
+const { data: bds } = await supabase.from('billing_destinations').select('code, transaction_code_id').order('code');
+console.log('\nbilling_destinations bindings:');
+for (const b of bds ?? []) console.log(`  ${b.code.padEnd(12)} → ${codeName[b.transaction_code_id] ?? '—'}`);
+
 process.exit(0);

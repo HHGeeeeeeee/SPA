@@ -64,7 +64,7 @@ async function fetchData(id: string) {
   if (error) throw new Error(error.message);
   if (!order) return null;
 
-  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll, txCodes] = await Promise.all([
+  const [svc, emp, res, disc, pm, shifts, brs, srcAll, billAll, brAll] = await Promise.all([
     supabase
       .from('service_items')
       .select('id, code, name, service_group, service_category_id, duration_minutes, allowed_resource_types, category:service_categories ( name ), service_item_prices ( price_cents, price_class, branch_id )')
@@ -74,7 +74,7 @@ async function fetchData(id: string) {
     supabase.from('employees').select('id, employee_code, name, gender, home_branch_id, home_branch:branches ( code )').eq('status', 'active').order('employee_code'),
     supabase.from('resources').select('id, resource_name, resource_type, branch:branches!resources_branch_id_fkey ( code )').eq('branch_id', order.branch_id).eq('status', 'active').order('resource_name'),
     supabase.from('discount_classes').select('id, code, description, discount_percent, discount_amount_cents').eq('active', true).order('code'),
-    supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
+    supabase.from('payment_methods').select('id, code, display_name, transaction_code:transaction_codes ( code )').eq('active', true).order('code'),
     // Therapists with a working shift on the service date — fetched for ALL
     // branches so we can show the full share-group pool with availability.
     supabase
@@ -88,12 +88,10 @@ async function fetchData(id: string) {
     // Billing editor on the order detail panel.
     supabase.from('customer_sources').select('id, code, name, default_billing_to_id').order('code'),
     supabase.from('billing_destinations').select('id, code, name, transaction_code:transaction_codes ( code )').eq('active', true).order('code'),
-    // All active branches + their business units — for the inline Branch /
-    // Business Unit editor on the order detail panel.
-    supabase.from('branches').select('id, code, name, branch_business_units ( business_units ( id, name ) )').eq('active', true).order('code'),
-    // Payment + revenue transaction codes — drive the read-only code shown in
-    // the folio dialogs (payment by branch+method, revenue is branchless).
-    supabase.from('transaction_codes').select('id, code, branch_id, payment_method_id, credit_account, transaction_type').in('transaction_type', ['payment', 'revenue']).eq('active', true),
+    // All active branches + their business units (inline Branch / Business Unit
+    // editor) + their default revenue / Royal Card codes (read-only code shown
+    // in the folio dialogs).
+    supabase.from('branches').select('id, code, name, branch_business_units ( business_units ( id, name ) ), revenue_code:transaction_codes!branches_default_revenue_transaction_code_id_fkey ( code ), royal_code:transaction_codes!branches_royal_card_transaction_code_id_fkey ( code )').eq('active', true).order('code'),
   ]);
 
   const svcCardsRes = await supabase
@@ -288,7 +286,12 @@ async function fetchData(id: string) {
     serviceDate: SD,
     resources: (res.data ?? []).map((r) => ({ id: r.id, name: r.resource_name, resource_type: r.resource_type ?? null, branchCode: one(r.branch)?.code ?? null })),
     discountClasses: disc.data ?? [],
-    paymentMethods: pm.data ?? [],
+    paymentMethods: (pm.data ?? []).map((m) => ({
+      id: m.id,
+      code: m.code,
+      display_name: m.display_name,
+      tx_code: one(m.transaction_code)?.code ?? null,
+    })),
     storedValueCards: (svcCardsRes.data ?? []).map((c) => ({
       id: c.id,
       card_no: c.card_no,
@@ -314,10 +317,15 @@ async function fetchData(id: string) {
             .filter(Boolean) as { id: string; name: string }[],
         }));
     })(),
-    // Branches the user can post a folio line to (code only) + this order's branch.
-    accessibleBranches: (brAll.data ?? []).filter((b) => allowedBranchIds.has(b.id)).map((b) => ({ id: b.id, code: b.code })),
+    // Branches the user can post a folio line to + their default revenue /
+    // Royal Card codes (the read-only code preview in the folio dialogs).
+    accessibleBranches: (brAll.data ?? []).filter((b) => allowedBranchIds.has(b.id)).map((b) => ({
+      id: b.id,
+      code: b.code,
+      revenue_code: one(b.revenue_code)?.code ?? null,
+      royal_card_code: one(b.royal_code)?.code ?? null,
+    })),
     orderBranchId: order.branch_id as string | null,
-    transactionCodes: (txCodes.data ?? []) as { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[],
     openShifts: (openShiftsRes.data ?? []).map((s) => {
       const opener = one(s.opener);
       return {
@@ -350,7 +358,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     .maybeSingle();
   const userShiftBranchId: string | null = myShift?.branch_id ?? null;
 
-  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, shiftWindowsByTherapist, bookingWindowsByTherapist, blockWindowsByTherapist, lineupRank, serviceDate, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, transactionCodes, openShifts } = result;
+  const { order, serviceItems, employees, borrowableEmployees, busyTherapistIds, busyTherapistEndMap, busyResourceIds, shiftWindowsByTherapist, bookingWindowsByTherapist, blockWindowsByTherapist, lineupRank, serviceDate, resources, discountClasses, paymentMethods, storedValueCards, capabilityByEmployee, allSources, allBilling, allBranches, accessibleBranches, orderBranchId, openShifts } = result;
 
   const source = one(order.source);
   const billing = one(order.billing);
@@ -666,7 +674,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         paymentPolicy={paymentPolicy}
         accessibleBranches={accessibleBranches}
         orderBranchId={orderBranchId}
-        transactionCodes={transactionCodes}
         openShifts={openShifts}
         userShiftBranchId={userShiftBranchId}
         billingDestinations={allBilling}

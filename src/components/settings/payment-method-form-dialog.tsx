@@ -37,11 +37,16 @@ export interface PaymentMethodItem {
   method_type: 'one_time' | 'recurring' | 'stored_value' | 'prepaid_quota';
   manual_reconciliation: boolean;
   requires_reference: boolean;
+  transaction_code_id: string | null;
 }
+
+const NONE = '__none__';
 
 interface Props {
   mode?: 'create' | 'edit';
   item?: PaymentMethodItem;
+  /** Active payment-type transaction codes — the method's bound GL code. */
+  transactionCodes: { id: string; code: string }[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -50,6 +55,7 @@ interface Props {
 export function PaymentMethodFormDialog({
   mode = 'create',
   item,
+  transactionCodes,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -70,6 +76,11 @@ export function PaymentMethodFormDialog({
     item?.manual_reconciliation ?? true,
   );
   const [requiresReference, setRequiresReference] = useState(item?.requires_reference ?? false);
+  const [txCodeId, setTxCodeId] = useState(item?.transaction_code_id ?? NONE);
+  const txCodeOptions = [
+    { value: NONE, label: '(none)' },
+    ...transactionCodes.map((t) => ({ value: t.id, label: t.code })),
+  ];
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -80,6 +91,7 @@ export function PaymentMethodFormDialog({
       method_type: methodType,
       manual_reconciliation: manualReconciliation,
       requires_reference: requiresReference,
+      transaction_code_id: txCodeId === NONE ? null : txCodeId,
     };
     startTransition(async () => {
       const r = isEdit
@@ -186,10 +198,20 @@ export function PaymentMethodFormDialog({
               <Switch checked={requiresReference} onCheckedChange={setRequiresReference} />
             </div>
 
-            <p className="col-span-2 text-xs font-medium text-muted-foreground">
-              GL posting accounts are defined per Transaction Code (branch × payment method
-              × event), not here.
-            </p>
+            <div className="flex flex-col gap-2 col-span-2">
+              <Label className="font-semibold">Transaction Code</Label>
+              <Select items={txCodeOptions} value={txCodeId} onValueChange={(v) => v && setTxCodeId(v)}>
+                <SelectTrigger><SelectValue placeholder="(none)" /></SelectTrigger>
+                <SelectContent>
+                  {txCodeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs font-medium text-muted-foreground">
+                The GL code every payment / refund taken with this method posts under.
+                AR uses the billing destination&apos;s code; stored-value redemptions use
+                the branch&apos;s Royal Card code.
+              </p>
+            </div>
           </div>
 
           <DialogFooter>

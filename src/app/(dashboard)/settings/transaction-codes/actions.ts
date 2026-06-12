@@ -13,11 +13,10 @@ const noDash = z.string().regex(/^[^-]*$/, 'Cannot contain "-" (Acumatica constr
 
 const baseSchema = z.object({
   code: z.string().min(1).max(60),
-  // Revenue codes follow the order, not the store, so they're branchless; every
-  // other type is branch-scoped. The required-branch rule is enforced below.
+  // Branch is optional for every type: a code with no branch is global. The
+  // posting branch is decided at transaction time (the shift the line lands in).
   branch_id: z.string().uuid().optional().nullable(),
-  transaction_type: z.enum(['payment', 'settle', 'cost', 'adjust', 'revenue']),
-  payment_method_id: z.string().uuid().optional().nullable(),
+  transaction_type: z.enum(['payment', 'revenue', 'tip']),
   debit_account: z.string().max(20).optional().nullable().or(z.literal('')),
   debit_subaccount: noDash.max(20).optional().nullable().or(z.literal('')),
   // Free-text Acumatica branch segment override (empty = use header branch).
@@ -27,11 +26,7 @@ const baseSchema = z.object({
   credit_branch_id: z.string().max(30).optional().nullable().or(z.literal('')),
 });
 
-const schema = baseSchema.superRefine((d, ctx) => {
-  if (d.transaction_type !== 'revenue' && !d.branch_id) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Branch is required for this type', path: ['branch_id'] });
-  }
-});
+const schema = baseSchema;
 
 const updateSchema = baseSchema.partial({ code: true }).extend({ id: z.string().uuid() });
 
@@ -48,7 +43,6 @@ export async function createTransactionCode(input: unknown): Promise<ActionResul
     code: d.code,
     branch_id: d.branch_id || null,
     transaction_type: d.transaction_type,
-    payment_method_id: d.payment_method_id || null,
     debit_account: d.debit_account || null,
     debit_subaccount: d.debit_subaccount || null,
     debit_branch_id: d.debit_branch_id || null,
@@ -74,7 +68,6 @@ export async function updateTransactionCode(input: unknown): Promise<ActionResul
   const patch: TxCodeUpdate = {};
   if (d.branch_id !== undefined) patch.branch_id = d.branch_id || null;
   if (d.transaction_type !== undefined) patch.transaction_type = d.transaction_type;
-  if (d.payment_method_id !== undefined) patch.payment_method_id = d.payment_method_id || null;
   if (d.debit_account !== undefined) patch.debit_account = d.debit_account || null;
   if (d.debit_subaccount !== undefined) patch.debit_subaccount = d.debit_subaccount || null;
   if (d.debit_branch_id !== undefined) patch.debit_branch_id = d.debit_branch_id || null;

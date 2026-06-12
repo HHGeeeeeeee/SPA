@@ -28,9 +28,10 @@ import { PaymentMethodFormDialog, type PaymentMethodItem } from './payment-metho
 
 interface Props {
   item: PaymentMethodItem & { active: boolean };
+  transactionCodes: { id: string; code: string }[];
 }
 
-export function PaymentMethodRowActions({ item }: Props) {
+export function PaymentMethodRowActions({ item, transactionCodes }: Props) {
   const [pending, startTransition] = useTransition();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -81,6 +82,7 @@ export function PaymentMethodRowActions({ item }: Props) {
       <PaymentMethodFormDialog
         mode="edit"
         item={item}
+        transactionCodes={transactionCodes}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

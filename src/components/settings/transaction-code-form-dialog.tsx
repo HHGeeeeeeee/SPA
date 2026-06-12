@@ -32,8 +32,7 @@ export interface TxCodeItem {
   id: string;
   code: string;
   branch_id: string | null;
-  transaction_type: 'payment' | 'settle' | 'cost' | 'adjust' | 'revenue';
-  payment_method_id: string | null;
+  transaction_type: 'payment' | 'revenue' | 'tip';
   debit_account: string | null;
   debit_subaccount: string | null;
   debit_branch_id: string | null;
@@ -47,17 +46,11 @@ interface BranchOption {
   code: string;
   name: string;
 }
-interface PaymentMethodOption {
-  id: string;
-  code: string;
-  display_name: string;
-}
 
 interface Props {
   mode?: 'create' | 'edit';
   item?: TxCodeItem;
   branches: BranchOption[];
-  paymentMethods: PaymentMethodOption[];
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -69,7 +62,6 @@ export function TransactionCodeFormDialog({
   mode = 'create',
   item,
   branches,
-  paymentMethods,
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -81,23 +73,17 @@ export function TransactionCodeFormDialog({
   const isEdit = mode === 'edit';
 
   const [code, setCode] = useState(item?.code ?? '');
-  // Revenue codes are branchless (NONE); branch-scoped types default to the
-  // first branch on a fresh create.
-  const [branchId, setBranchId] = useState(item ? (item.branch_id ?? NONE) : (branches[0]?.id ?? ''));
+  // Branch is optional for every type — NONE = a global code. The posting
+  // branch is decided at transaction time (the shift the folio line lands in).
+  const [branchId, setBranchId] = useState(item ? (item.branch_id ?? NONE) : (branches[0]?.id ?? NONE));
   const [txType, setTxType] = useState<TxCodeItem['transaction_type']>(
     item?.transaction_type ?? 'payment',
   );
-  const isRevenue = txType === 'revenue';
-  const [paymentMethodId, setPaymentMethodId] = useState(item?.payment_method_id ?? NONE);
   const [debitAccount, setDebitAccount] = useState(item?.debit_account ?? '');
   const [debitSubaccount, setDebitSubaccount] = useState(item?.debit_subaccount ?? '');
   // Branch override is a free-text Acumatica branch segment (empty = use header).
   const [debitBranchId, setDebitBranchId] = useState(item?.debit_branch_id ?? '');
   const branchOptions = branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
-  const paymentMethodOptions = [
-    { value: NONE, label: 'None' },
-    ...paymentMethods.map((p) => ({ value: p.id, label: p.code })),
-  ];
 
   const [creditAccount, setCreditAccount] = useState(item?.credit_account ?? '');
   const [creditSubaccount, setCreditSubaccount] = useState(item?.credit_subaccount ?? '');
@@ -109,7 +95,6 @@ export function TransactionCodeFormDialog({
       code,
       branch_id: branchId === NONE ? null : branchId,
       transaction_type: txType,
-      payment_method_id: paymentMethodId === NONE ? null : paymentMethodId,
       debit_account: debitAccount,
       debit_subaccount: debitSubaccount,
       debit_branch_id: debitBranchId.trim() || null,
@@ -170,16 +155,15 @@ export function TransactionCodeFormDialog({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Branch {isRevenue ? '' : '*'}</Label>
+              <Label className="font-semibold">Branch</Label>
               <Select
-                items={isRevenue ? [{ value: NONE, label: '(none — order-driven)' }, ...branchOptions] : branchOptions}
+                items={[{ value: NONE, label: '(none — global)' }, ...branchOptions]}
                 value={branchId || NONE}
                 onValueChange={(v) => v && setBranchId(v)}
-                disabled={isRevenue && branchId === NONE && branches.length === 0}
               >
-                <SelectTrigger><SelectValue placeholder={isRevenue ? '(none — order-driven)' : undefined} /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="(none — global)" /></SelectTrigger>
                 <SelectContent>
-                  {isRevenue && <SelectItem value={NONE}>(none — order-driven)</SelectItem>}
+                  <SelectItem value={NONE}>(none — global)</SelectItem>
                   {branchOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                   ))}
@@ -190,33 +174,15 @@ export function TransactionCodeFormDialog({
             <div className="flex flex-col gap-2">
               <Label className="font-semibold">Type *</Label>
               <Select
-                items={[{ value: 'payment', label: 'Payment' }, { value: 'revenue', label: 'Revenue' }, { value: 'settle', label: 'Settle' }, { value: 'cost', label: 'Cost' }, { value: 'adjust', label: 'Adjust' }]}
+                items={[{ value: 'payment', label: 'Payment' }, { value: 'revenue', label: 'Revenue' }, { value: 'tip', label: 'Tip' }]}
                 value={txType}
-                onValueChange={(v) => { if (!v) return; const t = v as TxCodeItem['transaction_type']; setTxType(t); if (t === 'revenue') setBranchId(NONE); }}
+                onValueChange={(v) => { if (!v) return; setTxType(v as TxCodeItem['transaction_type']); }}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="payment">Payment</SelectItem>
                   <SelectItem value="revenue">Revenue</SelectItem>
-                  <SelectItem value="settle">Settle</SelectItem>
-                  <SelectItem value="cost">Cost</SelectItem>
-                  <SelectItem value="adjust">Adjust</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label className="font-semibold">Payment Method</Label>
-              <Select
-                items={paymentMethodOptions}
-                value={paymentMethodId ?? NONE}
-                onValueChange={(v) => setPaymentMethodId(v ?? NONE)}
-              >
-                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent>
-                  {paymentMethodOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
+                  <SelectItem value="tip">Tip</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -225,6 +191,16 @@ export function TransactionCodeFormDialog({
               <h4 className="text-sm font-bold tracking-wide uppercase text-muted-foreground">
                 Debit (DR) Side
               </h4>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-dbr" className="font-semibold">Branch (override)</Label>
+              <Input
+                id="tc-dbr"
+                value={debitBranchId}
+                onChange={(e) => setDebitBranchId(e.target.value)}
+                placeholder="(use header)"
+                maxLength={30}
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="tc-da" className="font-semibold">Account</Label>
@@ -247,21 +223,21 @@ export function TransactionCodeFormDialog({
                 pattern="[^-]*"
               />
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-dbr" className="font-semibold">Branch (override)</Label>
-              <Input
-                id="tc-dbr"
-                value={debitBranchId}
-                onChange={(e) => setDebitBranchId(e.target.value)}
-                placeholder="(use header)"
-                maxLength={30}
-              />
-            </div>
 
             <div className="col-span-3 mt-2">
               <h4 className="text-sm font-bold tracking-wide uppercase text-muted-foreground">
                 Credit (CR) Side
               </h4>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-cbr" className="font-semibold">Branch (override)</Label>
+              <Input
+                id="tc-cbr"
+                value={creditBranchId}
+                onChange={(e) => setCreditBranchId(e.target.value)}
+                placeholder="(use header)"
+                maxLength={30}
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="tc-ca" className="font-semibold">Account</Label>
@@ -282,16 +258,6 @@ export function TransactionCodeFormDialog({
                 placeholder="000000000"
                 maxLength={20}
                 pattern="[^-]*"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-cbr" className="font-semibold">Branch (override)</Label>
-              <Input
-                id="tc-cbr"
-                value={creditBranchId}
-                onChange={(e) => setCreditBranchId(e.target.value)}
-                placeholder="(use header)"
-                maxLength={30}
               />
             </div>
           </div>

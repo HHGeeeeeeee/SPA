@@ -28,12 +28,15 @@ import { createBranch, updateBranch } from '@/app/(dashboard)/settings/branches/
 const NONE = '__none__';
 
 interface CommissionClass { id: string; class_code: string; name: string; commission_rate: number }
+interface TxCodeOption { id: string; code: string; transaction_type: string }
 interface BranchFormDialogProps {
   mode?: 'create' | 'edit';
-  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[]; has_kiosk_passcode?: boolean };
+  branch?: { id: string; code: string; name: string; business_unit_ids: string[]; open_time?: string | null; close_time?: string | null; therapist_share_group?: string | null; commission_policy_id?: string | null; commission_rate_overrides?: { commission_class_id: string; rate: number }[]; has_kiosk_passcode?: boolean; default_revenue_transaction_code_id?: string | null; default_tip_transaction_code_id?: string | null; royal_card_transaction_code_id?: string | null };
   businessUnits: { id: string; code: string; name: string }[];
   commissionPolicies?: { id: string; code: string; name: string }[];
   commissionClasses?: CommissionClass[];
+  /** Active transaction codes for the default revenue / tip / Royal Card bindings. */
+  transactionCodes?: TxCodeOption[];
   /** Existing therapist-sharing group labels across branches — offered as
    *  autocomplete so two branches can be put in the same pool by name. */
   shareGroupSuggestions?: string[];
@@ -48,6 +51,7 @@ export function BranchFormDialog({
   businessUnits,
   commissionPolicies = [],
   commissionClasses = [],
+  transactionCodes = [],
   shareGroupSuggestions = [],
   trigger,
   open: controlledOpen,
@@ -64,6 +68,14 @@ export function BranchFormDialog({
   const [shareGroup, setShareGroup] = useState(branch?.therapist_share_group ?? '');
   const [kioskPasscode, setKioskPasscode] = useState('');
   const [policyId, setPolicyId] = useState(branch?.commission_policy_id ?? NONE);
+  // Default transaction-code bindings (manual revenue / tip / Royal Card).
+  const [revenueCodeId, setRevenueCodeId] = useState(branch?.default_revenue_transaction_code_id ?? NONE);
+  const [tipCodeId, setTipCodeId] = useState(branch?.default_tip_transaction_code_id ?? NONE);
+  const [royalCodeId, setRoyalCodeId] = useState(branch?.royal_card_transaction_code_id ?? NONE);
+  const codeOptions = (types: string[]) => [
+    { value: NONE, label: '(none)' },
+    ...transactionCodes.filter((t) => types.includes(t.transaction_type)).map((t) => ({ value: t.id, label: t.code })),
+  ];
   // Per-class rate overrides for this branch: classId → percent string ('' = use global).
   const [rates, setRates] = useState<Record<string, string>>(
     Object.fromEntries((branch?.commission_rate_overrides ?? []).map((o) => [o.commission_class_id, String(Math.round(o.rate * 100))])),
@@ -93,9 +105,14 @@ export function BranchFormDialog({
         .map((c) => ({ commission_class_id: c.id, rate: Math.max(0, Math.min(1, (Number(rates[c.id]) || 0) / 100)) }));
       const therapist_share_group = shareGroup.trim() || null;
       const kiosk_passcode = kioskPasscode.trim() || undefined;
+      const codeBindings = {
+        default_revenue_transaction_code_id: revenueCodeId === NONE ? null : revenueCodeId,
+        default_tip_transaction_code_id: tipCodeId === NONE ? null : tipCodeId,
+        royal_card_transaction_code_id: royalCodeId === NONE ? null : royalCodeId,
+      };
       const result = isEdit
-        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides, kiosk_passcode })
-        : await createBranch({ code, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides, kiosk_passcode });
+        ? await updateBranch({ id: branch!.id, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides, kiosk_passcode, ...codeBindings })
+        : await createBranch({ code, name, business_unit_ids: unitIds, open_time: openTime, close_time: closeTime, therapist_share_group, commission_policy_id, commission_rate_overrides, kiosk_passcode, ...codeBindings });
       if (result.ok) {
         toast.success(isEdit ? 'Branch updated' : 'Branch created');
         setOpen(false);
@@ -244,6 +261,31 @@ export function BranchFormDialog({
                 Staff enter this once on the tablet to start the guest intake kiosk
                 (<span className="font-mono">/kiosk</span>) for this branch. Min 4 characters.
                 {isEdit ? ' Leave blank to keep the current passcode.' : ''}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label className="font-semibold">Default transaction codes</Label>
+              <div className="flex flex-col gap-2 rounded-lg border border-border p-2">
+                {([
+                  { label: 'Revenue (manual)', value: revenueCodeId, set: setRevenueCodeId, opts: codeOptions(['revenue']) },
+                  { label: 'Tip', value: tipCodeId, set: setTipCodeId, opts: codeOptions(['tip']) },
+                  { label: 'Royal Card', value: royalCodeId, set: setRoyalCodeId, opts: codeOptions(['payment']) },
+                ] as const).map((row) => (
+                  <div key={row.label} className="grid grid-cols-[1fr_auto] items-center gap-2">
+                    <span className="text-sm font-semibold">{row.label}</span>
+                    <Select items={row.opts} value={row.value} onValueChange={(v) => v && row.set(v)}>
+                      <SelectTrigger className="w-56"><SelectValue placeholder="(none)" /></SelectTrigger>
+                      <SelectContent>
+                        {row.opts.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs font-medium text-muted-foreground">
+                Revenue = manual Add revenue / Adjust charge postings; Tip = tip folio lines;
+                Royal Card = stored-value redemptions taken at this branch.
               </p>
             </div>
 

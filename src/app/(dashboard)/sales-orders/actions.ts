@@ -1392,29 +1392,29 @@ export async function startAllServices(orderId: string): Promise<ActionResult<{ 
   return { ok: true, data: { started, skipped: picked.length - started } };
 }
 
-// Resolve where a service line's revenue posts: the open shift of the station's
-// branch (falling back to the order branch) and the category's revenue code.
-// Revenue is recognised at finish (and at a charged interrupt), so this guards
-// those transitions — a missing shift or category code blocks them cleanly.
+// Resolve where a service line's revenue posts. The folio line binds to the
+// ORDER branch's open shift; the category's revenue code carries the accounts.
+// DR branch = the shift's branch; CR (revenue) branch = the STATION's branch,
+// so cross-branch work credits the performing store while the line stays in the
+// selling desk's shift. Revenue is recognised at finish (and at a charged
+// interrupt), so this guards those transitions — a missing shift or category
+// code blocks them cleanly.
 async function resolveServiceRevenuePosting(
   supabase: Awaited<ReturnType<typeof createAuditedClient>>,
   itemId: string,
   orderId: string,
-): Promise<{ ok: true; shiftId: string; branchId: string | null; txCodeId: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; shiftId: string; branchId: string | null; txCodeId: string; drBranch: string; crBranch: string } | { ok: false; error: string }> {
   const { data: item } = await supabase
     .from('order_items')
-    .select('resource_id, service:service_items ( category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch_id )')
+    .select('resource_id, service:service_items ( category:service_categories ( revenue_transaction_code_id ) ), resource:resources!order_items_resource_id_fkey ( branch:branches!resources_branch_id_fkey ( code ) )')
     .eq('id', itemId)
     .single();
   const { data: ord } = await supabase.from('orders').select('branch_id').eq('id', orderId).single();
-  // Revenue follows the STATION's branch (cross-branch work lands in that
-  // branch's shift); a line with no station falls back to the order branch.
-  const itemResource = Array.isArray(item?.resource) ? item?.resource[0] : item?.resource;
-  const stationBranchId = item?.resource_id ? itemResource?.branch_id ?? null : null;
-  const shiftBranchId = stationBranchId ?? ord?.branch_id ?? null;
+  const shiftBranchId = ord?.branch_id ?? null;
+  const branchInfo = await getBranchPostingInfo(supabase, shiftBranchId);
   const openShift = shiftBranchId ? await getCurrentOpenShift(shiftBranchId) : null;
-  if (!openShift) {
-    return { ok: false, error: 'No cash shift is open for this service’s branch — open one on the Sales Remittance page first.' };
+  if (!openShift || !branchInfo) {
+    return { ok: false, error: 'No cash shift is open for this order’s branch — open one on the Sales Remittance page first.' };
   }
   const svc = Array.isArray(item?.service) ? item?.service[0] : item?.service;
   const svcCategory = Array.isArray(svc?.category) ? svc?.category[0] : svc?.category;
@@ -1422,13 +1422,16 @@ async function resolveServiceRevenuePosting(
   if (!txCodeId) {
     return { ok: false, error: 'This service category has no revenue transaction code — set one in Settings → Service Categories first.' };
   }
-  return { ok: true, shiftId: openShift.id, branchId: shiftBranchId, txCodeId };
+  const itemResource = Array.isArray(item?.resource) ? item?.resource[0] : item?.resource;
+  const stationBranch = Array.isArray(itemResource?.branch) ? itemResource?.branch[0] : itemResource?.branch;
+  const stationBranchCode = (item?.resource_id ? stationBranch?.code : null) ?? branchInfo.code;
+  return { ok: true, shiftId: openShift.id, branchId: shiftBranchId, txCodeId, drBranch: branchInfo.code, crBranch: stationBranchCode };
 }
 
 // Insert a kind=revenue folio line for a service line at its recognition moment.
 async function postServiceRevenueLine(
   supabase: Awaited<ReturnType<typeof createAuditedClient>>,
-  args: { orderId: string; itemId: string; amountCents: number; shiftId: string; branchId: string | null; txCodeId: string },
+  args: { orderId: string; itemId: string; amountCents: number; shiftId: string; branchId: string | null; txCodeId: string; drBranch: string; crBranch: string },
 ): Promise<void> {
   const session = await currentSession();
   await supabase.from('folio_lines').insert({
@@ -1440,6 +1443,8 @@ async function postServiceRevenueLine(
     order_item_id: args.itemId,
     branch_id: args.branchId,
     transaction_code_id: args.txCodeId,
+    dr_branch: args.drBranch,
+    cr_branch: args.crBranch,
   });
 }
 
@@ -1491,6 +1496,7 @@ export async function finishOrderItem(itemId: string, orderId: string): Promise<
   await postServiceRevenueLine(supabase, {
     orderId, itemId, amountCents: item.final_amount_cents ?? 0,
     shiftId: rev.shiftId, branchId: rev.branchId, txCodeId: rev.txCodeId,
+    drBranch: rev.drBranch, crBranch: rev.crBranch,
   });
 
   // Finishing the last active service auto-completes the order.
@@ -1554,6 +1560,10 @@ export async function sweepStrandedServices(branchIds: string[], today: string):
   const needsAttention: (StrandedServiceLine & { reason: string })[] = [];
   const touchedOrders = new Set<string>();
 
+  // Branch id → code, for stamping the DR/CR branch on the recovered lines.
+  const { data: branchRows } = await supabase.from('branches').select('id, code');
+  const branchCodeById = new Map((branchRows ?? []).map((b) => [b.id, b.code]));
+
   for (const it of items ?? []) {
     const ord = orderById.get(it.order_id);
     if (!ord) continue;
@@ -1570,9 +1580,10 @@ export async function sweepStrandedServices(branchIds: string[], today: string):
     if (it.final_amount_cents == null) { needsAttention.push({ ...base, reason: 'no_price' }); continue; }
     const txCodeId = pick(svc?.category)?.revenue_transaction_code_id ?? null;
     if (!txCodeId) { needsAttention.push({ ...base, reason: 'no_revenue_code' }); continue; }
-    // Revenue follows the station's branch (cross-branch work), else the order's.
+    // The line binds to the ORDER branch's shift; the CR (revenue) leg credits
+    // the station's branch (cross-branch work), DR follows the shift branch.
     const stationBranchId = it.resource_id ? (pick(it.resource)?.branch_id ?? null) : null;
-    const postingBranch = stationBranchId ?? ord.branch_id;
+    const postingBranch = ord.branch_id;
     // Attribute to the SERVICE day's last shift, not the one being opened.
     const { data: shift } = await supabase
       .from('shifts').select('id')
@@ -1590,9 +1601,11 @@ export async function sweepStrandedServices(branchIds: string[], today: string):
     const { error } = await supabase.from('order_items').update(patch).eq('id', it.id).eq('status', 'in_service');
     if (error) { needsAttention.push({ ...base, reason: 'update_failed' }); continue; }
 
+    const drBranch = branchCodeById.get(postingBranch) ?? '';
+    const crBranch = (stationBranchId ? branchCodeById.get(stationBranchId) : null) ?? drBranch;
     await postServiceRevenueLine(supabase, {
       orderId: it.order_id, itemId: it.id, amountCents: it.final_amount_cents,
-      shiftId: shift.id, branchId: postingBranch, txCodeId,
+      shiftId: shift.id, branchId: postingBranch, txCodeId, drBranch, crBranch,
     });
     recovered.push(base);
     touchedOrders.add(it.order_id);
@@ -1755,11 +1768,11 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
       : d.handling === 'partial_charge'
         ? (planned > 0 ? Math.round((item.final_amount_cents ?? 0) * Math.min(actualMin, planned) / planned) : (item.final_amount_cents ?? 0))
         : 0;
-  let revCtx: { shiftId: string; branchId: string | null; txCodeId: string } | null = null;
+  let revCtx: { shiftId: string; branchId: string | null; txCodeId: string; drBranch: string; crBranch: string } | null = null;
   if (revenueCents > 0) {
     const rev = await resolveServiceRevenuePosting(supabase, d.item_id, d.order_id);
     if (!rev.ok) return rev;
-    revCtx = { shiftId: rev.shiftId, branchId: rev.branchId, txCodeId: rev.txCodeId };
+    revCtx = { shiftId: rev.shiftId, branchId: rev.branchId, txCodeId: rev.txCodeId, drBranch: rev.drBranch, crBranch: rev.crBranch };
   }
 
   // The legacy `interruption_reason` column keeps showing a human label so
@@ -1794,7 +1807,7 @@ export async function interruptOrderItem(input: unknown): Promise<ActionResult> 
 
   // Book the charged-interrupt revenue (none for a waive).
   if (revCtx) {
-    await postServiceRevenueLine(supabase, { orderId: d.order_id, itemId: d.item_id, amountCents: revenueCents, shiftId: revCtx.shiftId, branchId: revCtx.branchId, txCodeId: revCtx.txCodeId });
+    await postServiceRevenueLine(supabase, { orderId: d.order_id, itemId: d.item_id, amountCents: revenueCents, shiftId: revCtx.shiftId, branchId: revCtx.branchId, txCodeId: revCtx.txCodeId, drBranch: revCtx.drBranch, crBranch: revCtx.crBranch });
   }
 
   await recomputeTotals(d.order_id);
@@ -2042,59 +2055,44 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
   return { ok: true };
 }
 
-// GL credit accounts that disambiguate same-method transaction codes:
-// service revenue vs tip payable.
-const TX_REVENUE_ACCOUNT = '40140';
-const TX_TIPS_PAYABLE = '20500';
+// ─── Transaction-time code + DR/CR branch resolution ─────────────────────────
+// Codes are global master data bound on their SOURCE (payment method / billing
+// destination / service category / branch defaults). The DR/CR branch of every
+// folio line is decided here, at posting time, so Sales Remittance can post each
+// line to ERP without re-deriving anything.
 
-// Resolve the active transaction_code id for a folio posting. Payment-side codes
-// are branch-scoped and keyed by (method, credit account); the branchless
-// service-revenue code is keyed by credit account alone. Returns null when no
-// matching code is configured — the line still posts, the ERP step flags the gap.
-async function resolveTxCodeId(
-  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
-  args: { branchId: string | null; type: string; methodId?: string | null; creditAccount: string },
-): Promise<string | null> {
-  let q = supabase
-    .from('transaction_codes')
-    .select('id')
-    .eq('transaction_type', args.type)
-    .eq('credit_account', args.creditAccount)
-    .eq('active', true);
-  q = args.branchId ? q.eq('branch_id', args.branchId) : q.is('branch_id', null);
-  q = args.methodId ? q.eq('payment_method_id', args.methodId) : q.is('payment_method_id', null);
-  const { data } = await q.maybeSingle();
-  return data?.id ?? null;
+// The posting branch's code + its bound default transaction codes.
+interface BranchPostingInfo {
+  id: string;
+  code: string;
+  revenueTxCodeId: string | null;
+  tipTxCodeId: string | null;
+  royalCardTxCodeId: string | null;
 }
 
-// The payment-side code for a (branch, method): the branch's active payment code
-// for that method that ISN'T the tip code. This is correct for every method —
-// cash/PAYMAYA/AR credit revenue (40140) while stored-value credits its deposit
-// liability (20510); only the PAYMAYA tip code (CR 20500) is excluded so the
-// payment-vs-tip pair on PAYMAYA resolves to the payment side. Mirrors the
-// read-only code shown in the folio dialogs.
-async function resolvePaymentTxCodeId(
+async function getBranchPostingInfo(
   supabase: Awaited<ReturnType<typeof createAuditedClient>>,
   branchId: string | null,
-  methodId: string,
-): Promise<string | null> {
-  let q = supabase
-    .from('transaction_codes')
-    .select('id')
-    .eq('transaction_type', 'payment')
-    .eq('payment_method_id', methodId)
-    .neq('credit_account', TX_TIPS_PAYABLE)
-    .eq('active', true)
-    .order('credit_account')
-    .limit(1);
-  q = branchId ? q.eq('branch_id', branchId) : q.is('branch_id', null);
-  const { data } = await q;
-  return data?.[0]?.id ?? null;
+): Promise<BranchPostingInfo | null> {
+  if (!branchId) return null;
+  const { data } = await supabase
+    .from('branches')
+    .select('id, code, default_revenue_transaction_code_id, default_tip_transaction_code_id, royal_card_transaction_code_id')
+    .eq('id', branchId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    id: data.id,
+    code: data.code,
+    revenueTxCodeId: data.default_revenue_transaction_code_id,
+    tipTxCodeId: data.default_tip_transaction_code_id,
+    royalCardTxCodeId: data.royal_card_transaction_code_id,
+  };
 }
 
 // AR (掛帳) code rides the bill_to destination: one bound code carrying its own
-// DR/CR (and DR/CR branch). A method=ar folio line uses this instead of the
-// branch+method payment code, so the receivable books against the right hotel.
+// DR/CR accounts (and an optional DR branch override for the counterparty's
+// Acumatica segment).
 async function resolveBillToTxCodeId(
   supabase: Awaited<ReturnType<typeof createAuditedClient>>,
   billingDestinationId: string,
@@ -2105,6 +2103,49 @@ async function resolveBillToTxCodeId(
     .eq('id', billingDestinationId)
     .maybeSingle();
   return data?.transaction_code_id ?? null;
+}
+
+// The code's DR-side branch override (free-text Acumatica segment, or null).
+async function txCodeDrBranchOverride(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  txCodeId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('transaction_codes')
+    .select('debit_branch_id')
+    .eq('id', txCodeId)
+    .maybeSingle();
+  return data?.debit_branch_id?.trim() || null;
+}
+
+// Code + DR/CR branch for a payment/refund folio line:
+//   ar                → bill-to's code; DR branch = code override ?? shift branch
+//   stored_value_card → the branch's Royal Card code; DR/CR = shift branch
+//   anything else     → the method's bound code;      DR/CR = shift branch
+async function resolvePaymentPosting(
+  supabase: Awaited<ReturnType<typeof createAuditedClient>>,
+  args: {
+    branch: BranchPostingInfo;
+    methodCode: string | null;
+    methodTxCodeId: string | null;
+    billingDestinationId: string | null;
+  },
+): Promise<{ ok: true; txCodeId: string; drBranch: string; crBranch: string } | { ok: false; error: string }> {
+  const shiftBranch = args.branch.code;
+  const method = args.methodCode?.toLowerCase() ?? '';
+  if (method === 'ar') {
+    if (!args.billingDestinationId) return { ok: false, error: 'Pick a Bill to for an AR (on-account) charge.' };
+    const txCodeId = await resolveBillToTxCodeId(supabase, args.billingDestinationId);
+    if (!txCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
+    const drOverride = await txCodeDrBranchOverride(supabase, txCodeId);
+    return { ok: true, txCodeId, drBranch: drOverride ?? shiftBranch, crBranch: shiftBranch };
+  }
+  if (method === 'stored_value_card') {
+    if (!args.branch.royalCardTxCodeId) return { ok: false, error: 'No Royal Card transaction code is set for this branch — bind one in Settings → Branches first.' };
+    return { ok: true, txCodeId: args.branch.royalCardTxCodeId, drBranch: shiftBranch, crBranch: shiftBranch };
+  }
+  if (!args.methodTxCodeId) return { ok: false, error: 'This payment method has no transaction code bound — set one in Settings → Payment Methods first.' };
+  return { ok: true, txCodeId: args.methodTxCodeId, drBranch: shiftBranch, crBranch: shiftBranch };
 }
 
 const paymentSchema = z.object({
@@ -2167,35 +2208,14 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     return { ok: false, error: `Amount exceeds the balance due (${(due / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
   }
 
-  // Per-guest cap (Pay separately): a payment tagged to one guest can't exceed
-  // that guest's own balance. Without this, one guest could be over-collected
-  // while another is left short even though the order total still nets — strictly
-  // no over/under per scope. Manager Collect more carries no order_customer_id, so
-  // it stays at order scope (the sanctioned exception path) and skips this check.
-  if (d.order_customer_id) {
-    const { data: custItems } = await supabase
-      .from('order_items')
-      .select('final_amount_cents')
-      .eq('order_id', d.order_id)
-      .eq('order_customer_id', d.order_customer_id)
-      .not('status', 'in', '(cancelled,no_show)');
-    const custSubtotal = (custItems ?? []).reduce((s, i) => s + (i.final_amount_cents ?? 0), 0);
-    const { data: custPays } = await supabase
-      .from('folio_lines')
-      .select('amount_cents, kind')
-      .eq('order_id', d.order_id)
-      .eq('order_customer_id', d.order_customer_id)
-      .in('kind', ['payment', 'refund', 'tip']);
-    const custPaid = (custPays ?? []).reduce((s, p) => s + (p.kind === 'payment' ? p.amount_cents : -p.amount_cents), 0);
-    const custDue = Math.max(0, custSubtotal - custPaid);
-    if (amountCents > custDue) {
-      return { ok: false, error: `Amount exceeds this guest's balance due (${(custDue / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 })})` };
-    }
-  }
+  // No per-guest balance cap: the guest tag on a payment is bookkeeping (it
+  // names who an AR charge belongs to, for the SOA), not a spending scope.
+  // The only money rule is order-level — paid can't exceed total (checked
+  // above) and the order settles when due reaches 0.
 
   const { data: method } = await supabase
     .from('payment_methods')
-    .select('code')
+    .select('code, transaction_code_id')
     .eq('id', d.payment_method_id)
     .single();
 
@@ -2226,24 +2246,24 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
     svcCard = card;
   }
 
-  // Resolve the GL code for this line. AR (掛帳) rides the bill_to destination's
-  // bound code; every other method uses the branch-scoped payment code. AR also
-  // requires a Bill to + a named guest (a statement must show who).
+  // Resolve the GL code + DR/CR branch for this line, per the transaction-time
+  // rules (AR → bill-to code, stored value → branch Royal Card code, else the
+  // method's bound code). AR also requires a Bill to + a named guest (a
+  // statement must show who).
   const isAr = method?.code?.toLowerCase() === 'ar';
-  let billingDestinationId: string | null = null;
-  let paymentTxCodeId: string | null;
-  if (isAr) {
-    if (!d.billing_destination_id) return { ok: false, error: 'Pick a Bill to for an AR (on-account) charge.' };
-    if (!d.order_customer_id) return { ok: false, error: 'Pick the guest for an AR charge — the statement must show a name.' };
-    billingDestinationId = d.billing_destination_id;
-    paymentTxCodeId = await resolveBillToTxCodeId(supabase, billingDestinationId);
-    if (!paymentTxCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
-  } else {
-    paymentTxCodeId = await resolvePaymentTxCodeId(supabase, postBranchId, d.payment_method_id);
-    if (!paymentTxCodeId) return { ok: false, error: 'No payment transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
-  }
-  const tipTxCodeId = tips.length > 0 ? await resolveTxCodeId(supabase, { branchId: postBranchId, type: 'payment', methodId: d.payment_method_id, creditAccount: TX_TIPS_PAYABLE }) : null;
-  if (tips.length > 0 && !tipTxCodeId) return { ok: false, error: 'No tip transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
+  if (isAr && !d.order_customer_id) return { ok: false, error: 'Pick the guest for an AR charge — the statement must show a name.' };
+  const billingDestinationId = isAr ? (d.billing_destination_id ?? null) : null;
+  const branchInfo = await getBranchPostingInfo(supabase, postBranchId);
+  if (!branchInfo) return { ok: false, error: 'Posting branch not found' };
+  const posting = await resolvePaymentPosting(supabase, {
+    branch: branchInfo,
+    methodCode: method?.code ?? null,
+    methodTxCodeId: method?.transaction_code_id ?? null,
+    billingDestinationId,
+  });
+  if (!posting.ok) return posting;
+  const tipTxCodeId = tips.length > 0 ? branchInfo.tipTxCodeId : null;
+  if (tips.length > 0 && !tipTxCodeId) return { ok: false, error: 'No tip transaction code is set for this branch — bind one in Settings → Branches first.' };
 
   // The payment is a folio line bound to the open shift (folio_lines is the
   // single ledger now - there is no separate payments table).
@@ -2261,7 +2281,9 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
       stored_value_card_id: svcCard?.id ?? null,
       branch_id: postBranchId,
       billing_destination_id: billingDestinationId,
-      transaction_code_id: paymentTxCodeId,
+      transaction_code_id: posting.txCodeId,
+      dr_branch: posting.drBranch,
+      cr_branch: posting.crBranch,
     })
     .select('id')
     .single();
@@ -2301,6 +2323,8 @@ export async function takePayment(input: unknown): Promise<ActionResult> {
         payment_method_id: d.payment_method_id,
         branch_id: postBranchId,
         transaction_code_id: tipTxCodeId,
+        dr_branch: branchInfo.code,
+        cr_branch: branchInfo.code,
       })
       .select('id')
       .single();
@@ -2392,7 +2416,7 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
     return { ok: false, error: 'No cash shift is open for this branch - open one on the Sales Remittance page before refunding.' };
   }
 
-  const { data: method } = await supabase.from('payment_methods').select('code').eq('id', d.payment_method_id).single();
+  const { data: method } = await supabase.from('payment_methods').select('code, transaction_code_id').eq('id', d.payment_method_id).single();
 
   // Stored-value refund → load the amount back onto the card.
   let card: { current_balance_cents: number; branch_id: string } | null = null;
@@ -2408,22 +2432,20 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
   }
 
   // Refund = an append-only folio line (kind=refund). Amount is stored positive;
-  // the kind carries the direction. paid = sum(payment) - sum(refund). AR refunds
-  // ride the bill_to code (need a Bill to + guest); other methods reuse the
-  // method's payment code (a refund reverses a payment).
+  // the kind carries the direction. paid = sum(payment) - sum(refund). The code
+  // + DR/CR branch resolve exactly like a payment (a refund reverses one).
   const isAr = method?.code?.toLowerCase() === 'ar';
-  let billingDestinationId: string | null = null;
-  let refundTxCodeId: string | null;
-  if (isAr) {
-    if (!d.billing_destination_id) return { ok: false, error: 'Pick a Bill to for an AR refund.' };
-    if (!d.order_customer_id) return { ok: false, error: 'Pick the guest for an AR refund — the statement must show a name.' };
-    billingDestinationId = d.billing_destination_id;
-    refundTxCodeId = await resolveBillToTxCodeId(supabase, billingDestinationId);
-    if (!refundTxCodeId) return { ok: false, error: 'This billing destination has no transaction code bound — set one in Settings → Billing Destinations first.' };
-  } else {
-    refundTxCodeId = await resolvePaymentTxCodeId(supabase, postBranchId, d.payment_method_id);
-    if (!refundTxCodeId) return { ok: false, error: 'No payment transaction code is configured for this branch + method — set one up in Settings → Transaction Codes first.' };
-  }
+  if (isAr && !d.order_customer_id) return { ok: false, error: 'Pick the guest for an AR refund — the statement must show a name.' };
+  const billingDestinationId = isAr ? (d.billing_destination_id ?? null) : null;
+  const branchInfo = await getBranchPostingInfo(supabase, postBranchId);
+  if (!branchInfo) return { ok: false, error: 'Posting branch not found' };
+  const posting = await resolvePaymentPosting(supabase, {
+    branch: branchInfo,
+    methodCode: method?.code ?? null,
+    methodTxCodeId: method?.transaction_code_id ?? null,
+    billingDestinationId,
+  });
+  if (!posting.ok) return posting;
   const { data: refundLine, error: pe } = await supabase
     .from('folio_lines')
     .insert({
@@ -2438,7 +2460,9 @@ export async function recordRefund(input: unknown): Promise<ActionResult> {
       stored_value_card_id: d.stored_value_card_id || null,
       branch_id: postBranchId,
       billing_destination_id: billingDestinationId,
-      transaction_code_id: refundTxCodeId,
+      transaction_code_id: posting.txCodeId,
+      dr_branch: posting.drBranch,
+      cr_branch: posting.crBranch,
     })
     .select('id')
     .single();
@@ -2525,10 +2549,10 @@ export async function addRevenue(input: unknown): Promise<ActionResult> {
   if (!ctx.ok) return ctx;
 
   const supabase = await createAuditedClient();
-  // Manual revenue has no service category to bind a code from, so fall back to
-  // the branchless service-revenue code (CR 40140).
-  const txCodeId = await resolveTxCodeId(supabase, { branchId: null, type: 'revenue', methodId: null, creditAccount: TX_REVENUE_ACCOUNT });
-  if (!txCodeId) return { ok: false, error: 'No revenue transaction code is configured — set one up in Settings → Transaction Codes first.' };
+  // Manual revenue has no service category to bind a code from — use the
+  // posting branch's default revenue code; DR/CR both follow the shift branch.
+  const branchInfo = await getBranchPostingInfo(supabase, ctx.branchId);
+  if (!branchInfo?.revenueTxCodeId) return { ok: false, error: 'No default revenue transaction code is set for this branch — bind one in Settings → Branches first.' };
   const { error } = await supabase.from('folio_lines').insert({
     order_id: d.order_id,
     shift_id: ctx.shiftId,
@@ -2537,7 +2561,9 @@ export async function addRevenue(input: unknown): Promise<ActionResult> {
     posted_by: session.staffUserId,
     note: d.note?.trim() || null,
     branch_id: ctx.branchId,
-    transaction_code_id: txCodeId,
+    transaction_code_id: branchInfo.revenueTxCodeId,
+    dr_branch: branchInfo.code,
+    cr_branch: branchInfo.code,
   });
   if (error) return { ok: false, error: error.message };
 
@@ -2579,8 +2605,8 @@ export async function adjustCharge(input: unknown): Promise<ActionResult> {
   if (!ctx.ok) return ctx;
 
   const supabase = await createAuditedClient();
-  const txCodeId = await resolveTxCodeId(supabase, { branchId: null, type: 'revenue', methodId: null, creditAccount: TX_REVENUE_ACCOUNT });
-  if (!txCodeId) return { ok: false, error: 'No revenue transaction code is configured — set one up in Settings → Transaction Codes first.' };
+  const branchInfo = await getBranchPostingInfo(supabase, ctx.branchId);
+  if (!branchInfo?.revenueTxCodeId) return { ok: false, error: 'No default revenue transaction code is set for this branch — bind one in Settings → Branches first.' };
   const { error } = await supabase.from('folio_lines').insert({
     order_id: d.order_id,
     shift_id: ctx.shiftId,
@@ -2589,7 +2615,9 @@ export async function adjustCharge(input: unknown): Promise<ActionResult> {
     posted_by: session.staffUserId,
     note: `${d.note.trim()} (approved: ${pin.approverName})`,
     branch_id: ctx.branchId,
-    transaction_code_id: txCodeId,
+    transaction_code_id: branchInfo.revenueTxCodeId,
+    dr_branch: branchInfo.code,
+    cr_branch: branchInfo.code,
   });
   if (error) return { ok: false, error: error.message };
 

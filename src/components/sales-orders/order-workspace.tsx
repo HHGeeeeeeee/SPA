@@ -173,13 +173,12 @@ interface Props {
   discountClasses: DiscountOpt[];
   sourceDefaultDiscountId: string | null;
   sourceDiscountLocked: boolean;
-  paymentMethods: { id: string; code: string; display_name: string }[];
+  paymentMethods: { id: string; code: string; display_name: string; tx_code: string | null }[];
   storedValueCards: { id: string; card_no: string; balance_cents: number; customer_name: string | null }[];
   capabilityByEmployee: Record<string, string[]>;
   paymentPolicy: { arBilled: boolean; defaultMethodId: string | null; arBillingLabel: string | null };
-  accessibleBranches: { id: string; code: string }[];
+  accessibleBranches: { id: string; code: string; revenue_code: string | null; royal_card_code: string | null }[];
   orderBranchId: string | null;
-  transactionCodes: { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[];
   openShifts: { branchId: string; label: string; businessDate: string; openedByName: string | null }[];
   userShiftBranchId: string | null;
   billingDestinations: { id: string; code: string; name: string; tx_code: string | null }[];
@@ -439,7 +438,6 @@ export function OrderWorkspace({
   capabilityByEmployee,
   accessibleBranches,
   orderBranchId,
-  transactionCodes,
   openShifts,
   userShiftBranchId,
   billingDestinations,
@@ -1228,7 +1226,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Revenue</CardTitle>
-                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} userShiftBranchId={userShiftBranchId} />
+                  <FolioActions orderId={order.id} section="revenue" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} openShifts={openShifts} userShiftBranchId={userShiftBranchId} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['revenue', 'tip'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}
@@ -1238,7 +1236,7 @@ export function OrderWorkspace({
               <Card>
                 <CardHeader className="pb-2 flex-row items-center justify-between gap-2">
                   <CardTitle className="text-sm font-bold">Payments & refunds</CardTitle>
-                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} transactionCodes={transactionCodes} openShifts={openShifts} userShiftBranchId={userShiftBranchId} billingDestinations={billingDestinations} orderBillingToId={order.billing_to_id} guests={customers.map((c) => ({ id: c.id, name: c.customer_name }))} />
+                  <FolioActions orderId={order.id} section="payments" methods={paymentMethods} storedValueCards={storedValueCards} dueCents={due} paidCents={order.paid_cents} branches={accessibleBranches} orderBranchId={orderBranchId} openShifts={openShifts} userShiftBranchId={userShiftBranchId} billingDestinations={billingDestinations} orderBillingToId={order.billing_to_id} guests={customers.map((c) => ({ id: c.id, name: c.customer_name }))} />
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y divide-border">
                   {folioLines.filter((l) => ['payment', 'refund'].includes(l.kind)).map((l) => <FolioRow key={l.id} l={l} />)}

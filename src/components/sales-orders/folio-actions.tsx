@@ -20,14 +20,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { takePayment, recordRefund, addRevenue, adjustCharge } from '@/app/(dashboard)/sales-orders/actions';
 
-interface Method { id: string; code: string; display_name: string }
+interface Method { id: string; code: string; display_name: string; tx_code: string | null }
 interface Card { id: string; card_no: string; balance_cents: number; customer_name: string | null }
-interface Branch { id: string; code: string }
-interface TxCode { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }
+interface Branch { id: string; code: string; revenue_code: string | null; royal_card_code: string | null }
 interface BillingDest { id: string; code: string; name: string; tx_code: string | null }
 interface Guest { id: string; name: string }
-
-const TIPS_PAYABLE = '20500';
 
 function peso(cents: number): string {
   return (cents / 100).toLocaleString('en-PH', { maximumFractionDigits: 0 });
@@ -37,8 +34,10 @@ function peso(cents: number): string {
 //  - section='revenue'  → Add revenue, Adjust charge (manager-PIN gated)
 //  - section='payments' → Add payment, Add refund
 // Each dialog posts to a chosen branch's shift and shows the GL transaction code
-// it will use (read-only, resolved from branch + method). The money rules live
-// server-side; these just collect input.
+// it will use (read-only: AR → bill-to's code, stored value → the branch's
+// Royal Card code, else the method's bound code; manual revenue → the branch's
+// default revenue code). The money rules live server-side; these just collect
+// input.
 export function FolioActions({
   orderId,
   section,
@@ -48,7 +47,6 @@ export function FolioActions({
   paidCents,
   branches,
   orderBranchId,
-  transactionCodes,
   openShifts,
   userShiftBranchId,
   billingDestinations,
@@ -63,7 +61,6 @@ export function FolioActions({
   paidCents: number;
   branches: Branch[];
   orderBranchId: string | null;
-  transactionCodes: TxCode[];
   openShifts: { branchId: string; label: string; businessDate: string; openedByName: string | null }[];
   userShiftBranchId?: string | null;
   billingDestinations?: BillingDest[];
@@ -73,7 +70,6 @@ export function FolioActions({
   const [pending, start] = useTransition();
   const router = useRouter();
   const branchList = branches ?? [];
-  const txCodes = transactionCodes ?? [];
   const methodList = methods ?? [];
   const cards = storedValueCards ?? [];
   const billingList = billingDestinations ?? [];
@@ -103,13 +99,16 @@ export function FolioActions({
   const isArMethod = (id: string) => codeOf(id)?.toLowerCase() === 'ar';
   const arDestCode = (billId: string) => billingList.find((b) => b.id === billId)?.tx_code ?? null;
 
-  // The payment-side code shown read-only: the branch's active payment code for
-  // the method that isn't the tip code. Mirrors the server resolver, so the
-  // displayed code is exactly what gets posted ('—' when none is configured).
-  const paymentCodeFor = (branchId: string, methodId: string) =>
-    txCodes.find((t) => t.transaction_type === 'payment' && t.branch_id === branchId && t.payment_method_id === methodId && t.credit_account !== TIPS_PAYABLE)?.code ?? null;
-  // Revenue is branchless — one service-revenue code rides every manual revenue line.
-  const revenueCode = txCodes.find((t) => t.transaction_type === 'revenue')?.code ?? null;
+  // The payment-side code shown read-only. Mirrors the server resolver, so the
+  // displayed code is exactly what gets posted ('—' when none is configured):
+  // stored value → the branch's Royal Card code, else the method's bound code.
+  const paymentCodeFor = (branchId: string, methodId: string) => {
+    const m = methodList.find((x) => x.id === methodId);
+    if (m?.code?.toLowerCase() === 'stored_value_card') return branchList.find((b) => b.id === branchId)?.royal_card_code ?? null;
+    return m?.tx_code ?? null;
+  };
+  // Manual revenue rides the posting branch's default revenue code.
+  const revenueCodeFor = (branchId: string) => branchList.find((b) => b.id === branchId)?.revenue_code ?? null;
   // The branch's current open cash shift — every posting lands in it. No open
   // shift → the post is blocked (the dialog hints to open one).
   const openShiftFor = (branchId: string) => (openShifts ?? []).find((s) => s.branchId === branchId) ?? null;
@@ -380,7 +379,7 @@ export function FolioActions({
           </DialogHeader>
           <div className="flex flex-col gap-3 py-2">
             {branchField(revBranch, setRevBranch)}
-            {txCodeField(revenueCode)}
+            {txCodeField(revenueCodeFor(revBranch))}
             {shiftField(revBranch)}
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Amount</Label>
@@ -408,7 +407,7 @@ export function FolioActions({
           </DialogHeader>
           <div className="flex flex-col gap-3 py-2">
             {branchField(adjBranch, setAdjBranch)}
-            {txCodeField(revenueCode)}
+            {txCodeField(revenueCodeFor(adjBranch))}
             {shiftField(adjBranch)}
             <div className="flex flex-col gap-1">
               <Label className="text-xs font-semibold">Amount to deduct</Label>

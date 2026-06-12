@@ -34,12 +34,14 @@ async function fetchData() {
       `)
       .order('code'),
     supabase.from('payment_methods').select('id, code, display_name').eq('active', true).order('code'),
-    // The bound code drives AR booking + settle; offer the AR/settle-type codes.
+    // The bound code drives the AR (掛帳) booking line for this destination.
     supabase
       .from('transaction_codes')
-      .select('id, code, transaction_type, debit_account, credit_account, branch:branches ( code )')
+      // branches ↔ transaction_codes now has several FKs (the branch default
+      // bindings) — the embed must name the code's own branch_id FK explicitly.
+      .select('id, code, transaction_type, debit_account, credit_account, branch:branches!transaction_codes_branch_id_fkey ( code )')
       .eq('active', true)
-      .in('transaction_type', ['settle', 'payment'])
+      .eq('transaction_type', 'payment')
       .order('code'),
   ]);
   if (bd.error) throw new Error(bd.error.message);

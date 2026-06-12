@@ -84,6 +84,7 @@ export function ShiftLinesTabs({ revenueLines, folioLines }: { revenueLines: Shi
               <TableRow>
                 <TableHead>Time</TableHead>
                 <TableHead>Order</TableHead>
+                <TableHead>SOA</TableHead>
                 <TableHead>Txn Code</TableHead>
                 <TableHead>Method</TableHead>
                 <TableHead>Reference</TableHead>
@@ -94,7 +95,7 @@ export function ShiftLinesTabs({ revenueLines, folioLines }: { revenueLines: Shi
             <TableBody>
               {folioLines.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-6 text-center text-sm font-medium text-muted-foreground">No payments collected in this shift.</TableCell>
+                  <TableCell colSpan={8} className="py-6 text-center text-sm font-medium text-muted-foreground">No payments collected in this shift.</TableCell>
                 </TableRow>
               ) : (
                 folioLines.map((l) => (
@@ -103,6 +104,12 @@ export function ShiftLinesTabs({ revenueLines, folioLines }: { revenueLines: Shi
                     <TableCell>
                       {l.orderId
                         ? <Link href={`/sales-orders/${l.orderId}`} className="font-semibold underline underline-offset-2">{l.orderNo ?? '—'}</Link>
+                        : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      {/* SOA settle / reversal lines carry the statement they collected. */}
+                      {l.soaNo
+                        ? <Link href="/reconciliation/soa?view=history" className="font-mono text-xs font-semibold underline underline-offset-2">{l.soaNo}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{l.transactionCode ?? '—'}</TableCell>

@@ -155,6 +155,8 @@ export interface GLLine {
   transaction_desc: string;
   // Optional: override BranchID for this line; falls back to entry.branch.
   branch?: string | null;
+  /** Optional source-document reference (order no / SOA no) → GL detail Ref. Number. */
+  ref_number?: string | null;
 }
 
 export interface GLPushResult {
@@ -194,6 +196,7 @@ export async function pushGLEntry(
       DebitAmount: { value: l.debit_amount ?? 0 },
       CreditAmount: { value: l.credit_amount ?? 0 },
       TransactionDescription: { value: l.transaction_desc },
+      ...(l.ref_number ? { RefNumber: { value: l.ref_number } } : {}),
     })),
   };
 

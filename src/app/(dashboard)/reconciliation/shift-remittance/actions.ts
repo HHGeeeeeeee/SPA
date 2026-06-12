@@ -145,6 +145,9 @@ export interface ShiftFolioLine {
   ref: string | null;
   transactionCode: string | null;
   postedBy: string | null;
+  // SOA settle lines carry the statement they collected (order lines stay null).
+  soaId: string | null;
+  soaNo: string | null;
   amountCents: number;
 }
 export interface ShiftRevenueLine {
@@ -209,7 +212,7 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
 
   const { data: lines } = await supabase
     .from('folio_lines')
-    .select('id, kind, amount_cents, posted_at, payment_ref, method:payment_methods!folio_lines_payment_method_id_fkey ( code, display_name ), order:orders!folio_lines_order_id_fkey ( id, order_no ), item:order_items!folio_lines_order_item_id_fkey ( category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), service:service_items!order_items_service_item_id_fkey ( name ) ), guest:order_customers!folio_lines_order_customer_id_fkey ( customer_name ), txn:transaction_codes!folio_lines_transaction_code_id_fkey ( code ), tip_record:tips!tips_folio_line_id_fkey ( therapist:employees!tips_therapist_id_fkey ( name ) ), poster:staff_users!folio_lines_posted_by_fkey ( display_name )')
+    .select('id, kind, amount_cents, posted_at, payment_ref, method:payment_methods!folio_lines_payment_method_id_fkey ( code, display_name ), order:orders!folio_lines_order_id_fkey ( id, order_no ), item:order_items!folio_lines_order_item_id_fkey ( category:service_categories ( name ), therapist:employees!order_items_therapist_id_fkey ( name ), service:service_items!order_items_service_item_id_fkey ( name ) ), guest:order_customers!folio_lines_order_customer_id_fkey ( customer_name ), txn:transaction_codes!folio_lines_transaction_code_id_fkey ( code ), tip_record:tips!tips_folio_line_id_fkey ( therapist:employees!tips_therapist_id_fkey ( name ) ), poster:staff_users!folio_lines_posted_by_fkey ( display_name ), soa:revenue_soa!folio_lines_soa_session_id_fkey ( id, soa_no )')
     .eq('shift_id', shiftId)
     .order('posted_at', { ascending: false });
 
@@ -247,10 +250,12 @@ export async function loadShiftDetail(shiftId: string): Promise<ShiftDetail | nu
     cur.cents += l.kind === 'refund' ? -l.amount_cents : l.amount_cents;
     methodAgg.set(code, cur);
     if (code === 'cash') { if (l.kind === 'payment') cashIn += l.amount_cents; else cashOut += l.amount_cents; }
+    const soa = one(l.soa);
     folioLines.push({
       id: l.id, postedAt: l.posted_at, orderId: ord?.id ?? null, orderNo: ord?.order_no ?? null,
       kind: l.kind, method: m?.display_name ?? null, ref: l.payment_ref ?? null,
       transactionCode: one(l.txn)?.code ?? null, postedBy: one(l.poster)?.display_name ?? null,
+      soaId: soa?.id ?? null, soaNo: soa?.soa_no ?? null,
       amountCents: l.amount_cents,
     });
   }

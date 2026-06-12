@@ -43,7 +43,7 @@
 
 - **抽成**：Commission Class % 為主 + **60-90 分鐘第一次 0%** 規則（每日跨 branch 不重置）
 - **小費**：現金小費**不入系統**（客人直接給技師）；只 PAYMAYA 多刷部分入 Tip 表
-- **過帳節點**：Revenue Confirm 為統一入帳節點，必須先完成 Cash Reconciliation
+- **過帳節點**：Shift Remittance（close shift）為唯一 ERP 入帳節點 — 從 folio_lines 依 transaction code 聚合成一張 GL journal。Revenue Confirm 功能已移除（不符 SPA 產業）
 - **AR 訂單分流**：Completed (AR) 跳過 Paid 直接 Closed；非 AR Paid → Closed
 - **折扣 line level**：每位客人可不同折扣（DIS-00 ~ DIS-99）
 - **Service Category 同單可混**：按摩 + 美髮 + 美甲 + 休息可同單

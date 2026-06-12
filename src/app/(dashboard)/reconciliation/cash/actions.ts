@@ -283,7 +283,6 @@ export async function reopenCashReconciliation(input: unknown): Promise<ActionRe
     .eq('status', 'closed');
   if (error) return { ok: false, error: error.message };
   revalidatePath('/reconciliation/cash');
-  revalidatePath('/reconciliation/revenue-confirm');
   return { ok: true };
 }
 
@@ -325,6 +324,5 @@ export async function closeCashReconciliation(input: unknown): Promise<ActionRes
   );
   if (error) return { ok: false, error: error.message };
   revalidatePath('/reconciliation/cash');
-  revalidatePath('/reconciliation/revenue-confirm');
   return { ok: true };
 }

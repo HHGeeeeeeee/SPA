@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Sunset, Scale, Lock, CircleCheck } from 'lucide-react';
 
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -154,21 +154,16 @@ export function EodPipeline({
             <h3 className="text-lg font-bold">Revenue Confirmation</h3>
           </div>
           <p className="text-sm font-medium text-muted-foreground flex-1">
-            Close the day&apos;s Paid / AR-completed orders on the Revenue Confirm page (shift cash count must be closed first).
-            {view.pendingConfirmCount > 0 && <span className="block mt-1 text-amber-700 dark:text-amber-400">{view.pendingConfirmCount} order(s) still to confirm.</span>}
-            {view.pendingConfirmCount > 0 && !view.cashClosed && <span className="block mt-1 text-amber-700 dark:text-amber-400">Shift cash count not closed yet — Revenue Confirm will be blocked.</span>}
+            Confirm the day&apos;s revenue — every served order must be fully settled and closed.
+            {view.pendingConfirmCount > 0 && <span className="block mt-1 text-amber-700 dark:text-amber-400">{view.pendingConfirmCount} order(s) not closed yet.</span>}
+            {!view.cashClosed && <span className="block mt-1 text-amber-700 dark:text-amber-400">Shift cash count not closed yet.</span>}
           </p>
           {step3Done ? (
             <div className="flex items-center gap-1.5 text-sm font-bold text-primary"><CircleCheck className="size-4" /> Confirmed {rec?.revenue_confirmed_at ? `· ${fmt(rec.revenue_confirmed_at)}` : ''}</div>
           ) : step2Done ? (
-            <div className="flex flex-col gap-2">
-              <Link href={`/reconciliation/revenue-confirm?branch=${branchId}&date=${date}`} className={buttonVariants({ variant: 'outline' })}>
-                Go to Revenue Confirm
-              </Link>
-              <Button onClick={() => run(markRevenueConfirmed, 'Revenue confirmed')} disabled={pending || view.pendingConfirmCount > 0}>
-                {pending ? '…' : view.pendingConfirmCount > 0 ? `${view.pendingConfirmCount} still to confirm` : 'Confirm Revenue'}
-              </Button>
-            </div>
+            <Button onClick={() => run(markRevenueConfirmed, 'Revenue confirmed')} disabled={pending || view.pendingConfirmCount > 0}>
+              {pending ? '…' : view.pendingConfirmCount > 0 ? `${view.pendingConfirmCount} still to confirm` : 'Confirm Revenue'}
+            </Button>
           ) : (
             <p className="text-xs font-semibold text-muted-foreground">Complete Step 2 first.</p>
           )}

@@ -2042,8 +2042,8 @@ export async function setOrderStatus(orderId: string, next: string): Promise<Act
   return { ok: true };
 }
 
-// GL credit accounts that disambiguate same-method transaction codes (mirrors
-// the ERP resolver in revenue-confirm): service revenue vs tip payable.
+// GL credit accounts that disambiguate same-method transaction codes:
+// service revenue vs tip payable.
 const TX_REVENUE_ACCOUNT = '40140';
 const TX_TIPS_PAYABLE = '20500';
 

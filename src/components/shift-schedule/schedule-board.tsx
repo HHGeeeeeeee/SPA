@@ -1185,11 +1185,12 @@ export function ScheduleBoard({
     });
   }
   // Finish an in-service line straight from the board — stamps the end time, same
-  // action as the order page's Finish.
+  // action as the order page's Finish — then jump to the order to take payment
+  // (finishing is the moment the desk needs the order page; starting isn't).
   function doFinishFromBoard(itemId: string, orderId: string) {
     startTransition(async () => {
       const r = await finishOrderItem(itemId, orderId);
-      if (r.ok) { toast.success('Service finished'); setDetail(null); router.refresh(); }
+      if (r.ok) { toast.success('Service finished'); setDetail(null); router.push(`/sales-orders/${orderId}`); }
       else toast.error(r.error);
     });
   }
@@ -1613,6 +1614,9 @@ export function ScheduleBoard({
           prefillLabel={addRow?.name ?? null}
           open
           onOpenChange={(o) => { if (!o) { setAdd(null); router.refresh(); } }}
+          // Stay on the board after creating (close + refresh ride onOpenChange);
+          // the order page is only visited at Finish (payment time).
+          onCreated={() => toast.success('Order created')}
         />
       )}
 

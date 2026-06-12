@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server';
 import { fetchBoardDialogData } from '@/lib/board-dialog-data';
+import { AutoRefresh } from '@/components/auto-refresh';
 import { Card } from '@/components/ui/card';
 import { ShiftControls } from '@/components/shift-schedule/shift-controls';
 import { ScheduleBoard, BLOCK_KIND_LABEL, type BoardBed, type BoardBlock, type BlockVariant, type BoardStaffShift, type AssignBed, type BoardOccupancy } from '@/components/shift-schedule/schedule-board';
@@ -675,6 +676,8 @@ export default async function CalendarPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Other terminals book/move services too — poll so the board stays live. */}
+      <AutoRefresh />
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Calendar</h2>

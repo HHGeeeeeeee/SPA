@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { ChevronLeft, ChevronRight, ChevronDown, Check, Users, BedDouble, Receipt, Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,9 @@ export function ShiftControls({ branches, branchId, selected, day, view, dialog 
       <CreateOrderDialog
         dialog={dialog}
         initialBranchId={branchId}
+        // Stay on the calendar after creating — the desk keeps working the
+        // board; the order page is only visited at Finish (payment time).
+        onCreated={() => { toast.success('Order created'); router.refresh(); }}
         trigger={
           <Button size="sm" className="gap-1.5 font-bold">
             <Plus className="size-4" /> Create Order

@@ -37,8 +37,10 @@ Each folio line stamps a **DR branch** and a **CR branch** at posting time:
 | Scenario | DR branch | CR branch |
 |---|---|---|
 | Service finish | the shift's branch | the **station's** branch (cross-branch work credits the performing store) |
+| **AR (on account)** | the **DR branch override on the billing destination's bound transaction code** — the counterparty hotel's Acumatica segment (e.g. `HSR`). Empty override → the posting branch | the posting branch |
 | Everything else | the posting branch you chose (= the shift the line lands in) | same |
-| Code-level override | a code can pin one leg to a fixed Acumatica segment (e.g. an intercompany code's DR leg on the counterparty hotel's branch) — set on the code's *Branch (override)* fields | |
+
+A code's *Branch (override)* fields pin one leg to a fixed Acumatica segment; AR is the main user of this (the receivable leg books on the hotel being billed), but any code can use it.
 
 By the time you open Sales Remittance, every line already knows its full `DR branch / account / sub` and `CR branch / account / sub`. There is nothing left to decide at close.
 

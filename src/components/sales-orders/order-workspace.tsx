@@ -180,7 +180,7 @@ interface Props {
   accessibleBranches: { id: string; code: string }[];
   orderBranchId: string | null;
   transactionCodes: { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[];
-  openShifts: { branchId: string; label: string }[];
+  openShifts: { branchId: string; label: string; businessDate: string; openedByName: string | null }[];
   userShiftBranchId: string | null;
   billingDestinations: { id: string; code: string; name: string; tx_code: string | null }[];
   boundConsents: Record<string, BoundConsentInfo>;

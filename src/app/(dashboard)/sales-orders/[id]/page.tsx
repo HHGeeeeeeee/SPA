@@ -257,7 +257,7 @@ async function fetchData(id: string) {
   // dialogs (and a "please open a shift" hint when a branch has none).
   const openShiftsRes = await supabase
     .from('shifts')
-    .select('id, label, branch_id')
+    .select('id, label, branch_id, business_date, opener:staff_users!shifts_opened_by_fkey ( display_name, email )')
     .eq('status', 'open')
     .in('branch_id', [...allowedBranchIds]);
 
@@ -318,7 +318,15 @@ async function fetchData(id: string) {
     accessibleBranches: (brAll.data ?? []).filter((b) => allowedBranchIds.has(b.id)).map((b) => ({ id: b.id, code: b.code })),
     orderBranchId: order.branch_id as string | null,
     transactionCodes: (txCodes.data ?? []) as { id: string; code: string; branch_id: string | null; payment_method_id: string | null; credit_account: string | null; transaction_type: string }[],
-    openShifts: (openShiftsRes.data ?? []).map((s) => ({ branchId: s.branch_id as string, label: s.label as string })),
+    openShifts: (openShiftsRes.data ?? []).map((s) => {
+      const opener = one(s.opener);
+      return {
+        branchId: s.branch_id as string,
+        label: s.label as string,
+        businessDate: s.business_date as string,
+        openedByName: opener?.display_name ?? opener?.email ?? null,
+      };
+    }),
   };
 }
 

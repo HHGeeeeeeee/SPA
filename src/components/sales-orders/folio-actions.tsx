@@ -64,7 +64,7 @@ export function FolioActions({
   branches: Branch[];
   orderBranchId: string | null;
   transactionCodes: TxCode[];
-  openShifts: { branchId: string; label: string }[];
+  openShifts: { branchId: string; label: string; businessDate: string; openedByName: string | null }[];
   userShiftBranchId?: string | null;
   billingDestinations?: BillingDest[];
   orderBillingToId?: string | null;
@@ -112,7 +112,7 @@ export function FolioActions({
   const revenueCode = txCodes.find((t) => t.transaction_type === 'revenue')?.code ?? null;
   // The branch's current open cash shift — every posting lands in it. No open
   // shift → the post is blocked (the dialog hints to open one).
-  const openShiftFor = (branchId: string) => (openShifts ?? []).find((s) => s.branchId === branchId)?.label ?? null;
+  const openShiftFor = (branchId: string) => (openShifts ?? []).find((s) => s.branchId === branchId) ?? null;
 
   // ── Add payment ──────────────────────────────────────────────────────────
   const [collectOpen, setCollectOpen] = useState(false);
@@ -239,12 +239,15 @@ export function FolioActions({
   // Read-only current open shift for the chosen branch, else a "please open a
   // shift" hint (postings can't land without one).
   const shiftField = (branchId: string) => {
-    const label = openShiftFor(branchId);
+    const shift = openShiftFor(branchId);
     return (
       <div className="flex flex-col gap-1">
         <Label className="text-xs font-semibold">Open shift</Label>
-        {label ? (
-          <Input value={label} readOnly disabled />
+        {shift ? (
+          <>
+            <Input value={`${shift.businessDate} · ${shift.label}`} readOnly disabled />
+            <span className="text-[11px] font-medium text-muted-foreground">Opened by {shift.openedByName ?? '—'}</span>
+          </>
         ) : (
           <p className="rounded-lg border border-amber-500/50 bg-amber-50 px-2.5 py-2 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
             No open shift for this branch — please open a shift first.
